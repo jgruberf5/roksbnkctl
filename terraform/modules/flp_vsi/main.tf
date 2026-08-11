@@ -49,9 +49,45 @@ locals {
 }
 
 # ── network: reuse the cluster VPC, add a subnet with egress + an SG ──────────
+# ── The VPC: adopted, or created here (#60) ──────────────────────────────────
+# The proxy is the one component that needs egress to F5, which makes it a natural
+# FIRST deployment in an air-gapped estate. It could not be, because the module had
+# no create path — so it had to land in a VPC something else had already made, in
+# practice the registry's, coupling licensing to a registry that has nothing to do
+# with it.
+#
+# create_vpc owns the whole network: VPC, its address prefix, and the public gateway
+# (there is no other tenant to inherit one from). The adopt path is unchanged.
+resource "ibm_is_vpc" "flp" {
+  count                     = local.enabled && var.flp_vsi_create_vpc ? 1 : 0
+  name                      = var.flp_vsi_vpc_name != "" ? var.flp_vsi_vpc_name : "flp-vsi-vpc"
+  resource_group            = data.ibm_resource_group.rg[0].id
+  address_prefix_management = "manual"
+}
+
+resource "ibm_is_vpc_address_prefix" "flp" {
+  count = local.enabled && var.flp_vsi_create_vpc ? 1 : 0
+  name  = "flp-vsi-prefix"
+  vpc   = ibm_is_vpc.flp[0].id
+  zone  = local.zone
+  cidr  = var.flp_vsi_subnet_cidr
+}
+
 data "ibm_is_vpc" "cluster" {
-  count      = local.enabled ? 1 : 0
+  count      = local.enabled && !var.flp_vsi_create_vpc ? 1 : 0
   identifier = var.existing_cluster_vpc_id
+
+  lifecycle {
+    precondition {
+      condition     = var.existing_cluster_vpc_id != ""
+      error_message = "the F5 License Proxy needs a network: set bnk.flp.vsi.vpc to adopt one, or bnk.flp.vsi.create_vpc = true to have it build its own."
+    }
+  }
+}
+
+locals {
+  # Everything below uses this, never the resource or the data source directly.
+  flp_vpc_id = var.flp_vsi_create_vpc ? try(ibm_is_vpc.flp[0].id, "") : try(data.ibm_is_vpc.cluster[0].id, "")
 }
 # IBM Cloud allows exactly ONE public gateway per zone per VPC. The cluster phase
 # already attached a gateway to every zone of the cluster VPC, so creating a
@@ -61,9 +97,9 @@ data "ibm_is_public_gateways" "vpc" {
   count = local.enabled ? 1 : 0
 }
 locals {
-  existing_pgw_id = local.enabled ? lookup({
+  existing_pgw_id = local.enabled && !var.flp_vsi_create_vpc ? lookup({
     for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
-    g.zone => g.id if try(g.vpc, "") == data.ibm_is_vpc.cluster[0].id
+    g.zone => g.id if try(g.vpc, "") == local.flp_vpc_id
   }, local.zone, "") : ""
   create_pgw = local.enabled && local.existing_pgw_id == ""
   # The gateway the subnet attaches to: the one already in the zone, else ours.
@@ -72,14 +108,15 @@ locals {
 resource "ibm_is_public_gateway" "egress" {
   count          = local.create_pgw ? 1 : 0
   name           = "flp-vsi-egress"
-  vpc            = data.ibm_is_vpc.cluster[0].id
+  vpc            = local.flp_vpc_id
   zone           = local.zone
   resource_group = data.ibm_resource_group.rg[0].id
 }
 resource "ibm_is_subnet" "flp" {
   count                    = local.enabled ? 1 : 0
+  depends_on               = [ibm_is_vpc_address_prefix.flp]
   name                     = "flp-vsi-subnet"
-  vpc                      = data.ibm_is_vpc.cluster[0].id
+  vpc                      = local.flp_vpc_id
   zone                     = local.zone
   total_ipv4_address_count = 16
   public_gateway           = local.pgw_id
@@ -88,7 +125,7 @@ resource "ibm_is_subnet" "flp" {
 resource "ibm_is_security_group" "flp" {
   count          = local.enabled ? 1 : 0
   name           = "flp-vsi-sg"
-  vpc            = data.ibm_is_vpc.cluster[0].id
+  vpc            = local.flp_vpc_id
   resource_group = data.ibm_resource_group.rg[0].id
 }
 locals {
@@ -361,7 +398,7 @@ data "ibm_is_ssh_key" "flp" {
 resource "ibm_is_instance" "flp" {
   count          = local.enabled ? 1 : 0
   name           = "flp-vsi"
-  vpc            = data.ibm_is_vpc.cluster[0].id
+  vpc            = local.flp_vpc_id
   zone           = local.zone
   profile        = var.flp_vsi_profile
   image          = local.ubuntu_image_id

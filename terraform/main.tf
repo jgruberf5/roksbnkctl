@@ -50,6 +50,8 @@ module "roks_cluster" {
   roks_cos_instance_name            = var.roks_cos_instance_name
   roks_transit_gateway_name         = var.roks_transit_gateway_name
   use_existing_cluster_vpc          = var.use_existing_cluster_vpc
+  use_existing_cluster_subnets      = var.use_existing_cluster_subnets
+  existing_cluster_subnet_ids       = var.existing_cluster_subnet_ids
   cluster_vpc_cidr                  = var.cluster_vpc_cidr
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
   kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
@@ -337,6 +339,9 @@ module "flp_vsi" {
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
   ibmcloud_resource_group = var.ibmcloud_resource_group
   existing_cluster_vpc_id = var.existing_cluster_vpc_id
+  flp_vsi_create_vpc      = var.flp_vsi_create_vpc
+  flp_vsi_vpc_name        = var.flp_vsi_vpc_name
+  flp_vsi_subnet_cidr     = var.flp_vsi_subnet_cidr
 
   flp_vsi_profile                  = var.flp_vsi_profile
   flp_vsi_ssh_key                  = var.flp_vsi_ssh_key
