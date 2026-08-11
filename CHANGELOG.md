@@ -4,6 +4,43 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.43.0 — 2026-08-11
+
+Preparation for BNK 2.4 and multi-NIC ROKS, neither of which has shipped. Everything here is **additive**: absence of every new setting reproduces the previous behaviour exactly, and no existing `config.yaml`, environment variable, or CLI invocation changes.
+
+### Added
+
+- **`cluster.network_mode`** ([#63](https://github.com/jgruberf5/roksbnkctl/pull/63)) — how a cluster's worker nodes are attached, `single-nic` (default) or `multi-nic`. The only field added to `config.yaml`.
+
+  ```yaml
+  cluster:
+    network_mode: single-nic    # omitted means exactly this
+  ```
+
+  `ROKSBNKCTL_CLUSTER_NETWORK_MODE` sets the same one for runners that never write a `config.yaml`. Renders to a new terraform variable, `cluster_network_mode`.
+
+  **Create-time only, and enforced.** A cluster is never converted between modes in place, so an *explicit* value that contradicts the built cluster is refused before planning — what terraform would otherwise plan is a *replacement* of the running cluster, rendered as output that reads like an update. An *unset* value defers to what the cluster's record says; silence is not an assertion.
+
+- **`cluster-outputs.json` is now a versioned contract.** New optional fields: `schema_version` (2), `network_mode`, `vpc_cidr` (the block a VPC was actually *created* from — empty when it was adopted), and `node_interfaces` (declared, written by nothing yet). Absent `schema_version` reads as 1 and absent `network_mode` as `single-nic`, so every record written before this release stays valid. Unknown fields are ignored, so an older build still reads a newer file.
+
+- **A support matrix, as data** (`internal/config/support_matrix.yaml`) — which BNK release lines drive which network modes, and which contract versions each can read. Checked before planning, so an unsupported pairing is a message rather than a failed apply against real infrastructure. The BNK line is *derived* from the existing `bnk.manifest_version` (`2.3.0-…` → `2.3`); there is no new field that could disagree with the manifest being installed.
+
+  A line the matrix has never heard of **warns and proceeds**. The matrix ships inside the binary, so an unknown line usually means the binary predates the release — that is missing information, not a known incompatibility, and refusing would make every build refuse every release that shipped after it.
+
+- **Per-BNK-line terraform overlays** — `terraform/lines/<line>/` is layered onto the base tree at extraction: same path replaces, new path is added, nothing is removed. It ships **empty**, because no supported release needs different HCL, and a test pins that the extracted tree is byte-identical without one. This replaces the branch-per-release model, which forked the whole tool to express a difference living in a handful of `.tf` files.
+
+### Changed
+
+- **`cluster.vpc_cidr` now warns when it changes after the cluster exists.** It has always been documented as create-time-only and was never enforced; the warning is the deprecation, and the refusal follows it in a later release rather than arriving without one. It fires only on a genuine disagreement with the recorded block, so a workspace that set it once and left it alone stays silent.
+
+### Documentation
+
+- 16 chapters updated for the above, and the release-branch model removed from Chapters 23 and 31 — it had been deleted from the code in v1.42.0 but survived in the book, where Chapter 31 contradicted itself. Chapter 32 gains "Supporting a new BNK release". Chapters 27 and 29 regenerated.
+
+### Not yet verified
+
+Multi-NIC and BNK 2.4 have never been executed, because neither exists yet. `cluster_network_mode` is declared in HCL and consumed by no module; `node_interfaces` is populated by no writer; the matrix's `2.4` row is an expectation and is marked PROVISIONAL in the file itself. What *is* verified end to end on real IBM Cloud is the additive claim — a fresh ROKS cluster on an adopted shared Transit Gateway with BNK 2.3 installed, no new setting anywhere, no guard firing.
+
 ## v1.42.0 — 2026-08-08
 
 ### Added
