@@ -31,12 +31,6 @@ var versionCmd = &cobra.Command{
 		// docs URL on its own second line.
 		fmt.Fprintf(cmd.OutOrStdout(), "roksbnkctl %s (commit %s, built %s)\nDocs: %s\n",
 			Version, Commit, BuildDate, DocsURL)
-		// The release line goes on its own THIRD line, never inside the first —
-		// the first line's shape is depended on by scripts. Omitted entirely when
-		// unstamped, so a dev build looks exactly as it always has.
-		if l := ReleaseLine(); l != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), "Release line: %s\n", l)
-		}
 		return nil
 	},
 }

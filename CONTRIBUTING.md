@@ -1,65 +1,32 @@
 # Contributing to roksbnkctl
 
-## Branches and release lines
+## Branches
 
-`roksbnkctl` tracks the F5 BNK product line by branching. There is one repository.
+Trunk-based: work happens on short-lived branches off `main` and merges back via
+PR. `main` is the only long-lived branch, plus `gh-pages` for the published site.
 
-| Branch | Role |
-|---|---|
-| `main` | The trunk. Tracks the **newest** BNK orchestration being developed. |
-| `bnk-<major>-<minor>` | A release line, cut from `main` when that BNK version's orchestration stabilises. Receives fixes for that line only. |
+A release-branch-per-BNK-version model was tried and removed. It was the wrong
+axis: almost every change here is a *tool* fix — workspace handling, IBM Cloud
+plumbing, CLI behaviour — which is identical across BNK versions and would have
+had to be ported to every live branch. Meanwhile the things that genuinely differ
+between BNK releases (terraform layers, F5 CRDs) sit behind versioned artifacts
+selected at runtime, not behind branches.
 
-Work targets a branch by opening a PR against it. `ci.yml` and `security.yml`
-trigger on `pull_request` with **no** branch filter, so a PR based on any release
-branch gets the full suite — vet, staticcheck, tests on three OSes, CodeQL,
-govulncheck, gitleaks, Trivy, smoke, and the kind integration tier. Pushes to
-`main` and to `bnk-*` are covered too.
+**`roksbnkctl`'s version is not the BNK version.** One binary supports every
+supported BNK release; `bnk.manifest_version` in the workspace decides which one a
+given deployment targets.
 
-Fixes land on the branch that needs them and are carried forward by
-`git cherry-pick`. `main` is a trunk, not a merge target: merging two release
-lines into it produces a branch that tracks no product line coherently, and that
-breaks as soon as a third line exists.
+Two axes vary independently and must keep doing so:
 
-### `Closes #N` does not work on a release branch
+- **BNK version**, derived from `bnk.manifest_version` — drives the terraform layer
+  and the F5 CRDs.
+- **IBM platform capability** (e.g. single- vs multi-NIC ROKS) — drives the cluster
+  phase's creation path.
 
-GitHub auto-closes an issue only when the PR carrying the keyword merges into the
-repository's **default branch**. Every PR here targets `bnk-2-3`, so `Closes #123`
-in a PR description is **inert** — the issue stays open after the merge, silently,
-with no warning on the PR.
-
-Use `Refs #123` to set expectations honestly, and close the issue by hand once it
-is merged, quoting the merge commit. It costs one command and is accurate; a
-`Closes` that never fires reads as a merge that did not do what it said.
-
-This changes back the day `bnk-2-3` is no longer the working branch, so do not
-build tooling around it.
-
-### Versions do not encode the BNK version
-
-**`roksbnkctl`'s version is independent of the BNK version.** Every branch shares
-one rising semver sequence, so `v1.43.0` might be a `bnk-2-3` release and
-`v1.44.0` a `main` release. The number says *nothing* about which BNK line a
-build serves.
-
-Two mechanisms exist because of that, and both are easy to break by accident:
-
-- **The release line stamp.** `release.yml` resolves the line from branch
-  ancestry, goreleaser writes it into the binary (`internal/cli.Line`) and into
-  the release notes as `<!-- roksbnkctl-release-line: … -->`. `self update` reads
-  it and offers only that line's releases; `--version` still crosses lines, but
-  now asks first. A release with no marker (everything before `v1.42.0`) reads as
-  "unknown" and stays eligible for every binary — never make an unmarked release
-  mean a *specific* line.
-- **`:latest` follows the trunk only.** `tools-images.yml` moves the `:latest`
-  container tag only for a tag reachable from `origin/main`. A release-line tag
-  publishes `:<tag>` and nothing else, so a `bnk-2-3` release cannot repoint
-  `:latest` at 2.3 for everyone on 2.4. Release branches get a moving
-  `:<branch>-dev` (e.g. `:bnk-2-3-dev`) so their tip is testable without cutting
-  a release; `:dev` stays the trunk's.
-
-If you add tooling that resolves an image or a release, resolve it **per line**.
-Defaulting to `:latest` or to GitHub's "latest release" silently crosses lines —
-that is exactly the bug `scripts/tf-variable-validation-test.sh` used to have.
+They meet at `cluster-outputs.json`, which is the contract between the cluster
+phase and the BNK phase. **Keep the terraform phases in separate states.** Terraform
+resolves one provider version per configuration, so separate states are what let the
+cluster phase adopt a newer IBM module without dragging every BNK layer with it.
 
 ## Setting up a contributor host
 

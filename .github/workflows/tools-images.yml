@@ -21,7 +21,7 @@ name: Build tools images
 on:
   push:
     tags: ['v*']
-    branches: [main, 'bnk-*']
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -56,29 +56,6 @@ jobs:
       # COPYs tools/docker/mdbook/{puppeteer-config.json,render-mermaid.lua}).
       # The build-args below are ibmcloud-specific and harmlessly ignored
       # by the others.
-      # `:latest` must follow ONE line, or it silently moves consumers between
-      # BNK product lines. A tag cut on bnk-2-3 publishing `:latest` would
-      # repoint every 2.4 pipeline at 2.3 orchestration, and vice versa —
-      # including scripts/tf-variable-validation-test.sh, whose TF_TEST_IMAGE
-      # defaults to it.
-      #
-      # The rule: `:latest` tracks the TRUNK. A tag whose commit is reachable
-      # from origin/main moves it; a tag cut on a release branch publishes its
-      # own `:<tag>` and nothing else. Release lines are addressed by explicit
-      # tag or by their `:<branch>-dev` (below).
-      - name: Decide whether this tag moves :latest
-        if: startsWith(github.ref, 'refs/tags/v')
-        id: latest
-        run: |
-          git fetch --no-tags --depth=100 origin main
-          if git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "move=true" >> "$GITHUB_OUTPUT"
-            echo "tag $GITHUB_REF_NAME is on the trunk — it will move :latest"
-          else
-            echo "move=false" >> "$GITHUB_OUTPUT"
-            echo "tag $GITHUB_REF_NAME is on a release line — :latest stays where it is"
-          fi
-
       - name: Build and push (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v7
@@ -91,19 +68,15 @@ jobs:
           push: true
           tags: |
             ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:${{ github.ref_name }}
-            ${{ steps.latest.outputs.move == 'true' && format('ghcr.io/jgruberf5/roksbnkctl-tools-{0}:latest', matrix.image) || '' }}
+            ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:latest
 
       # Main-push: publish :dev. internal/exec/docker.go's toolImageTag()
       # falls back to ":dev" for binaries that report Version=="dev"
       # (i.e., a `go install ./cmd/roksbnkctl@main` build); having :dev
       # in GHCR closes the gap so the docker backend doesn't fail to
       # pull on a fresh dev box.
-      # A release branch needs a moving tag too, or the only way to test its
-      # tip is to cut a release. It must NOT be `:dev` — that is the trunk's,
-      # and toolImageTag() resolves a Version=="dev" binary to it. So bnk-2-3
-      # publishes `:bnk-2-3-dev`.
-      - name: Build and push (branch → :dev / :<branch>-dev)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+      - name: Build and push (main → :dev)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -113,7 +86,7 @@ jobs:
             ROKSBNKCTL_COMMIT=${{ github.sha }}
           push: true
           tags: |
-            ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:${{ github.ref_name == 'main' && 'dev' || format('{0}-dev', github.ref_name) }}
+            ghcr.io/jgruberf5/roksbnkctl-tools-${{ matrix.image }}:dev
 
       # workflow_dispatch: build + push both forms so a manual run from
       # any branch can publish a :dev tag for testing.

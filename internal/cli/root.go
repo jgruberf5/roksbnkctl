@@ -24,24 +24,7 @@ var (
 	Version   = "dev"
 	Commit    = "none"
 	BuildDate = "unknown"
-
-	// Line is the release line this binary was built from: "main" (the trunk,
-	// tracking the newest BNK orchestration) or a release branch like "bnk-2-3".
-	//
-	// It exists because roksbnkctl's version is deliberately NOT tied to the BNK
-	// version — both lines share one rising semver sequence, so v1.43.0 and
-	// v1.44.0 can belong to different product lines and the number alone cannot
-	// tell them apart. `self update` needs to know, or it silently moves a BNK 2.3
-	// operator onto 2.4 orchestration.
-	//
-	// Empty (the default, and every build before this existed) means "unknown" —
-	// treated as no constraint, so an older binary keeps its historical behaviour
-	// rather than refusing to update.
-	Line = ""
 )
-
-// ReleaseLine reports the build's release line, or "" when it was not stamped.
-func ReleaseLine() string { return Line }
 
 // Persistent flag values, bound on the root command.
 var (

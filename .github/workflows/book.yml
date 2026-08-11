@@ -16,7 +16,7 @@ name: Validate book
 
 on:
   push:
-    branches: [main, 'bnk-*']   # main is the trunk; bnk-<major>-<minor> are the release lines
+    branches: [main]
     paths:
       - 'book/**'
       - '.github/workflows/book.yml'

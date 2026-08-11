@@ -47,38 +47,6 @@ jobs:
           go-version: stable
           cache: true
 
-      # Which release line this tag belongs to.
-      #
-      # roksbnkctl's version is deliberately NOT tied to the BNK version: main
-      # and every bnk-<major>-<minor> branch share ONE rising semver sequence,
-      # so v1.43.0 and v1.44.0 can belong to different product lines and the
-      # number cannot express which. goreleaser stamps this into the binary and
-      # into the release notes so `self update` can keep an operator on their
-      # own line instead of silently moving them across.
-      #
-      # Same ancestor test the container :latest gate uses, for one answer.
-      - name: Resolve the release line
-        id: line
-        run: |
-          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
-          line=""
-          if git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
-            line=main
-          else
-            # Newest bnk-* branch containing this commit. A tag normally sits on
-            # exactly one; if it somehow sits on several, the earliest line is
-            # the conservative answer — it is the one with the older BNK.
-            line="$(git branch -r --contains HEAD --format='%(refname:short)' \
-                    | sed -n 's#^origin/\(bnk-[0-9][0-9-]*\)$#\1#p' | sort | head -1)"
-          fi
-          if [ -z "$line" ]; then
-            echo "::error::tag $GITHUB_REF_NAME is not reachable from main or any bnk-* branch;" \
-                 "goreleaser would stamp an empty release line. Push the tag on a release branch." >&2
-            exit 1
-          fi
-          echo "release line: $line"
-          echo "line=$line" >> "$GITHUB_OUTPUT"
-
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -86,4 +54,3 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ROKSBNKCTL_RELEASE_LINE: ${{ steps.line.outputs.line }}

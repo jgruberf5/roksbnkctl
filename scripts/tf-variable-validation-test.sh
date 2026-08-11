@@ -32,18 +32,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 fails=0
 
-# The runner image to take terraform from. `:latest` follows the TRUNK only
-# (see .github/workflows/tools-images.yml), so on a release branch it would
-# hand this gate a terraform from a DIFFERENT BNK line — and the whole point
-# of the gate is to test the terraform this branch actually ships. Default to
-# the branch's own moving tag and fall back to :latest on the trunk.
-if [[ -z "${TF_TEST_IMAGE:-}" ]]; then
-  _branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
-  case "$_branch" in
-    bnk-*) TF_TEST_IMAGE="ghcr.io/jgruberf5/roksbnkctl-tools-runner:${_branch}-dev" ;;
-    *)     TF_TEST_IMAGE="ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest" ;;
-  esac
-fi
+# The runner image to take terraform from — the gate must test the terraform this
+# checkout ships, so it wants the image built from the same trunk.
+TF_TEST_IMAGE="${TF_TEST_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest}"
 if [[ "${TF_TEST_LOCAL:-0}" == 1 ]] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
   TF() { ( cd "$1" && shift && terraform "$@" ); }
   echo "!!  using \$PATH terraform $(terraform version | head -1 | awk '{print $2}') — NOT the shipped version."
