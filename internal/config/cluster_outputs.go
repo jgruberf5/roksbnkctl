@@ -9,22 +9,12 @@ import (
 	"time"
 )
 
-// ClusterOutputs is the persisted identity of a ROKS cluster that
-// roksbnkctl is tracking — written by `roksbnkctl cluster up` (after a fresh
-// create) or `roksbnkctl cluster register` (after discovering an
-// already-existing cluster), and read by `roksbnkctl up` to deploy BNK
-// trials onto an existing cluster without re-specifying everything in
-// each trial's tfvars.
-//
-// Stored at ~/.roksbnkctl/<workspace>/cluster-outputs.json. Treated as
-// authoritative for downstream commands that need to reference the
-// cluster — but explicit tfvars values always win over these.
 // The contract's own version. Bump ONLY when adding fields; a change that makes
 // an existing file unreadable is not a bump, it is a break, and there is no
 // migration path because clusters are never converted in place.
 //
 //	1 — the original handoff (no schema_version field written)
-//	2 — adds network_mode + node_interfaces
+//	2 — adds network_mode, node_interfaces, vpc_cidr
 const ContractSchemaVersion = 2
 
 // Worker network attachment modes.
@@ -41,6 +31,16 @@ type NodeInterface struct {
 	Purpose  string `json:"purpose,omitempty"` // e.g. dataplane
 }
 
+// ClusterOutputs is the persisted identity of a ROKS cluster that
+// roksbnkctl is tracking — written by `roksbnkctl cluster up` (after a fresh
+// create) or `roksbnkctl cluster register` (after discovering an
+// already-existing cluster), and read by `roksbnkctl up` to deploy BNK
+// trials onto an existing cluster without re-specifying everything in
+// each trial's tfvars.
+//
+// Stored at ~/.roksbnkctl/<workspace>/cluster-outputs.json. Treated as
+// authoritative for downstream commands that need to reference the
+// cluster — but explicit tfvars values always win over these.
 type ClusterOutputs struct {
 	ClusterName      string   `json:"cluster_name"`
 	ClusterID        string   `json:"cluster_id"`
@@ -82,6 +82,17 @@ type ClusterOutputs struct {
 	// cluster was built with is refused rather than planned (it would be a silent
 	// destroy-and-recreate of a running cluster).
 	NetworkMode string `json:"network_mode,omitempty"`
+
+	// VPCCIDR is the address block this tool actually used to CREATE the cluster
+	// VPC. Empty when the VPC was adopted — the setting is ignored on that path, so
+	// recording the configured value would record something that never applied —
+	// and empty on every record written before schema 2.
+	//
+	// Recorded so the create-time warning fires on a real disagreement rather than
+	// on the mere presence of the setting: a workspace that set vpc_cidr, built its
+	// cluster, and has changed nothing since is the normal steady state, and
+	// warning at it on every run trains people to ignore the warning.
+	VPCCIDR string `json:"vpc_cidr,omitempty"`
 
 	// NodeInterfaces describes the worker network attachments a multi-NIC cluster
 	// exposes, which the BNK phase needs to render F5SPKVlan attachments and

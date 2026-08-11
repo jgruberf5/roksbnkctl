@@ -85,3 +85,35 @@ func (w *Workspace) BNKLineOrEmpty() string {
 	}
 	return line
 }
+
+// CheckNetworkMode validates the configured mode and, when a cluster already
+// exists, checks that the config still describes the cluster that was built.
+//
+// Lives here rather than in either caller because `cluster up` and `bnk up` must
+// give the SAME answer: two copies of this rule would eventually disagree, and
+// the disagreement would show up as one command refusing what the other allows.
+//
+// out == nil (or a record with no cluster) is not a failure — there is nothing to
+// contradict yet, and this exists to catch a contradiction rather than to add a
+// new way for a first run to fail.
+func CheckNetworkMode(ws *Workspace, out *ClusterOutputs) error {
+	mode := ws.ClusterNetworkMode()
+	if !ValidNetworkMode(mode) {
+		return fmt.Errorf("cluster.network_mode %q is not a mode this build knows (%s or %s)",
+			mode, NetworkModeSingleNIC, NetworkModeMultiNIC)
+	}
+	if out == nil || out.ClusterID == "" {
+		return nil
+	}
+	if got := out.Network(); got != mode {
+		return fmt.Errorf(
+			"cluster %q was created as a %s cluster, but this workspace now asks for %s.\n\n"+
+				"  A cluster's network mode is fixed when it is built — converting one in place is\n"+
+				"  not supported, and continuing would plan a REPLACEMENT of the running cluster\n"+
+				"  rather than a change to it.\n\n"+
+				"  Either set cluster.network_mode back to %s, or create a new cluster in a new\n"+
+				"  workspace for %s",
+			out.ClusterName, got, mode, got, mode)
+	}
+	return nil
+}

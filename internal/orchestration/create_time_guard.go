@@ -38,30 +38,44 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 	if cctx == nil || cctx.Workspace == nil {
 		return nil
 	}
+	// A missing or unreadable record means "no cluster yet", not "fail": a first
+	// run has nothing to contradict. CheckNetworkMode is given the nil and
+	// handles it — it still VALIDATES the configured value, which has to happen
+	// whether or not a cluster exists, since an unknown mode must never reach
+	// terraform from either entry point.
 	out, err := config.ReadClusterOutputs(cctx.WorkspaceName)
-	if err != nil || out == nil || out.ClusterID == "" {
-		return nil
+	if err != nil {
+		out = nil
 	}
 
 	// ── enforced: network_mode ───────────────────────────────────────────────
-	want := cctx.Workspace.ClusterNetworkMode()
-	got := out.Network()
-	if want != got {
-		return fmt.Errorf(
-			"cluster %q was created as a %s cluster, but this workspace now asks for %s.\n\n"+
-				"  A cluster's network mode is fixed when it is built — converting one in place is\n"+
-				"  not supported, and continuing would plan a REPLACEMENT of the running cluster\n"+
-				"  rather than a change to it.\n\n"+
-				"  Either set cluster.network_mode back to %s, or create a new cluster in a new\n"+
-				"  workspace for %s",
-			out.ClusterName, got, want, got, want)
+	// The rule itself lives in config so `cluster up` and `bnk up` cannot drift
+	// into giving different answers to the same question.
+	if err := config.CheckNetworkMode(cctx.Workspace, out); err != nil {
+		return err
+	}
+	if out == nil || out.ClusterID == "" {
+		return nil // nothing recorded to compare the rest against
 	}
 
 	// ── warn-only: vpc_cidr (see the note above) ─────────────────────────────
-	if cidr := strings.TrimSpace(cctx.Workspace.Cluster.VPCCIDR); cidr != "" && out.VPCID != "" {
-		fmt.Fprintf(w, "! cluster.vpc_cidr is a CREATE-time setting and cluster %q already exists.\n"+
-			"  It is ignored for an existing VPC; changing it cannot re-address a live subnet.\n"+
-			"  A future release will refuse this rather than ignore it.\n", out.ClusterName)
+	// Only on a real DISAGREEMENT. Warning whenever vpc_cidr is merely set would
+	// fire on every run of every workspace that ever used it — including the ones
+	// that set it, built the cluster it describes, and changed nothing since,
+	// which is the normal steady state. A warning that fires when nothing is
+	// wrong teaches people to skip warnings.
+	//
+	// A record with no vpc_cidr (adopted VPC, or written before schema 2) is
+	// silent: nothing is known to disagree with, and guessing reintroduces
+	// exactly the false positive this avoids.
+	cidr := strings.TrimSpace(cctx.Workspace.Cluster.VPCCIDR)
+	if cidr != "" && out.VPCCIDR != "" && cidr != out.VPCCIDR {
+		fmt.Fprintf(w, "! cluster.vpc_cidr is a CREATE-time setting and it has changed.\n"+
+			"  Cluster %q was created from %s; this workspace now says %s.\n"+
+			"  The new value is ignored — an existing VPC's prefixes cannot be re-addressed\n"+
+			"  without replacing its subnets. A future release will refuse this rather than\n"+
+			"  ignore it; to use %s, build a new cluster in a new workspace.\n",
+			out.ClusterName, out.VPCCIDR, cidr, cidr)
 	}
 	return nil
 }

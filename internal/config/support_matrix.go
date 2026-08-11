@@ -58,7 +58,14 @@ func CheckSupported(bnkLine, networkMode string, schema int) error {
 	if err != nil {
 		return err
 	}
-	l, ok := LookupLine(bnkLine)
+	var l SupportLine
+	var ok bool
+	for _, x := range lines {
+		if x.BNK == bnkLine {
+			l, ok = x, true
+			break
+		}
+	}
 	if !ok {
 		known := make([]string, 0, len(lines))
 		for _, x := range lines {

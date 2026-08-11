@@ -358,6 +358,20 @@ func openClusterTF(ctx context.Context) (*config.Context, *tf.Workspace, []strin
 // single-nic, but writing the value explicitly means a file this binary produced
 // says what it means rather than relying on a default that a later reader might
 // change.
+// vpcCIDRFor is the address block to RECORD, which is not always the one
+// configured: on the adopt path (resources.cluster_vpc.create=false) the setting
+// is ignored entirely, and recording it would record a value that never applied
+// — then later disagree with itself and warn about a change nobody made.
+func vpcCIDRFor(cctx *config.Context) string {
+	if cctx == nil || cctx.Workspace == nil {
+		return ""
+	}
+	if r := cctx.Workspace.Resources; r != nil && !r.ClusterVPC.Create {
+		return ""
+	}
+	return strings.TrimSpace(cctx.Workspace.Cluster.VPCCIDR)
+}
+
 func networkModeFor(cctx *config.Context) string {
 	if cctx == nil || cctx.Workspace == nil {
 		return config.NetworkModeSingleNIC
@@ -374,17 +388,9 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 	// planned, because terraform would plan a REPLACEMENT of a running cluster
 	// rather than a change to it.
 	if c, cerr := config.New(flagWorkspace); cerr == nil && c.Workspace != nil {
-		mode := c.Workspace.ClusterNetworkMode()
-		if !config.ValidNetworkMode(mode) {
-			return fmt.Errorf("cluster.network_mode %q is not a mode this build knows (%s or %s)",
-				mode, config.NetworkModeSingleNIC, config.NetworkModeMultiNIC)
-		}
-		if out, oerr := config.ReadClusterOutputs(c.WorkspaceName); oerr == nil && out != nil && out.ClusterID != "" && out.Network() != mode {
-			return fmt.Errorf("cluster %q was created as a %s cluster; this workspace now asks for %s.\n"+
-				"  A cluster's network mode is fixed when it is built — converting one in place is not\n"+
-				"  supported, and continuing would plan a REPLACEMENT of the running cluster.\n"+
-				"  Set cluster.network_mode back to %s, or build the new mode in a new workspace",
-				out.ClusterName, out.Network(), mode, out.Network())
+		out, _ := config.ReadClusterOutputs(c.WorkspaceName) // nil is "no cluster yet"
+		if err := config.CheckNetworkMode(c.Workspace, out); err != nil {
+			return err
 		}
 	}
 
@@ -636,6 +642,7 @@ func persistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.W
 		// only moment it is knowable and settled — afterwards the contract is the
 		// authority, and the config is just a request that has to agree with it.
 		NetworkMode: networkModeFor(cctx),
+		VPCCIDR:     vpcCIDRFor(cctx),
 	}
 	// Registry COS: prefer the terraform outputs (deterministic when this phase
 	// created the instance) and fall back to a name-guess SDK lookup for an

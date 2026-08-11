@@ -90,11 +90,12 @@ func TestNoClusterRecordIsSilent(t *testing.T) {
 
 // vpc_cidr is a PRE-EXISTING contract that was never enforced. Turning it into a
 // refusal now would break somebody today, so it warns and refuses later.
-func TestVPCCIDROnExistingClusterWarnsButDoesNotRefuse(t *testing.T) {
+func TestVPCCIDRChangeWarnsButDoesNotRefuse(t *testing.T) {
 	cctx := stageGuardWS(t, "", &config.ClusterOutputs{
 		ClusterName: "prod", ClusterID: "abc", VPCID: "vpc-1",
+		VPCCIDR: "10.242.0.0/16",
 	})
-	cctx.Workspace.Cluster.VPCCIDR = "10.99.0.0/18"
+	cctx.Workspace.Cluster.VPCCIDR = "10.99.0.0/16" // changed after the cluster was built
 
 	var buf bytes.Buffer
 	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
@@ -104,8 +105,50 @@ func TestVPCCIDROnExistingClusterWarnsButDoesNotRefuse(t *testing.T) {
 	if !strings.Contains(out, "vpc_cidr") {
 		t.Errorf("the warning must name the setting: %q", out)
 	}
+	// Both values, or the reader cannot tell which one is live.
+	for _, want := range []string{"10.242.0.0/16", "10.99.0.0/16"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the warning must show %s: %q", want, out)
+		}
+	}
 	if !strings.Contains(out, "future release") {
 		t.Errorf("the warning is the deprecation notice; it must say what comes next: %q", out)
+	}
+}
+
+// The steady state: vpc_cidr was set, the cluster was built from it, nothing has
+// changed since. Warning here would fire on every run of a correct workspace,
+// which is how warnings become noise people filter out.
+func TestVPCCIDRUnchangedIsSilent(t *testing.T) {
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{
+		ClusterName: "prod", ClusterID: "abc", VPCID: "vpc-1",
+		VPCCIDR: "10.242.0.0/16",
+	})
+	cctx.Workspace.Cluster.VPCCIDR = "10.242.0.0/16"
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("nothing changed, so nothing should be said: %q", buf.String())
+	}
+}
+
+// A record with no vpc_cidr is an ADOPTED VPC or a pre-schema-2 file. Nothing is
+// known to disagree with, and guessing recreates the false positive.
+func TestVPCCIDRAgainstUnrecordedIsSilent(t *testing.T) {
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{
+		ClusterName: "prod", ClusterID: "abc", VPCID: "vpc-1",
+	})
+	cctx.Workspace.Cluster.VPCCIDR = "10.99.0.0/16"
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("an unrecorded cidr cannot disagree: %q", buf.String())
 	}
 }
 
@@ -152,5 +195,14 @@ func TestGuardsTolerateMissingWorkspace(t *testing.T) {
 	}
 	if err := guardSupportedCombination(&config.Context{}); err != nil {
 		t.Errorf("context with no workspace: %v", err)
+	}
+}
+
+// The rule lives in config so both entry points give the same answer. Check the
+// bnk path actually reaches it — an unknown mode must not be planned anywhere.
+func TestInvalidNetworkModeIsRefusedOnTheBNKPath(t *testing.T) {
+	cctx := stageGuardWS(t, "dual-nic", nil)
+	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err == nil {
+		t.Error("an unknown network mode must be refused before planning")
 	}
 }
