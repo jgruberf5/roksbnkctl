@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
@@ -57,7 +58,7 @@ func TestOverlaySourceIsNotExtracted(t *testing.T) {
 // A line is derived from a version string, but it is used to build a path.
 func TestOverlayRejectsPathTraversal(t *testing.T) {
 	for _, bad := range []string{"../../etc", "2.3/../..", `a\b`, ".."} {
-		if err := applyLineOverlay(t.TempDir(), bad); err == nil {
+		if err := applyLineOverlay(fstest.MapFS{}, t.TempDir(), bad); err == nil {
 			t.Errorf("line %q was accepted as an overlay name", bad)
 		}
 	}
@@ -65,26 +66,67 @@ func TestOverlayRejectsPathTraversal(t *testing.T) {
 
 // An overlay replaces base files and adds new ones, and never deletes — so it
 // cannot silently remove a resource the base declares.
+//
+// This drives the REAL applyLineOverlay against a synthetic source FS. The
+// previous version of this test copied files with a helper and asserted on the
+// result, which tested the helper: it would have passed with applyLineOverlay
+// deleted entirely.
 func TestOverlayReplacesAndAdds(t *testing.T) {
 	dest := t.TempDir()
 	writeFile(t, filepath.Join(dest, "main.tf"), "base")
 	writeFile(t, filepath.Join(dest, "untouched.tf"), "keep")
-
-	// Simulate what applyLineOverlay does to the destination, using the same
-	// copy semantics, since no real overlay ships today.
-	overlay := t.TempDir()
-	writeFile(t, filepath.Join(overlay, "main.tf"), "overlaid")
-	writeFile(t, filepath.Join(overlay, "extra.tf"), "added")
-	copyTree(t, overlay, dest)
-
-	if got := readOverlayFile(t, filepath.Join(dest, "main.tf")); got != "overlaid" {
-		t.Errorf("overlay did not replace the base file: %q", got)
+	if err := os.MkdirAll(filepath.Join(dest, "modules", "cluster"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if got := readOverlayFile(t, filepath.Join(dest, "extra.tf")); got != "added" {
-		t.Errorf("overlay did not add its new file: %q", got)
+	writeFile(t, filepath.Join(dest, "modules", "cluster", "main.tf"), "base-nested")
+
+	src := fstest.MapFS{
+		"terraform/lines/2.4/main.tf":                 {Data: []byte("overlaid")},
+		"terraform/lines/2.4/extra.tf":                {Data: []byte("added")},
+		"terraform/lines/2.4/modules/cluster/main.tf": {Data: []byte("overlaid-nested")},
+		"terraform/lines/2.4/modules/cluster/new.tf":  {Data: []byte("added-nested")},
+		"terraform/lines/2.4/README.md":               {Data: []byte("maintainer notes")},
+		"terraform/lines/2.3/main.tf":                 {Data: []byte("WRONG LINE")},
 	}
-	if got := readOverlayFile(t, filepath.Join(dest, "untouched.tf")); got != "keep" {
-		t.Errorf("overlay removed a base file it does not mention: %q", got)
+	if err := applyLineOverlay(src, dest, "2.4"); err != nil {
+		t.Fatalf("applying the overlay: %v", err)
+	}
+
+	for _, c := range []struct{ path, want string }{
+		{"main.tf", "overlaid"},                        // replaced
+		{"extra.tf", "added"},                          // added
+		{"untouched.tf", "keep"},                       // not mentioned → untouched
+		{"modules/cluster/main.tf", "overlaid-nested"}, // replaced, nested
+		{"modules/cluster/new.tf", "added-nested"},     // added, nested
+	} {
+		if got := readOverlayFile(t, filepath.Join(dest, filepath.FromSlash(c.path))); got != c.want {
+			t.Errorf("%s = %q, want %q", c.path, got, c.want)
+		}
+	}
+	// The overlay's README documents the mechanism for maintainers; it is not
+	// HCL and must not land in a tree terraform is pointed at.
+	if _, err := os.Stat(filepath.Join(dest, "README.md")); !os.IsNotExist(err) {
+		t.Errorf("the overlay README was extracted (stat err = %v)", err)
+	}
+	// Only the requested line applies — otherwise every release's HCL would pile
+	// up on every deployment.
+	if got := readOverlayFile(t, filepath.Join(dest, "main.tf")); got == "WRONG LINE" {
+		t.Error("a different line's overlay was applied")
+	}
+}
+
+// A line with no overlay is the NORMAL case and must be a silent no-op, not an
+// error — most releases are served by the base tree.
+func TestOverlayMissingLineIsANoOp(t *testing.T) {
+	dest := t.TempDir()
+	writeFile(t, filepath.Join(dest, "main.tf"), "base")
+	src := fstest.MapFS{"terraform/lines/2.4/main.tf": {Data: []byte("overlaid")}}
+
+	if err := applyLineOverlay(src, dest, "9.9"); err != nil {
+		t.Fatalf("a line with no overlay must not be an error: %v", err)
+	}
+	if got := readOverlayFile(t, filepath.Join(dest, "main.tf")); got != "base" {
+		t.Errorf("the base tree was modified: %q", got)
 	}
 }
 

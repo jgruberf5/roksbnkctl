@@ -165,7 +165,7 @@ func extractEmbeddedTF(baseDir, line string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("extracting embedded terraform: %w", err)
 	}
-	if err := applyLineOverlay(cleanDest, line); err != nil {
+	if err := applyLineOverlay(roksbnkctl.EmbeddedTerraform, cleanDest, line); err != nil {
 		return "", err
 	}
 	return dest, nil
@@ -181,7 +181,7 @@ const overlayRoot = "lines"
 // A missing overlay is the NORMAL case, not an error — most releases are served
 // by the base tree, and treating "no overlay" as a failure would make adding the
 // mechanism a breaking change for every line that does not need it.
-func applyLineOverlay(destRoot, line string) error {
+func applyLineOverlay(srcFS fs.FS, destRoot, line string) error {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return nil
@@ -194,11 +194,11 @@ func applyLineOverlay(destRoot, line string) error {
 
 	root := overlayRoot + "/" + line
 	src := "terraform/" + root
-	if _, err := fs.Stat(roksbnkctl.EmbeddedTerraform, src); err != nil {
+	if _, err := fs.Stat(srcFS, src); err != nil {
 		return nil // no overlay for this line — base tree stands alone
 	}
 
-	return fs.WalkDir(roksbnkctl.EmbeddedTerraform, src, func(path string, d fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(srcFS, src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -218,7 +218,7 @@ func applyLineOverlay(destRoot, line string) error {
 		if rel == "README.md" {
 			return nil
 		}
-		body, err := fs.ReadFile(roksbnkctl.EmbeddedTerraform, path)
+		body, err := fs.ReadFile(srcFS, path)
 		if err != nil {
 			return err
 		}
