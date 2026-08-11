@@ -146,21 +146,6 @@ func readOverlayFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-func copyTree(t *testing.T, from, to string) {
-	t.Helper()
-	entries, err := os.ReadDir(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		body, err := os.ReadFile(filepath.Join(from, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeFile(t, filepath.Join(to, e.Name()), string(body))
-	}
-}
-
 func assertTreesEqual(t *testing.T, a, b string) {
 	t.Helper()
 	fa, fb := treeMap(t, a), treeMap(t, b)
