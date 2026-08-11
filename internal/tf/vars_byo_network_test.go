@@ -101,3 +101,61 @@ func TestRenderFLPCreateVPC_DefaultsOnly(t *testing.T) {
 		t.Error("an unset name must not be emitted as an empty string")
 	}
 }
+
+// Contradictory settings must be REFUSED, not silently resolved. Both of these
+// fail invisibly in the modules — the ignored half is simply never read — so the
+// operator would learn about it from a proxy on the wrong network, or a cluster
+// in subnets they did not choose.
+func TestBYONetwork_ContradictionsRefused(t *testing.T) {
+	render := func(mut func(*config.Workspace)) error {
+		ws := &config.Workspace{
+			Prefix:   "acme",
+			IBMCloud: config.IBMCloudCfg{Region: "us-south", ResourceGroup: "default"},
+			Cluster:  config.ClusterCfg{Create: true, Name: "byo"},
+			BNK:      config.BNKCfg{ManifestVersion: config.DefaultManifestVersion},
+		}
+		ws.Resources = config.DefaultResources()
+		mut(ws)
+		var b strings.Builder
+		return RenderTFVars(&b, ws, "/kc", "/scratch")
+	}
+
+	t.Run("flp vpc and create_vpc together", func(t *testing.T) {
+		err := render(func(ws *config.Workspace) {
+			ws.BNK.FLP = &config.BNKFLPCfg{Mode: "vsi", VSI: &config.BNKFLPVSICfg{
+				VPC: "r014-adopted", CreateVPC: true,
+			}}
+		})
+		if err == nil {
+			t.Fatal("both set must be refused — create_vpc wins silently in the module")
+		}
+		if !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Errorf("the error must say why: %v", err)
+		}
+	})
+
+	t.Run("subnets adopted without the VPC", func(t *testing.T) {
+		err := render(func(ws *config.Workspace) {
+			ws.Cluster.ExistingSubnetIDs = []string{"a", "b", "c"} // cluster_vpc left at create:true
+		})
+		if err == nil {
+			t.Fatal("adopting subnets without adopting their VPC must be refused")
+		}
+		if !strings.Contains(err.Error(), "cluster_vpc") {
+			t.Errorf("the error must name the missing half: %v", err)
+		}
+	})
+
+	t.Run("each alone is fine", func(t *testing.T) {
+		if err := render(func(ws *config.Workspace) {
+			ws.BNK.FLP = &config.BNKFLPCfg{Mode: "vsi", VSI: &config.BNKFLPVSICfg{CreateVPC: true}}
+		}); err != nil {
+			t.Errorf("create_vpc alone must render: %v", err)
+		}
+		if err := render(func(ws *config.Workspace) {
+			ws.BNK.FLP = &config.BNKFLPCfg{Mode: "vsi", VSI: &config.BNKFLPVSICfg{VPC: "r014-adopted"}}
+		}); err != nil {
+			t.Errorf("vpc alone must render: %v", err)
+		}
+	})
+}

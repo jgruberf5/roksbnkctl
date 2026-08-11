@@ -188,6 +188,10 @@ data "ibm_is_subnet" "existing_cluster" {
       condition     = length(var.existing_cluster_subnet_ids) == 3
       error_message = "existing_cluster_subnet_ids needs exactly 3 subnet ids, one per zone, in zone order — a ROKS cluster spans three availability zones."
     }
+    precondition {
+      condition     = length(distinct(var.existing_cluster_subnet_ids)) == length(var.existing_cluster_subnet_ids)
+      error_message = "existing_cluster_subnet_ids contains a duplicate — each zone needs its own subnet."
+    }
   }
 }
 
@@ -291,7 +295,11 @@ locals {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
-  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone1 == "" ? 1 : 0
+  # Adopted subnets bring their own egress. Creating a gateway here would put an
+  # unrequested, billable resource in someone else's VPC attached to NOTHING — our
+  # subnets are count=0 on that path, so nothing consumes it — in a network whose
+  # owner configured egress deliberately.
+  count          = var.create_cluster && !var.use_existing_cluster_subnets && var.cluster_public_gateway && local.pgw_existing_zone1 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone1"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[0]
@@ -304,7 +312,11 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone1" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
-  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone2 == "" ? 1 : 0
+  # Adopted subnets bring their own egress. Creating a gateway here would put an
+  # unrequested, billable resource in someone else's VPC attached to NOTHING — our
+  # subnets are count=0 on that path, so nothing consumes it — in a network whose
+  # owner configured egress deliberately.
+  count          = var.create_cluster && !var.use_existing_cluster_subnets && var.cluster_public_gateway && local.pgw_existing_zone2 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone2"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[1]
@@ -317,7 +329,11 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone2" {
 }
 
 resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
-  count          = var.create_cluster && var.cluster_public_gateway && local.pgw_existing_zone3 == "" ? 1 : 0
+  # Adopted subnets bring their own egress. Creating a gateway here would put an
+  # unrequested, billable resource in someone else's VPC attached to NOTHING — our
+  # subnets are count=0 on that path, so nothing consumes it — in a network whose
+  # owner configured egress deliberately.
+  count          = var.create_cluster && !var.use_existing_cluster_subnets && var.cluster_public_gateway && local.pgw_existing_zone3 == "" ? 1 : 0
   name           = "${var.openshift_cluster_name}-gateway-zone3"
   vpc            = local.cluster_vpc_id
   zone           = local.zones[2]
@@ -381,6 +397,16 @@ resource "ibm_resource_instance" "cos_instance" {
 
 # Create OpenShift cluster
 resource "ibm_container_vpc_cluster" "openshift_cluster" {
+  # The zones come from the adopted subnets, so three subnets in one zone yields
+  # three identical zone blocks. IBM rejects that late in the apply with a message
+  # about the worker pool, long after the plan looked fine — catch it at plan time.
+  lifecycle {
+    precondition {
+      condition     = !var.use_existing_cluster_subnets || length(distinct(local.cluster_subnet_zones)) == 3
+      error_message = "the three subnets in existing_cluster_subnet_ids must be in three DIFFERENT zones — a ROKS cluster spans three availability zones and IBM rejects a worker pool with duplicate zones."
+    }
+  }
+
   count             = var.create_cluster ? 1 : 0
   name              = var.openshift_cluster_name
   vpc_id            = local.cluster_vpc_id
