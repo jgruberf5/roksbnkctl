@@ -35,12 +35,25 @@ import (
 // "ibmcloud_terraform_bigip_next_for_kubernetes_2_3-0.6.7/"); we strip
 // it so the .tf files land directly under the dest.
 func FetchSource(ctx context.Context, src config.TFSourceCfg, baseDir string) (string, error) {
+	return FetchSourceForLine(ctx, src, baseDir, "")
+}
+
+// FetchSourceForLine is FetchSource with the BNK release line the source is
+// being fetched FOR.
+//
+// Only the embedded source varies by line — a local path or a GitHub ref is
+// already a specific tree the user chose, and silently layering onto it would
+// mean they are not running what they pointed at.
+//
+// An empty line, or a line with no overlay, extracts the base tree unchanged.
+// That is the normal case and the one every existing workspace takes.
+func FetchSourceForLine(ctx context.Context, src config.TFSourceCfg, baseDir, line string) (string, error) {
 	switch src.Type {
 	case "", "embedded":
 		if baseDir == "" {
 			return "", fmt.Errorf("baseDir is empty (where should the embedded source be extracted?)")
 		}
-		return extractEmbeddedTF(baseDir)
+		return extractEmbeddedTF(baseDir, line)
 
 	case "local":
 		if src.Path == "" {
@@ -90,7 +103,7 @@ func FetchSource(ctx context.Context, src config.TFSourceCfg, baseDir string) (s
 // roksbnkctl's overall startup cost so the redundant write is fine.
 //
 // Returns the resolved source dir for terraform-exec.
-func extractEmbeddedTF(baseDir string) (string, error) {
+func extractEmbeddedTF(baseDir, line string) (string, error) {
 	dest := filepath.Join(baseDir, "embedded-terraform")
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return "", fmt.Errorf("creating %s: %w", dest, err)
@@ -123,6 +136,16 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 			}
 			return nil
 		}
+		// The per-line overlays are not part of the base tree — they are
+		// applied on top of it below, and only the one for this release.
+		// Extracting them all would leave every other line's HCL sitting in
+		// the module tree.
+		if rel == overlayRoot || strings.HasPrefix(rel, overlayRoot+"/") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		target := filepath.Join(cleanDest, rel)
 		if !strings.HasPrefix(target, cleanDest+string(os.PathSeparator)) && target != cleanDest {
 			return fmt.Errorf("embed entry escapes destination: %s", path)
@@ -142,7 +165,68 @@ func extractEmbeddedTF(baseDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("extracting embedded terraform: %w", err)
 	}
+	if err := applyLineOverlay(cleanDest, line); err != nil {
+		return "", err
+	}
 	return dest, nil
+}
+
+// overlayRoot is where per-line HCL lives inside the embedded tree, relative to
+// terraform/. See terraform/lines/README.md.
+const overlayRoot = "lines"
+
+// applyLineOverlay writes terraform/lines/<line>/ over an already-extracted base
+// tree: same relative path replaces, new path is added, nothing is removed.
+//
+// A missing overlay is the NORMAL case, not an error — most releases are served
+// by the base tree, and treating "no overlay" as a failure would make adding the
+// mechanism a breaking change for every line that does not need it.
+func applyLineOverlay(destRoot, line string) error {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	// The line is derived from a version string rather than typed by a user, but
+	// it still ends up in a filesystem path, so it does not get to contain one.
+	if strings.ContainsAny(line, `/\`) || line == "." || line == ".." {
+		return fmt.Errorf("refusing to use %q as a terraform overlay name", line)
+	}
+
+	root := overlayRoot + "/" + line
+	src := "terraform/" + root
+	if _, err := fs.Stat(roksbnkctl.EmbeddedTerraform, src); err != nil {
+		return nil // no overlay for this line — base tree stands alone
+	}
+
+	return fs.WalkDir(roksbnkctl.EmbeddedTerraform, src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(path, src), "/")
+		if rel == "" {
+			return nil
+		}
+		target := filepath.Join(destRoot, rel)
+		if !strings.HasPrefix(target, destRoot+string(os.PathSeparator)) {
+			return fmt.Errorf("overlay entry escapes destination: %s", path)
+		}
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		// The overlay's own README documents the mechanism for maintainers; it
+		// is not HCL and has no business in an extracted module tree.
+		if rel == "README.md" {
+			return nil
+		}
+		body, err := fs.ReadFile(roksbnkctl.EmbeddedTerraform, path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, body, 0o644)
+	})
 }
 
 // EnsureProvidersExecutable heals a stale <sourceDir>/.terraform/providers
