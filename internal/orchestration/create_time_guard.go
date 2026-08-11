@@ -1,6 +1,7 @@
 package orchestration
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -85,7 +86,7 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 // Runs before the BNK phase plans, where both halves are finally known: the line
 // derived from bnk.manifest_version, and what the cluster actually is from its
 // own record. Neither half alone is enough to tell.
-func guardSupportedCombination(cctx *config.Context) error {
+func guardSupportedCombination(cctx *config.Context, w io.Writer) error {
 	if cctx == nil || cctx.Workspace == nil {
 		return nil
 	}
@@ -97,7 +98,18 @@ func guardSupportedCombination(cctx *config.Context) error {
 	// the pairing to the run that actually has a cluster.
 	out, rerr := config.ReadClusterOutputs(cctx.WorkspaceName)
 	if rerr != nil || out == nil || out.ClusterID == "" {
-		return config.CheckSupported(line, cctx.Workspace.ClusterNetworkMode(), 0)
+		err = config.CheckSupported(line, cctx.Workspace.ClusterNetworkMode(), 0)
+	} else {
+		err = config.CheckSupported(line, out.Network(), out.Schema())
 	}
-	return config.CheckSupported(line, out.Network(), out.Schema())
+
+	// A line this build has never heard of is missing information, not a known
+	// incompatibility — and a release newer than the binary is the ordinary way
+	// to get here. Say so and continue; refusing would mean every build refuses
+	// every BNK release that ships after it.
+	if errors.Is(err, config.ErrUnknownLine) {
+		fmt.Fprintf(w, "! %v\n", err)
+		return nil
+	}
+	return err
 }

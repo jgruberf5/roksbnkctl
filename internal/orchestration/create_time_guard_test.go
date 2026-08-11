@@ -161,19 +161,19 @@ func TestSupportedCombinationGuard(t *testing.T) {
 		SchemaVersion: config.ContractSchemaVersion,
 		NetworkMode:   config.NetworkModeMultiNIC,
 	})
-	if err := guardSupportedCombination(cctx); err == nil {
+	if err := guardSupportedCombination(cctx, &bytes.Buffer{}); err == nil {
 		t.Error("2.3 driving a multi-nic cluster must be refused")
 	}
 
 	// 2.4 can, and must also still drive a legacy single-nic cluster.
 	cctx.Workspace.BNK.ManifestVersion = "2.4.0-1.2.3-0.0.1"
-	if err := guardSupportedCombination(cctx); err != nil {
+	if err := guardSupportedCombination(cctx, &bytes.Buffer{}); err != nil {
 		t.Errorf("2.4 + multi-nic must be supported: %v", err)
 	}
 
 	legacy := stageGuardWS(t, "", &config.ClusterOutputs{ClusterName: "old", ClusterID: "o1"})
 	legacy.Workspace.BNK.ManifestVersion = "2.4.0-1.2.3-0.0.1"
-	if err := guardSupportedCombination(legacy); err != nil {
+	if err := guardSupportedCombination(legacy, &bytes.Buffer{}); err != nil {
 		t.Errorf("2.4 must drive a cluster created before multi-nic existed: %v", err)
 	}
 }
@@ -183,7 +183,7 @@ func TestSupportedCombinationGuard(t *testing.T) {
 func TestUnparseableManifestIsRefused(t *testing.T) {
 	cctx := stageGuardWS(t, "", nil)
 	cctx.Workspace.BNK.ManifestVersion = "not-a-version"
-	if err := guardSupportedCombination(cctx); err == nil {
+	if err := guardSupportedCombination(cctx, &bytes.Buffer{}); err == nil {
 		t.Error("an unparseable manifest version must be refused, not guessed")
 	}
 }
@@ -193,7 +193,7 @@ func TestGuardsTolerateMissingWorkspace(t *testing.T) {
 	if err := guardCreateTimeSettings(nil, &bytes.Buffer{}); err != nil {
 		t.Errorf("nil context: %v", err)
 	}
-	if err := guardSupportedCombination(&config.Context{}); err != nil {
+	if err := guardSupportedCombination(&config.Context{}, &bytes.Buffer{}); err != nil {
 		t.Errorf("context with no workspace: %v", err)
 	}
 }
@@ -204,5 +204,50 @@ func TestInvalidNetworkModeIsRefusedOnTheBNKPath(t *testing.T) {
 	cctx := stageGuardWS(t, "dual-nic", nil)
 	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err == nil {
 		t.Error("an unknown network mode must be refused before planning")
+	}
+}
+
+// A release newer than this binary is the ORDINARY way to meet an unknown line —
+// the matrix ships inside the binary, and the BNK Forge modules pin the runner
+// image by digest, so "use a newer build" is not available to someone choosing a
+// BNK release. Refusing would make every build refuse every release that ships
+// after it.
+func TestUnknownBNKLineWarnsAndProceeds(t *testing.T) {
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{ClusterName: "c", ClusterID: "c1"})
+	cctx.Workspace.BNK.ManifestVersion = "9.9.0-1.2.3-0.0.1"
+
+	var buf bytes.Buffer
+	if err := guardSupportedCombination(cctx, &buf); err != nil {
+		t.Fatalf("an unknown line is missing information, not a known incompatibility: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "9.9") {
+		t.Errorf("the warning must name the line it does not know: %q", out)
+	}
+	// A silent proceed is worse than either alternative — it claims verification
+	// that did not happen.
+	if out == "" {
+		t.Error("proceeding silently claims a check that was never made")
+	}
+}
+
+// The distinction that keeps BNK Forge working: silence is not an assertion.
+// Forge regenerates config.yaml per step from a curated env list, so a mode the
+// cluster-creating step set is simply ABSENT when the installing step runs.
+// Only an EXPLICIT contradiction may refuse.
+func TestUnsetModeDefersToTheRecord(t *testing.T) {
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{
+		ClusterName: "multi", ClusterID: "m1",
+		SchemaVersion: config.ContractSchemaVersion,
+		NetworkMode:   config.NetworkModeMultiNIC,
+	})
+	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err != nil {
+		t.Fatalf("an unset network_mode cannot contradict the record: %v", err)
+	}
+
+	// But an explicit one still can — that is the case worth refusing.
+	cctx.Workspace.Cluster.NetworkMode = config.NetworkModeSingleNIC
+	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err == nil {
+		t.Error("an explicit single-nic against a multi-nic cluster must still be refused")
 	}
 }

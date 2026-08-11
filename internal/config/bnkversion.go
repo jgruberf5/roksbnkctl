@@ -105,6 +105,24 @@ func CheckNetworkMode(ws *Workspace, out *ClusterOutputs) error {
 	if out == nil || out.ClusterID == "" {
 		return nil
 	}
+
+	// SILENCE IS NOT AN ASSERTION. An unset network_mode means the config does
+	// not have an opinion, so it cannot contradict the record — only an
+	// EXPLICIT value can. The distinction is invisible through
+	// ClusterNetworkMode(), which collapses unset to single-nic, so read the raw
+	// field here.
+	//
+	// This matters because config.yaml is not always hand-written and durable.
+	// The BNK Forge modules regenerate it per step from a curated env list
+	// (`init --override-from-env --non-interactive` against a shared workspace),
+	// so a setting the cluster-creating step passed is simply absent by the time
+	// the installing step runs. Treating that absence as "the user asks for
+	// single-nic" would refuse a correct multi-NIC deployment at its second
+	// step, for a contradiction nobody expressed.
+	if ws == nil || strings.TrimSpace(ws.Cluster.NetworkMode) == "" {
+		return nil
+	}
+
 	if got := out.Network(); got != mode {
 		return fmt.Errorf(
 			"cluster %q was created as a %s cluster, but this workspace now asks for %s.\n\n"+

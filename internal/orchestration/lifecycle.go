@@ -347,7 +347,7 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	// BNK line from bnk.manifest_version, and what the cluster actually IS from its
 	// own record. Refusing an unsupported pairing now costs a second; discovering it
 	// during the apply costs a cluster in a state neither half expects.
-	if err := guardSupportedCombination(cctx); err != nil {
+	if err := guardSupportedCombination(cctx, w); err != nil {
 		return false, nil, err
 	}
 	// A create-time setting that contradicts the built cluster means a REPLACEMENT,

@@ -192,6 +192,20 @@ there, rather than letting it fail against real infrastructure. The matrix is
 data (`internal/config/support_matrix.yaml`), not a rule buried in code, so
 adding a release is an edit to a table.
 
+A release the matrix has never heard of **warns and proceeds**. The matrix ships
+inside the binary, so an unknown line usually means the binary predates the
+release — that is missing information, not a known incompatibility, and refusing
+on it would make every build refuse every BNK release that shipped after it.
+This matters most where the binary is pinned: the [BNK Forge
+modules](./24a-bnk-forge-registration.md) pin the runner image by digest, so
+"use a newer build" is not something a user choosing a BNK release can do.
+
+Leaving `network_mode` unset is likewise not a claim. Only an **explicit** value
+that contradicts the cluster's record is refused; silence defers to the record.
+Configs are not always hand-written and durable — the Forge modules regenerate
+`config.yaml` per step from a curated environment — so absence has to mean "no
+opinion", not "single-nic, and I insist".
+
 ### `bnk.preflight:` — the reachability gate's timers
 
 Before `bnk up` plans anything, it probes the mirror (and the F5 License Proxy, when one is

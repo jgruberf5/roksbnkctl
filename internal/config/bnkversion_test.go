@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // The BNK line is DERIVED, not configured — that is what keeps this change from
 // touching config.yaml at all. If derivation is wrong, the tool silently selects
@@ -89,8 +92,19 @@ func TestCheckSupported(t *testing.T) {
 	if err := CheckSupported("2.3", NetworkModeMultiNIC, 2); err == nil {
 		t.Error("2.3 does not express multi-nic and must refuse it")
 	}
-	if err := CheckSupported("9.9", NetworkModeSingleNIC, 1); err == nil {
-		t.Error("an unknown BNK line must be refused, not assumed")
+	// An unknown line is reported through a SENTINEL, because callers must be
+	// able to tell "I have no information about this release" from "this pairing
+	// is wrong" — the first is survivable and the second is not.
+	err := CheckSupported("9.9", NetworkModeSingleNIC, 1)
+	if err == nil {
+		t.Error("an unknown BNK line must be reported, not silently accepted")
+	} else if !errors.Is(err, ErrUnknownLine) {
+		t.Errorf("unknown line must be distinguishable via ErrUnknownLine, got %v", err)
+	}
+	// The unsupported-PAIRING failure must NOT be that sentinel, or callers that
+	// tolerate an unknown line would tolerate a known-wrong combination too.
+	if err := CheckSupported("2.3", NetworkModeMultiNIC, 2); errors.Is(err, ErrUnknownLine) {
+		t.Error("a known line with an unsupported mode must not read as an unknown line")
 	}
 }
 

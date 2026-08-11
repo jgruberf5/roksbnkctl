@@ -2,6 +2,7 @@ package config
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,18 @@ import (
 
 //go:embed support_matrix.yaml
 var supportMatrixYAML []byte
+
+// ErrUnknownLine reports a BNK release this build's matrix has never heard of.
+//
+// Deliberately a SENTINEL rather than a plain error, because it is the one
+// failure here that must not be fatal. The matrix ships inside the binary, so
+// "unknown" means the binary is older than the release — not that the pairing is
+// wrong. Refusing on it would make every build refuse every BNK release that
+// ships after it, and the BNK Forge modules pin the runner image by digest, so
+// "use a newer build" is not something a user selecting a release can do.
+//
+// Absence of information is not evidence of incompatibility. Callers warn.
+var ErrUnknownLine = errors.New("unknown BNK release line")
 
 // SupportLine is one row of the matrix: a BNK release and what it can drive.
 type SupportLine struct {
@@ -72,9 +85,10 @@ func CheckSupported(bnkLine, networkMode string, schema int) error {
 			known = append(known, x.BNK)
 		}
 		sort.Strings(known)
-		return fmt.Errorf("BNK %s is not a supported release line (this build supports %s).\n"+
-			"  The line is derived from bnk.manifest_version — check it names a published manifest",
-			bnkLine, strings.Join(known, ", "))
+		return fmt.Errorf("%w: BNK %s is not in this build's support matrix (it knows %s).\n"+
+			"  The line is derived from bnk.manifest_version. If %s is newer than this build,\n"+
+			"  the combination is simply unverified here — not known to be wrong",
+			ErrUnknownLine, bnkLine, strings.Join(known, ", "), bnkLine)
 	}
 	if networkMode != "" && !contains(l.NetworkModes, networkMode) {
 		return fmt.Errorf("BNK %s does not support %s clusters (it supports %s).\n"+
