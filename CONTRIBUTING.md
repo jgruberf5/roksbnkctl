@@ -20,6 +20,20 @@ Fixes land on the branch that needs them and are carried forward by
 lines into it produces a branch that tracks no product line coherently, and that
 breaks as soon as a third line exists.
 
+### `Closes #N` does not work on a release branch
+
+GitHub auto-closes an issue only when the PR carrying the keyword merges into the
+repository's **default branch**. Every PR here targets `bnk-2-3`, so `Closes #123`
+in a PR description is **inert** — the issue stays open after the merge, silently,
+with no warning on the PR.
+
+Use `Refs #123` to set expectations honestly, and close the issue by hand once it
+is merged, quoting the merge commit. It costs one command and is accurate; a
+`Closes` that never fires reads as a merge that did not do what it said.
+
+This changes back the day `bnk-2-3` is no longer the working branch, so do not
+build tooling around it.
+
 ### Versions do not encode the BNK version
 
 **`roksbnkctl`'s version is independent of the BNK version.** Every branch shares
