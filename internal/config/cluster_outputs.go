@@ -94,6 +94,14 @@ type ClusterOutputs struct {
 	// warning at it on every run trains people to ignore the warning.
 	VPCCIDR string `json:"vpc_cidr,omitempty"`
 
+	// NOT YET POPULATED BY ANY WRITER. Declared as part of contract v2 so the
+	// shape is fixed before there is anything to put in it — multi-NIC ROKS has
+	// not shipped, so no code path can fill this in honestly yet. Readers must
+	// treat empty as "unknown", never as "this cluster has no extra interfaces":
+	// on every cluster that exists today both are true, but on the first
+	// multi-NIC cluster written by a build that still lacks the writer, only the
+	// first would be.
+	//
 	// NodeInterfaces describes the worker network attachments a multi-NIC cluster
 	// exposes, which the BNK phase needs to render F5SPKVlan attachments and
 	// CNEInstance options against. Empty on single-NIC clusters, where the single
