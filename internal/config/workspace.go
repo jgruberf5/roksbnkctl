@@ -169,6 +169,17 @@ type ClusterCfg struct {
 	// prefixes. Rendered as cluster_vpc_cidr.
 	VPCCIDR string `yaml:"vpc_cidr,omitempty"`
 
+	// NetworkMode selects how the cluster's worker nodes are attached:
+	// "single-nic" (the default, and today's only behaviour) or "multi-nic".
+	//
+	// CREATE-TIME ONLY and immutable thereafter. Converting a cluster between
+	// modes is not supported: terraform would plan a replacement of a running
+	// cluster, so a workspace whose mode disagrees with its cluster-outputs.json
+	// is refused rather than planned.
+	//
+	// Empty means single-nic, so every existing config.yaml is unaffected.
+	NetworkMode string `yaml:"network_mode,omitempty"`
+
 	// ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per
 	// zone in zone order, instead of creating them (#61).
 	//
