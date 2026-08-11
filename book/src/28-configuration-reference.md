@@ -87,6 +87,7 @@ cluster:
 | `min_worker_memory_gb` | integer | `64` | 8+ | Minimum memory (GB) for the same worker-flavor auto-select. Renders into `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
 | `existing_subnet_ids` | list | (empty) | three subnet ids, zone order | Place the cluster in subnets that **already exist** instead of creating them. Renders `use_existing_cluster_subnets` + `existing_cluster_subnet_ids`. Requires `resources.cluster_vpc: { create: false, existing: <vpc-id> }` — a subnet cannot be adopted independently of its VPC, and terraform fails at plan with that message if you try. Each subnet's **zone is read from the subnet**, not from the region default, so they may be in any zone order the VPC owner chose. For estates where address space is allocated centrally: adopting the VPC alone still creates three subnets inside it, leaving the cluster outside whatever ACLs and routing made that network acceptable. |
 | `vpc_cidr` | string | (empty) | a `/18` or larger IPv4 CIDR | Address block a **new** cluster VPC's three per-zone prefixes are carved from (`10.242.0.0/16` → `10.242.0.0/18`, `.64.0/18`, `.128.0/18`) → `cluster_vpc_cidr`. Empty leaves IBM's `auto` management, which gives **every** VPC in a region the same prefixes — two such clusters cannot share a Transit Gateway, which blackholes traffic for one of them silently. Set a distinct block per cluster when they share a gateway; see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md#first-give-each-cluster-vpc-its-own-address-block). Split three ways, so `/18` is the smallest usable block. CREATE-time only — ignored when adopting an existing VPC. Env: `ROKSBNKCTL_CLUSTER_VPC_CIDR`. |
+| `network_mode` | string | `single-nic` | `single-nic`, `multi-nic` | How the worker nodes are attached → `cluster_network_mode`. Omitted means `single-nic`, which is what every cluster built with this tool so far is; the setting exists to *name* that, not to change it. `multi-nic` needs a BNK release that expresses it — the pairing is checked against the [support matrix](#bnk-release-and-network-mode) at plan time, not discovered against a live cluster. **CREATE-time only and enforced:** a cluster is never converted between modes in place, so changing this on a workspace that already has a cluster is refused rather than planned (what terraform would otherwise plan is a *replacement* of the running cluster that reads like an update). Env: `ROKSBNKCTL_CLUSTER_NETWORK_MODE`. |
 
 ## `resources:` block
 
@@ -157,6 +158,39 @@ bnk:
 | `cert_manager.version` | string | (HCL default) | a published cert-manager chart version | Pins the cert-manager Helm chart (`cert_manager_version`). Useful for air-gap / compliance version pinning. |
 
 All fields are optional; omitting renders the HCL's own defaults. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under `bnk.network` — `roksbnkctl init` prompts for it (opt in at *"Customize BNK networking?"*), or see [Chapter 12 §`bnk.network`](./12-workspace-config.md). FLP settings live under `bnk.flp` (see the master table below); `bnk.flp.storage_class` sets the FLP's PVC StorageClass.
+
+### BNK release and network mode
+
+Two versions vary here, independently, and they interact.
+
+**The BNK release** decides the terraform and the F5 CRDs. It is not a separate
+setting — it is *derived* from `bnk.manifest_version`, which already pins the
+release: `2.3.0-3.2598.3-0.0.170` is the `2.3` line. Deriving it is deliberate.
+A second field naming the line could disagree with the manifest actually being
+installed, and the failure from that disagreement would arrive as a CRD mismatch
+against a live cluster, hours later.
+
+**The cluster's network mode** decides what BNK has to attach to. It comes from
+`cluster.network_mode`, is fixed when the cluster is built, and is written into
+the cluster's own record so that later runs read what the cluster *is* rather
+than what the config currently asks for.
+
+Not every pairing exists:
+
+| BNK line | `single-nic` | `multi-nic` |
+|---|---|---|
+| 2.3 | ✅ | ❌ — 2.3 does not express the multi-NIC network attachments or CNEInstance options |
+| 2.4 | ✅ | ✅ |
+
+A 2.4 install still drives a single-NIC cluster, including one created before
+multi-NIC existed. That is what lets an existing deployment move to 2.4 without
+touching its cluster. What does not exist is a conversion: a cluster is built in
+one mode and stays in it.
+
+`roksbnkctl` checks the pairing before it plans and refuses an unsupported one
+there, rather than letting it fail against real infrastructure. The matrix is
+data (`internal/config/support_matrix.yaml`), not a rule buried in code, so
+adding a release is an edit to a table.
 
 ### `bnk.preflight:` — the reachability gate's timers
 
@@ -525,6 +559,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.public_gateway` | bool | `true` | Worker Internet egress via a per-subnet public gateway → `cluster_public_gateway`. `false` = private/disconnected cluster (no egress; expert — see [Chapter 10a](./10a-air-gapped-install.md)). Settable from the environment with `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY`; it is a tri-state, so *unset* inherits the terraform default rather than rendering `true`. |
 | `cluster.min_worker_vcpu_count` | integer | `16` | Worker-flavor auto-select floor (vCPUs) → `roks_min_worker_vcpu_count`. `0`/omitted keeps the HCL default. |
 | `cluster.min_worker_memory_gb` | integer | `64` | Worker-flavor auto-select floor (GB) → `roks_min_worker_memory_gb`. `0`/omitted keeps the HCL default. |
+| `cluster.network_mode` | string | `single-nic` | Worker attachment mode → `cluster_network_mode`. Create-time only and enforced; checked against the BNK line derived from `bnk.manifest_version`. |
 | `cluster.vpc_cidr` | string | (empty) | Address block for a new cluster VPC → `cluster_vpc_cidr`. Empty = IBM `auto`, which is identical for every VPC in the region; set a distinct block per cluster sharing a Transit Gateway. `/18` minimum. |
 | `resources.transit_gateway.create` | bool | `true` | Create a prefix-named TGW vs adopt an existing one. Since `v1.8.0`. |
 | `resources.transit_gateway.existing` | string | (empty) | Existing Transit Gateway to attach the cluster VPC to, by **name or id**, when `create: false`. `cluster up`/`register` connects it; `tgw connect` does it after the fact. See [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md). |
@@ -621,6 +656,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `cluster.name` | `init` prompts; programmatic loads error. |
 | `cluster.openshift_version` | Empty string passed to upstream HCL; the module picks the current default. |
 | `cluster.workers_per_zone` | Falls through to `1` (upstream HCL default). |
+| `cluster.network_mode` | The cluster is built and recorded as `single-nic` — identical to every cluster built before the setting existed. |
 | `cluster.vpc_cidr` | `cluster_vpc_cidr` is omitted from the generated tfvars; the VPC keeps IBM's `auto` address prefixes (`10.241.0.0/18`, `10.241.64.0/18`, `10.241.128.0/18`). |
 | `bnk.*` | Each field is omitted from the generated `terraform.tfvars` and the upstream HCL default applies. |
 | `test.throughput.*` | Coded defaults (30s, 8 streams, `networkstatic/iperf3:latest`) apply. |

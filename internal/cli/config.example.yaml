@@ -43,6 +43,21 @@ cluster:
   #   two clusters will share a gateway. Split into three per-zone /18s (a /16 here),
   #   so /18 is the smallest usable block. Applies at CREATE time only: an existing
   #   VPC's prefixes cannot be changed without replacing its subnets.
+  #
+  # network_mode: single-nic    # single-nic (default) | multi-nic
+  #   How the worker nodes are attached. Omit it and you get single-nic, which is
+  #   what every cluster built with this tool so far is — the setting exists to
+  #   name that, not to change it.
+  #
+  #   multi-nic requires a BNK release that expresses it (2.4 and later; see the
+  #   support matrix — `roksbnkctl` refuses an unsupported pairing at plan time
+  #   rather than failing against a real cluster).
+  #
+  #   CREATE time only, and unlike vpc_cidr this one is ENFORCED: a cluster is not
+  #   converted between modes in place. Changing it on a workspace that already
+  #   has a cluster is refused, because what terraform would otherwise plan is a
+  #   replacement of the running cluster that reads like an update. To move a
+  #   deployment to multi-nic, build a new cluster in a new workspace.
 
 tf_source:
   type: embedded                # embedded | github | local (REQUIRED)
