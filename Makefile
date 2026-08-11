@@ -126,9 +126,18 @@ goreleaser-check:
 # .goreleaser.yml, produces archives + checksums in dist/, validates the
 # release.extra_files paths (incl. the PDF book artifact). Does NOT
 # tag, push, or publish — that's the integrator's tag-cut step.
+# The host's module cache is mounted in. The container otherwise re-downloads
+# every dependency through the Go module proxy, which fails outright on any
+# network that terminates TLS — the host trusts the intercepting CA, a stock
+# container image does not, and the error surfaces as
+# `x509: certificate signed by unknown authority` on storage.googleapis.com.
+# GOPROXY is deliberately NOT set to `off`: a populated cache is used and a gap
+# still falls back to the network, so this is a speed-up where it works and a
+# fix where it is needed, never a new way to fail.
 goreleaser-snapshot:
 	docker run --rm \
 	    -v $(CURDIR):/work \
+	    -v $(shell go env GOMODCACHE):/go/pkg/mod \
 	    -w /work \
 	    $(GORELEASER_IMAGE) release --snapshot --clean
 
