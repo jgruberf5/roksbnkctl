@@ -59,26 +59,6 @@ cluster:
   #   replacement of the running cluster that reads like an update. To move a
   #   deployment to multi-nic, build a new cluster in a new workspace.
 
-  # trusted_profile:            # the IBM Cloud identity the CNE controller assumes
-  #   service_account: f5-cne-controller
-  #   roles: [Viewer, Editor]
-  #   The CNE controller manages the VPC network attachments it creates for TMM. It
-  #   does that as an IBM Cloud Trusted Profile rather than with a stored API key —
-  #   `service_account` names the Kubernetes account allowed to ASSUME the profile,
-  #   and `roles` are what it may do, scoped to this cluster's OWN VPC.
-  #
-  #   service_account must match the account the CNE controller pod actually runs
-  #   as (created by the FLO Helm chart, not by this tool). A mismatch yields a
-  #   profile nobody can assume, and the symptom is an IBM Cloud authorization
-  #   failure at attachment time that names neither this setting nor the profile.
-  #
-  #   Safe to leave identical on every cluster: uniqueness comes from the profile
-  #   name (which carries the cluster name) and the link's cluster CRN, so the same
-  #   account name across an account cannot collide.
-  #
-  #   Narrowing roles fails at attachment time on a RUNNING cluster, not at apply.
-  #   Env: ROKSBNKCTL_TRUSTED_PROFILE_SA / ROKSBNKCTL_TRUSTED_PROFILE_ROLES
-
 tf_source:
   type: embedded                # embedded | github | local (REQUIRED)
 
@@ -102,6 +82,43 @@ resources:
 
 # ---- BNK install -----------------------------------------------------------
 bnk:
+  # trusted_profile:            # the IBM Cloud identity the CNE controller assumes
+  #   service_account: f5-cne-controller
+  #   roles: [Viewer, Editor]
+  #   The CNE controller manages the VPC network attachments it creates for TMM. It
+  #   does that as an IBM Cloud Trusted Profile rather than with a stored API key —
+  #   `service_account` names the Kubernetes account allowed to ASSUME the profile,
+  #   and `roles` are what it may do, scoped to this cluster's OWN VPC.
+  #
+  #   service_account must match the account the CNE controller pod actually runs
+  #   as (created by the FLO Helm chart, not by this tool). A mismatch yields a
+  #   profile nobody can assume, and the symptom is an IBM Cloud authorization
+  #   failure at attachment time that names neither this setting nor the profile.
+  #
+  #   Safe to leave identical on every cluster: uniqueness comes from the profile
+  #   name (which carries the cluster name) and the link's cluster CRN, so the same
+  #   account name across an account cannot collide.
+  #
+  #   Narrowing roles fails at attachment time on a RUNNING cluster, not at apply.
+  #   Env: ROKSBNKCTL_TRUSTED_PROFILE_SA / ROKSBNKCTL_TRUSTED_PROFILE_ROLES
+
+  # gtm:                        # BIG-IP DNS the GSLB datacenter registers with
+  #   url: https://gtm.example.com
+  #   username: admin
+  #   password_b64: <base64>    # ROKSBNKCTL_GTM_PASSWORD takes the RAW value
+  #   gslb_datacenter_name below names the datacenter; this is what it registers
+  #   WITH. Without it the name is a label pointing at nothing.
+
+  # network:
+  #   vlan_prefixlen: 24        # TMM self-IP mask, shared by both VLANs
+  #   vlan_prefixlen_external: 23   # optional; overrides the shared value
+  #   vlan_prefixlen_internal: 26   # optional; the two VLANs need not match
+  #   The mask is INDEPENDENT of the VLAN CIDRs and never derived from them.
+  #   Making TMM treat a smaller or larger block as directly connected, then
+  #   steering the remainder with static routes, is how a specific traffic
+  #   pattern is forced. Nothing validates the two against each other.
+  #   Env: ROKSBNKCTL_VLAN_PREFIXLEN{,_EXTERNAL,_INTERNAL}
+
   manifest_version: 2.3.0-3.2598.3-0.0.170   # BNK manifest (default shown — the BNK 2.3 line)
   # far_repo_url: oci://repo.f5.com/...      # FAR OCI repo for the BNK charts/images
   # flo_namespace: f5-bnk                     # F5 Lifecycle Operator namespace (blank = default)

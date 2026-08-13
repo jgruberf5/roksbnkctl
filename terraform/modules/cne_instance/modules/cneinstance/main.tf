@@ -203,6 +203,43 @@ locals {
             name  = "GSLB_DATACENTER_NAME"
             value = var.cneinstance_gslb_datacenter_name
           },
+          # GTM / BIG-IP DNS connection (#51) — the half GSLB was missing: a
+          # datacenter name with nothing to register it with.
+          #
+          # Emitted under BOTH prefixes, for the same reason CLOUD_VPC sits
+          # alongside VPC_NAME below: the exact names the CNE controller reads
+          # are F5's contract from the BNK install guide, and GSLB_DATACENTER_NAME
+          # is the only one appearing anywhere in this repo to pattern-match
+          # against. Emitting both costs nothing — the controller ignores what it
+          # does not know — and the alternative is a name that is silently wrong,
+          # which for a credential means GSLB quietly never registers.
+          #
+          # VERIFY against the BNK 2.3 install guide and drop the pair that is
+          # not real.
+          {
+            name  = "GSLB_GTM_URL"
+            value = var.cneinstance_gtm_url
+          },
+          {
+            name  = "GSLB_GTM_USERNAME"
+            value = var.cneinstance_gtm_username
+          },
+          {
+            name  = "GSLB_GTM_PASSWORD"
+            value = var.cneinstance_gtm_password
+          },
+          {
+            name  = "GTM_URL"
+            value = var.cneinstance_gtm_url
+          },
+          {
+            name  = "GTM_USERNAME"
+            value = var.cneinstance_gtm_username
+          },
+          {
+            name  = "GTM_PASSWORD"
+            value = var.cneinstance_gtm_password
+          },
           # BNK 2.3 install-guide env names, emitted ALONGSIDE VPC_NAME /
           # IBM_TRUSTED_PROFILE_ID above for cross-version compatibility: the
           # 2.3 CNE controller reads CLOUD_VPC / CLOUD_TRUSTED_PROFILE for the
@@ -339,6 +376,11 @@ locals {
     }
   }
 
+  # 0 means "inherit", so a deployment that never sets these behaves exactly as
+  # it did when one scalar served both VLANs.
+  vlan_prefixlen_external = var.cneinstance_vlan_prefixlen_external != 0 ? var.cneinstance_vlan_prefixlen_external : var.cneinstance_vlan_prefixlen
+  vlan_prefixlen_internal = var.cneinstance_vlan_prefixlen_internal != 0 ? var.cneinstance_vlan_prefixlen_internal : var.cneinstance_vlan_prefixlen
+
   external_vlan_manifest = {
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKVlan"
@@ -347,7 +389,7 @@ locals {
       name         = "external-vlan"
       interfaces   = [var.cneinstance_vlan_external_interface]
       selfip_v4s   = [for z in var.cneinstance_network_zones : z.external_selfip]
-      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      prefixlen_v4 = local.vlan_prefixlen_external
       auto_lasthop = "AUTO_LASTHOP_ENABLED"
     }
   }
@@ -360,7 +402,7 @@ locals {
       name         = "internal-vlan"
       interfaces   = [var.cneinstance_vlan_internal_interface]
       selfip_v4s   = [for z in var.cneinstance_network_zones : z.internal_selfip]
-      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      prefixlen_v4 = local.vlan_prefixlen_internal
       auto_lasthop = "AUTO_LASTHOP_ENABLED"
       internal     = true
     }

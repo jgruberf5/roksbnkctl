@@ -98,6 +98,18 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
 | `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
 | `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` | `cluster.public_gateway` | bool — `false` builds a **disconnected** cluster whose workers have no Internet egress. Unset inherits the terraform default (`true`). |
+| `ROKSBNKCTL_TRUSTED_PROFILE_SA` | `bnk.trusted_profile.service_account` | Kubernetes account allowed to assume the CNE controller's IBM Cloud Trusted Profile. Must match the account the FLO chart creates. |
+| `ROKSBNKCTL_TRUSTED_PROFILE_ROLES` | `bnk.trusted_profile.roles` | IAM roles for that profile, scoped to the cluster's own VPC. **Comma-separated.** An unparseable entry is dropped. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN` | `bnk.network.vlan_prefixlen` | TMM self-IP mask. **Independent of the zone CIDRs and never derived from them** — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are **silently ignored** and the terraform default stands. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL` | `bnk.network.vlan_prefixlen_external` | Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL` | `bnk.network.vlan_prefixlen_internal` | Same, internal VLAN. The two need not match. |
+| `ROKSBNKCTL_GTM_URL` | `bnk.gtm.url` | BIG-IP DNS / GTM the GSLB datacenter registers **with**. Without it, `gslb_datacenter_name` is a label pointing at nothing. |
+| `ROKSBNKCTL_GTM_USERNAME` | `bnk.gtm.username` | GTM user. |
+| `ROKSBNKCTL_GTM_PASSWORD` | `bnk.gtm.password_b64` | GTM password — supplied **raw**, stored base64 (like `IBMCLOUD_API_KEY` and `ROKSBNKCTL_BIGIP_PASSWORD`). |
+| `ROKSBNKCTL_GENERIC_CA_B64` | `registry.generic_ca_b64` | Mirror CA, **verbatim** — already base64, not re-encoded. |
+| `ROKSBNKCTL_GENERIC_CA_SHA256` | `registry.generic_ca_sha256` | The out-of-band CA pin. |
+| `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` | `bnk.preflight.reachability_retry_seconds` | Per-target retry window before the verdict is believed. |
+| `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS` | `bnk.preflight.reachability_timeout_seconds` | Total wait for every node to report. |
 | `ROKSBNKCTL_CLUSTER_NETWORK_MODE` | `cluster.network_mode` | How the workers are attached: `single-nic` (default) or `multi-nic`. Create-time only. Exists for exactly this chapter's case — a runner that never writes a `config.yaml` would otherwise have no way to ask for it. |
 | `ROKSBNKCTL_CLUSTER_VPC_CIDR` | `cluster.vpc_cidr` | CIDR (`/18` or larger) for a **new** cluster VPC's per-zone address prefixes. Unset = IBM `auto`, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See [Chapter 9a](./09a-transit-gateway-sharing.md#first-give-each-cluster-vpc-its-own-address-block). |
 | `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | a Transit Gateway **name or id** — `cluster up`/`register` attaches the cluster VPC to it (see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md)) |

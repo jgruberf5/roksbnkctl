@@ -199,6 +199,33 @@ func extractField(body, name string) string {
 			continue
 		}
 		value := strings.TrimSpace(trim[idx+1:])
+		// Heredoc descriptions (`description = <<-EOT` … `EOT`). Without this
+		// the marker itself was emitted as the description — chapter 29 carried
+		// literal `<<-EOT` cells, which is worse than a missing row because it
+		// looks like content. Collapse the body to one line: the table has one
+		// cell per variable, and a paragraph's first sentences are what a lookup
+		// table is for.
+		if strings.HasPrefix(value, "<<") {
+			marker := strings.TrimLeft(strings.TrimPrefix(value, "<<"), "-")
+			marker = strings.TrimSpace(marker)
+			var para []string
+			for j := i + 1; j < len(lines); j++ {
+				t := strings.TrimSpace(lines[j])
+				if t == marker {
+					break
+				}
+				if t == "" {
+					// Paragraph break: the first paragraph is the summary, and
+					// the rest is rationale that does not belong in a cell.
+					if len(para) > 0 {
+						break
+					}
+					continue
+				}
+				para = append(para, t)
+			}
+			return strings.Join(para, " ")
+		}
 		// Handle multi-line list/object literals: if the value starts
 		// with `[` or `{` and isn't closed on the same line, walk
 		// forward concatenating until balanced.

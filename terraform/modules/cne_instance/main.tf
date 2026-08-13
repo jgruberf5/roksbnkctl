@@ -75,10 +75,15 @@ module "cneinstance" {
   cneinstance_vpc_name             = try(data.ibm_is_vpc.cluster_vpc[0].name, "")
   cneinstance_cloud_region         = var.ibmcloud_cluster_region
   cneinstance_gslb_datacenter_name = var.cneinstance_gslb_datacenter_name
+  cneinstance_gtm_url              = var.cneinstance_gtm_url
+  cneinstance_gtm_username         = var.cneinstance_gtm_username
+  cneinstance_gtm_password         = var.cneinstance_gtm_password
   cneinstance_network_attachments  = var.cneinstance_network_attachments
   # null when unset → the inner module's install-guide zone defaults apply.
-  cneinstance_network_zones  = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
-  cneinstance_vlan_prefixlen = var.cneinstance_vlan_prefixlen
-  cneinstance_tmm_k8s_routes = var.cneinstance_tmm_k8s_routes
-  roksbnkctl_binary          = var.roksbnkctl_binary
+  cneinstance_network_zones           = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
+  cneinstance_vlan_prefixlen          = var.cneinstance_vlan_prefixlen
+  cneinstance_vlan_prefixlen_external = var.cneinstance_vlan_prefixlen_external
+  cneinstance_vlan_prefixlen_internal = var.cneinstance_vlan_prefixlen_internal
+  cneinstance_tmm_k8s_routes          = var.cneinstance_tmm_k8s_routes
+  roksbnkctl_binary                   = var.roksbnkctl_binary
 }

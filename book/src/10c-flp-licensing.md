@@ -543,6 +543,15 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 | Environment variable | Overrides |
 |---|---|
 | `ROKSBNKCTL_LICENSE_MODE` | `bnk.license_mode` |
+| `ROKSBNKCTL_FLP_MODE` | `bnk.flp.mode` (`""` \| `helm` \| `vsi`) |
+| `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` — license via a proxy in **another** cluster |
+| `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` (verbatim; already base64) |
+| `ROKSBNKCTL_FLP_VSI_CREATE_VPC` | `bnk.flp.vsi.create_vpc` — give the proxy its **own** VPC |
+| `ROKSBNKCTL_FLP_VSI_VPC_NAME` | `bnk.flp.vsi.vpc_name` |
+| `ROKSBNKCTL_FLP_VSI_SUBNET_CIDR` | `bnk.flp.vsi.subnet_cidr` |
+| `ROKSBNKCTL_FLP_VSI_VPC` | `bnk.flp.vsi.vpc` — adopt an existing VPC (mutually exclusive with `_CREATE_VPC`) |
+| `ROKSBNKCTL_FLP_VSI_ZONE` / `_PROFILE` / `_SSH_KEY` / `_BOOT_SIZE_GB` / `_REACH` / `_FLOATING_IP` | the rest of `bnk.flp.vsi.*` |
+| `ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS` / `_LICENSING_ALLOWED_CIDRS` | the two per-plane security-group lists (comma-separated) |
 | `ROKSBNKCTL_FLP_NAMESPACE` | `bnk.flp.namespace` |
 
 | File | Written by | Read by |

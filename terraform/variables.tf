@@ -415,6 +415,25 @@ variable "cneinstance_deployment_size" {
   default     = "Small"
 }
 
+variable "cneinstance_gtm_url" {
+  description = "BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gtm_username" {
+  description = "Username for the GTM at cneinstance_gtm_url."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gtm_password" {
+  description = "Password for the GTM at cneinstance_gtm_url."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "cneinstance_gslb_datacenter_name" {
   description = "GSLB datacenter name for CNEInstance (optional)"
   type        = string
@@ -436,6 +455,38 @@ variable "cneinstance_network_zones" {
     internal_selfip = string
   }))
   default = []
+}
+
+variable "cneinstance_vlan_prefixlen_external" {
+  description = <<-EOT
+    External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen,
+    so a deployment that does not care keeps one knob and one value.
+
+    Exists because the external and internal VLANs are not always the same size:
+    an estate can front TMM on a /23 while keeping the internal side a /26, and a
+    single shared scalar cannot express that. Setting it does NOT imply the
+    subnets differ — the mask is deliberately independent of the CIDRs, so that a
+    smaller or larger directly-connected block can be forced and the remainder
+    steered with static routes.
+  EOT
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.cneinstance_vlan_prefixlen_external == 0 || (var.cneinstance_vlan_prefixlen_external >= 1 && var.cneinstance_vlan_prefixlen_external <= 32)
+    error_message = "cneinstance_vlan_prefixlen_external must be 0 (inherit) or a valid IPv4 prefix length 1-32."
+  }
+}
+
+variable "cneinstance_vlan_prefixlen_internal" {
+  description = "Internal VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen. See the external variable for why the two can differ."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.cneinstance_vlan_prefixlen_internal == 0 || (var.cneinstance_vlan_prefixlen_internal >= 1 && var.cneinstance_vlan_prefixlen_internal <= 32)
+    error_message = "cneinstance_vlan_prefixlen_internal must be 0 (inherit) or a valid IPv4 prefix length 1-32."
+  }
 }
 
 variable "cneinstance_vlan_prefixlen" {

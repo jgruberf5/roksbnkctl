@@ -353,8 +353,8 @@ cert-manager, FLO, and CIS install as `helm_release` resources with `wait = true
 
 The chart installs have **prerequisites** that must exist first, or `helm_release wait = true` would hang on `ImagePullBackOff`:
 
-- **Namespaces** (`f5-bnk`, `f5-utils`) — `kubernetes_namespace`.
-- **Secrets** — the FAR image-pull secret `far-secret` (in both namespaces) and the CIS `f5-bigip-ctlr-login` login secret — `kubernetes_secret`. These carry the registry credentials the charts pull with, so they are ordered *before* the charts via `depends_on`.
+- **Namespaces** (`f5-bnk`, `f5-utils`) — `kubernetes_namespace`. **One namespace if you collapse them**: setting `bnk.flo_namespace` and `bnk.flo_utils_namespace` to the same value is supported, and the utils-side namespace (and its duplicate secrets) are then not created at all.
+- **Secrets** — the FAR image-pull secret `far-secret` (in both namespaces — or once, when they are collapsed to one) and the CIS `f5-bigip-ctlr-login` login secret — `kubernetes_secret`. These carry the registry credentials the charts pull with, so they are ordered *before* the charts via `depends_on`.
 
 ### 2. The CR layer — `kubectl_manifest` + `wait_for`
 
@@ -402,7 +402,7 @@ Covered above as the chart prerequisites. They use the `hashicorp/kubernetes` pr
 
 All three providers are fed from the **same** `data "ibm_container_cluster_config"` the modules already use — `host`, `token`, and the decoded `cluster_ca_certificate`. The `create_roks_cluster ? 0 : 1` guard that keeps the provider config valid when the cluster doesn't exist yet at plan time is unchanged.
 
-The only **genuinely serial** spine is `cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License`. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the ~16 CNEInstance SCC bindings — carries no `depends_on` edge back to the spine, so Terraform's default parallelism applies them concurrently with the install spine. That parallelism, plus real-readiness gating instead of fixed sleeps, is where the speed comes from.
+The only **genuinely serial** spine is `cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License`. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the CNEInstance SCC bindings (19 — 9 FLO-side, 10 utils-side; 18 when the namespaces are collapsed and the duplicate `default` binding dedupes) — carries no `depends_on` edge back to the spine, so Terraform's default parallelism applies them concurrently with the install spine. That parallelism, plus real-readiness gating instead of fixed sleeps, is where the speed comes from.
 
 ## Why `alekc/kubectl`
 

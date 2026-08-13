@@ -39,6 +39,8 @@ import (
 //	ROKSBNKCTL_TRUSTED_PROFILE_SA   → bnk.trusted_profile.service_account
 //	ROKSBNKCTL_TRUSTED_PROFILE_ROLES → bnk.trusted_profile.roles (comma-separated)
 //	ROKSBNKCTL_VLAN_PREFIXLEN       → bnk.network.vlan_prefixlen (TMM self-IP mask; independent of the zone CIDRs)
+//	ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL → bnk.network.vlan_prefixlen_external (overrides the shared value for one VLAN)
+//	ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL → bnk.network.vlan_prefixlen_internal
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_EXISTING_SUBNET_IDS  → cluster.existing_subnet_ids (comma-separated, zone order)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
@@ -52,6 +54,9 @@ import (
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_GENERIC_CA_B64       → registry.generic_ca_b64 (verbatim; already base64)
 //	ROKSBNKCTL_GENERIC_CA_SHA256    → registry.generic_ca_sha256 (the out-of-band CA pin)
+//	ROKSBNKCTL_GTM_URL              → bnk.gtm.url (BIG-IP DNS for GSLB; #51)
+//	ROKSBNKCTL_GTM_USERNAME         → bnk.gtm.username
+//	ROKSBNKCTL_GTM_PASSWORD         → bnk.gtm.password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
@@ -198,6 +203,21 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
+	// GTM / BIG-IP DNS connection for GSLB (#51). Same shape as the CIS BIG-IP
+	// credentials: the password arrives RAW and is stored base64.
+	if v := envValue("ROKSBNKCTL_GTM_URL"); v != "" {
+		gtmCfg(ws).URL = v
+		applied = append(applied, "bnk.gtm.url (ROKSBNKCTL_GTM_URL)")
+	}
+	if v := envValue("ROKSBNKCTL_GTM_USERNAME"); v != "" {
+		gtmCfg(ws).Username = v
+		applied = append(applied, "bnk.gtm.username (ROKSBNKCTL_GTM_USERNAME)")
+	}
+	if v := envValue("ROKSBNKCTL_GTM_PASSWORD"); v != "" {
+		gtmCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
+		applied = append(applied, "bnk.gtm.password_b64 (ROKSBNKCTL_GTM_PASSWORD)")
+	}
+
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
 	// it. Preserves the other resource toggles.
@@ -270,6 +290,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// a zone is emitted only when all six of its fields are set.
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
+	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
 		if ws.Resources == nil {
 			ws.Resources = &ResourcesCfg{}
@@ -406,6 +427,14 @@ func preflightCfg(ws *Workspace) *BNKPreflightCfg {
 // flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
 // are pointers, so a config that never mentioned the FLP would otherwise nil-panic
 // the moment CI sets only the handoff vars.
+// gtmCfg lazily creates bnk.gtm so the overrides above can populate it.
+func gtmCfg(ws *Workspace) *BNKGTMCfg {
+	if ws.BNK.GTM == nil {
+		ws.BNK.GTM = &BNKGTMCfg{}
+	}
+	return ws.BNK.GTM
+}
+
 func flpExternal(ws *Workspace) *BNKFLPExternalCfg {
 	if ws.BNK.FLP == nil {
 		ws.BNK.FLP = &BNKFLPCfg{}
@@ -517,6 +546,36 @@ func overrideVLANPrefixLenFromEnv(ws *Workspace) []string {
 	}
 	ws.BNK.Network.VLANPrefixLen = &n
 	return []string{"bnk.network.vlan_prefixlen (ROKSBNKCTL_VLAN_PREFIXLEN)"}
+}
+
+// overrideVLANPrefixLenPerVLANFromEnv overlays the per-VLAN overrides. Same
+// independence rule as the shared value: nothing derives or validates these
+// against the zone CIDRs.
+func overrideVLANPrefixLenPerVLANFromEnv(ws *Workspace) []string {
+	var applied []string
+	for _, f := range []struct {
+		env   string
+		label string
+		set   func(*BNKNetworkCfg, *int)
+	}{
+		{"ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL", "bnk.network.vlan_prefixlen_external", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenExternal = n }},
+		{"ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL", "bnk.network.vlan_prefixlen_internal", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenInternal = n }},
+	} {
+		v := envValue(f.env)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 32 {
+			continue // ignored, not fatal — same rule as the shared value
+		}
+		if ws.BNK.Network == nil {
+			ws.BNK.Network = &BNKNetworkCfg{}
+		}
+		f.set(ws.BNK.Network, &n)
+		applied = append(applied, f.label+" ("+f.env+")")
+	}
+	return applied
 }
 
 // envValue returns the trimmed value of an environment variable, or "" when

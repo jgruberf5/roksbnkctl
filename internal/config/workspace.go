@@ -402,6 +402,9 @@ type BNKCfg struct {
 	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
 	// (unset).
 	GSLBDatacenterName string `yaml:"gslb_datacenter_name,omitempty"`
+	// GTM is the BIG-IP DNS the datacenter above registers with (#51). nil →
+	// unchanged behaviour: the datacenter name alone, as before.
+	GTM *BNKGTMCfg `yaml:"gtm,omitempty"`
 
 	// CertManager overrides cert-manager's namespace + chart version. nil → the
 	// terraform defaults (cert-manager / the pinned chart version). The
@@ -640,6 +643,25 @@ type BNKCertManagerCfg struct {
 // BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
 // encryption — like ibmcloud.api_key_b64); the raw value is rendered to
 // terraform.tfvars as bigip_password at apply time.
+// BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB
+// datacenter with (#51) — the connection half of GSLB, which until now only had
+// the datacenter NAME.
+//
+// The password is stored base64-encoded (obfuscation, NOT encryption — like
+// ibmcloud.api_key_b64 and bnk.cis.bigip_password_b64) and rendered raw into
+// terraform.tfvars at apply time.
+//
+// Absent → nothing is emitted and the CNEInstance is unchanged, so GSLB stays
+// exactly as it behaves today for every workspace that does not use it.
+type BNKGTMCfg struct {
+	// URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com.
+	URL string `yaml:"url,omitempty"`
+	// Username to authenticate with.
+	Username string `yaml:"username,omitempty"`
+	// PasswordB64 is the base64 of the password. Env sets it from the RAW value.
+	PasswordB64 string `yaml:"password_b64,omitempty"`
+}
+
 type BNKCISCfg struct {
 	BigIPURL         string `yaml:"bigip_url,omitempty"`
 	BigIPUsername    string `yaml:"bigip_username,omitempty"`
@@ -656,6 +678,18 @@ type BNKNetworkCfg struct {
 	// (fall back to the default) is distinct from a literal 0. Rendered as
 	// cneinstance_vlan_prefixlen.
 	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty"`
+	// VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one
+	// VLAN. nil → that VLAN uses VLANPrefixLen, so a deployment that does not need
+	// them keeps one knob and one value.
+	//
+	// They exist because the two VLANs are not always the same size: TMM can front
+	// a /23 externally while the internal side is a /26, which one shared scalar
+	// cannot express. Setting them does NOT imply the subnets differ — the mask is
+	// deliberately independent of the CIDRs, so a smaller or larger
+	// directly-connected block can be forced and the remainder steered with static
+	// routes.
+	VLANPrefixLenExternal *int `yaml:"vlan_prefixlen_external,omitempty"`
+	VLANPrefixLenInternal *int `yaml:"vlan_prefixlen_internal,omitempty"`
 	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
 	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
