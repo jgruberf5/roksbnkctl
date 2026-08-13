@@ -36,6 +36,7 @@ import (
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
 //	ROKSBNKCTL_CLUSTER_VPC_CIDR     → cluster.vpc_cidr (per-zone prefixes; avoids TGW overlap)
 //	ROKSBNKCTL_CLUSTER_NETWORK_MODE → cluster.network_mode (single-nic default, or multi-nic)
+//	ROKSBNKCTL_VLAN_PREFIXLEN       → bnk.network.vlan_prefixlen (TMM self-IP mask; independent of the zone CIDRs)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
@@ -217,6 +218,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// self-IPs). Fixed indexed env vars ROKSBNKCTL_ZONE<n>_* for up to maxZones;
 	// a zone is emitted only when all six of its fields are set.
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
+	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
 		if ws.Resources == nil {
 			ws.Resources = &ResourcesCfg{}
@@ -426,6 +428,44 @@ func overrideNetworkZonesFromEnv(ws *Workspace) []string {
 	}
 	ws.BNK.Network.Zones = zones
 	return []string{"bnk.network.zones (ROKSBNKCTL_ZONE*_*)"}
+}
+
+// overrideVLANPrefixLenFromEnv overlays the TMM self-IP prefix length from
+// ROKSBNKCTL_VLAN_PREFIXLEN.
+//
+// DELIBERATELY INDEPENDENT OF THE ZONE CIDRs, and not derived from them. It is
+// tempting to treat a prefix length that disagrees with its subnet as a mistake
+// — it usually is — but the disagreement is also a tool: a mask that makes TMM
+// treat a smaller or larger block as directly connected, with static routes
+// steering the remainder, is how a specific traffic pattern gets forced. Deriving
+// this from the VPC subnet would remove that, so it stays an independent value
+// with no cross-validation against the zones.
+//
+// Exists because without it the setting was unreachable from the environment
+// entirely: the per-zone overrides above carry six fields and no mask, so every
+// env-driven deployment — CI, and every BNK Forge blueprint — was pinned to the
+// terraform default of 24 no matter what CIDRs it supplied. Separate from the
+// zone loop because it is network-wide, not per-zone, and must be settable
+// WITHOUT respecifying the zones.
+func overrideVLANPrefixLenFromEnv(ws *Workspace) []string {
+	v := envValue("ROKSBNKCTL_VLAN_PREFIXLEN")
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 32 {
+		// Ignore rather than fail: this runs during config assembly, where a
+		// hard error would abort a deployment over one malformed variable. An
+		// out-of-range mask cannot be honoured and cannot be guessed at, so the
+		// terraform default stands and the value is simply not reported as
+		// applied.
+		return nil
+	}
+	if ws.BNK.Network == nil {
+		ws.BNK.Network = &BNKNetworkCfg{}
+	}
+	ws.BNK.Network.VLANPrefixLen = &n
+	return []string{"bnk.network.vlan_prefixlen (ROKSBNKCTL_VLAN_PREFIXLEN)"}
 }
 
 // envValue returns the trimmed value of an environment variable, or "" when
