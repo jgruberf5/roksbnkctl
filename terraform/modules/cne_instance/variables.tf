@@ -86,6 +86,12 @@ variable "f5_bigip_k8s_manifest_version" {
   default     = "2.3.0-3.2598.3-0.0.170"
 }
 
+variable "flo_trusted_profile_sa_name" {
+  description = "The CNE controller service account; must match what the flo module linked."
+  type        = string
+  default     = "f5-cne-controller"
+}
+
 variable "flo_trusted_profile_id" {
   description = "IBM IAM Trusted Profile ID for provisioning VPC routes"
   type        = string

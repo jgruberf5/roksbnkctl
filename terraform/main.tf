@@ -125,6 +125,8 @@ module "flo" {
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   flo_namespace                 = var.flo_namespace
+  flo_trusted_profile_sa_name   = var.flo_trusted_profile_sa_name
+  flo_trusted_profile_roles     = var.flo_trusted_profile_roles
   flo_utils_namespace           = var.flo_utils_namespace
   bigip_username                = var.bigip_username
   bigip_password                = var.bigip_password
@@ -171,6 +173,7 @@ module "cne_instance" {
   far_image_repo_url               = var.far_image_repo_url
   use_registry_mirror              = var.use_registry_mirror
   flo_namespace                    = local.flo_namespace
+  flo_trusted_profile_sa_name      = var.flo_trusted_profile_sa_name
   flo_utils_namespace              = var.flo_utils_namespace
   f5_bigip_k8s_manifest_version    = var.f5_bigip_k8s_manifest_version
   flo_trusted_profile_id           = local.flo_trusted_profile_id

@@ -516,8 +516,21 @@ locals {
 
 # --- Namespaces (helm prerequisites — precede the charts) -------------------
 
+# ONE NAMESPACE OR TWO (#66).
+#
+# BNK installs into two namespaces by default. Pointing both settings at the
+# same name is a legitimate ask — fewer RBAC surfaces, one thing to grant a team
+# — and used to be impossible: two resources declared the same metadata.name,
+# so one created it and the other got AlreadyExists.
+#
+# The guard is on the UTILS resource rather than the FLO one because the FLO
+# namespace is the one everything else depends on; making it conditional would
+# scatter `try()` through every depends_on. When the names are equal there is
+# exactly one namespace and kubernetes_namespace_v1.flo owns it — which is why
+# the far/mirror secrets below are guarded the same way and in the same
+# direction.
 resource "kubernetes_namespace_v1" "f5_utils" {
-  count = local.use_kubectl ? 1 : 0
+  count = local.use_kubectl && var.utils_namespace != var.flo_namespace ? 1 : 0
   metadata {
     name = var.utils_namespace
   }
@@ -545,8 +558,10 @@ resource "kubernetes_secret_v1" "far_secret_flo" {
   depends_on = [kubernetes_namespace_v1.flo]
 }
 
+# Same name, same namespace when collapsed — so it is the same secret, already
+# created by far_secret_flo above (#66).
 resource "kubernetes_secret_v1" "far_secret_utils" {
-  count = local.far_secret_kubectl
+  count = local.far_secret_kubectl != 0 && var.utils_namespace != var.flo_namespace ? 1 : 0
   metadata {
     name      = "far-secret"
     namespace = var.utils_namespace
@@ -587,8 +602,9 @@ resource "kubernetes_secret_v1" "mirror_secret_kube_system" {
   }
 }
 
+# Collapsed namespaces make this the same object as mirror_secret_flo (#66).
 resource "kubernetes_secret_v1" "mirror_secret_utils" {
-  count = local.use_kubectl && local.has_mirror_creds ? 1 : 0
+  count = local.use_kubectl && local.has_mirror_creds && var.utils_namespace != var.flo_namespace ? 1 : 0
   metadata {
     name      = local.mirror_pull_secret_name
     namespace = var.utils_namespace
@@ -1021,10 +1037,26 @@ resource "kubectl_manifest" "node_labeler_job" {
 # IBM IAM Trusted Profile for CNE Controller Service Account
 # ==============================================================================
 
+# WHY MULTIPLE CLUSTERS CAN SHARE ONE SERVICE ACCOUNT NAME.
+#
+# Trusted profile NAMES are unique per IBM Cloud ACCOUNT, and this one carries
+# the cluster name — so two clusters produce two profiles and never collide,
+# whatever service account they link.
+#
+# The LINK is scoped by cluster CRN + namespace + service account name. The CRN
+# differs per cluster, so the same SA name in the same namespace on two clusters
+# resolves to two distinct links under two distinct profiles. That is what makes
+# var.trusted_profile_sa_name safe to default to a short, shared, human-readable
+# value instead of one padded with the cluster and namespace to force uniqueness.
+#
+# So: do NOT "fix" a perceived collision risk by interpolating the cluster name
+# into the service account. The SA name has to match the account the CNE
+# controller pod actually runs as; it is not a uniqueness knob, and padding it
+# breaks the link instead of protecting it.
 resource "ibm_iam_trusted_profile" "cne_controller" {
   count       = local.global_enabled ? 1 : 0
   name        = "${var.openshift_cluster_name}-f5-cne-controller-${var.flo_namespace}"
-  description = "Trusted profile for F5 CNE controller service account in namespace ${var.flo_namespace} on cluster ${var.openshift_cluster_name}"
+  description = "Trusted profile for F5 CNE controller service account ${var.trusted_profile_sa_name} in namespace ${var.flo_namespace} on cluster ${var.openshift_cluster_name}"
 }
 
 resource "ibm_iam_trusted_profile_link" "cne_controller_roks" {
@@ -1034,15 +1066,17 @@ resource "ibm_iam_trusted_profile_link" "cne_controller_roks" {
   link {
     crn       = var.openshift_cluster_crn
     namespace = var.flo_namespace
-    name      = "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+    name      = var.trusted_profile_sa_name
   }
+  # The LINK's own name is unique within its profile, not within the account, and
+  # each cluster has its own profile — so a fixed name is correct here.
   name = "f5-cne-controller-roks-link"
 }
 
 resource "ibm_iam_trusted_profile_policy" "cne_controller_vpc" {
   count  = local.global_enabled ? 1 : 0
   iam_id = ibm_iam_trusted_profile.cne_controller[0].iam_id
-  roles  = ["Viewer", "Editor"]
+  roles  = var.trusted_profile_roles
 
   resource_attributes {
     name  = "serviceName"

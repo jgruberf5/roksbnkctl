@@ -36,6 +36,8 @@ import (
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
 //	ROKSBNKCTL_CLUSTER_VPC_CIDR     → cluster.vpc_cidr (per-zone prefixes; avoids TGW overlap)
 //	ROKSBNKCTL_CLUSTER_NETWORK_MODE → cluster.network_mode (single-nic default, or multi-nic)
+//	ROKSBNKCTL_TRUSTED_PROFILE_SA   → bnk.trusted_profile.service_account
+//	ROKSBNKCTL_TRUSTED_PROFILE_ROLES → bnk.trusted_profile.roles (comma-separated)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
@@ -144,6 +146,33 @@ func OverrideFromEnv(ws *Workspace) []string {
 	if v := envValue("ROKSBNKCTL_CLUSTER_NETWORK_MODE"); v != "" {
 		ws.Cluster.NetworkMode = v
 		applied = append(applied, "cluster.network_mode (ROKSBNKCTL_CLUSTER_NETWORK_MODE)")
+	}
+
+	// The CNE controller's Trusted Profile. Present for the same reason the other
+	// env overrides are: the CI/Forge runners build a whole deployment from the
+	// environment and never write a config.yaml, so without these the profile is
+	// not tunable on that path at all.
+	if v := envValue("ROKSBNKCTL_TRUSTED_PROFILE_SA"); v != "" {
+		if ws.BNK.TrustedProfile == nil {
+			ws.BNK.TrustedProfile = &BNKTrustedProfileCfg{}
+		}
+		ws.BNK.TrustedProfile.ServiceAccount = v
+		applied = append(applied, "bnk.trusted_profile.service_account (ROKSBNKCTL_TRUSTED_PROFILE_SA)")
+	}
+	if v := envValue("ROKSBNKCTL_TRUSTED_PROFILE_ROLES"); v != "" {
+		roles := []string{}
+		for _, r := range strings.Split(v, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				roles = append(roles, r)
+			}
+		}
+		if len(roles) > 0 {
+			if ws.BNK.TrustedProfile == nil {
+				ws.BNK.TrustedProfile = &BNKTrustedProfileCfg{}
+			}
+			ws.BNK.TrustedProfile.Roles = roles
+			applied = append(applied, "bnk.trusted_profile.roles (ROKSBNKCTL_TRUSTED_PROFILE_ROLES)")
+		}
 	}
 
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).

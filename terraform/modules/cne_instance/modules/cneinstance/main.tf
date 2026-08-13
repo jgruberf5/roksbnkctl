@@ -23,9 +23,16 @@ locals {
 
   # Define all service accounts that require privileged SCC
   # These service accounts are created by CNEInstance and FLO deployment
+  # Every entry below is already parameterised on var.flo_namespace /
+  # var.utils_namespace, so it follows whatever those are. There used to be a
+  # `var.flo_namespace == "f5-bnk" ?` guard on the first group, comparing against
+  # the DEFAULT as a literal — which meant any custom flo_namespace silently
+  # dropped all nine FLO-side bindings while the utils half stayed. The install
+  # then failed in the cluster, at pod start, naming service accounts rather than
+  # the setting that caused it (#65).
   scc_policy_assignments = concat(
-    # f5-bnk namespace service accounts (if this is the main FLO namespace)
-    var.flo_namespace == "f5-bnk" ? [
+    # FLO-namespace service accounts.
+    [
       {
         namespace       = var.flo_namespace
         service_account = "f5-cne-env-discovery-serviceaccount"
@@ -44,7 +51,7 @@ locals {
       },
       {
         namespace       = var.flo_namespace
-        service_account = "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+        service_account = var.trusted_profile_sa_name
       },
       {
         namespace       = var.flo_namespace
@@ -64,8 +71,8 @@ locals {
         namespace       = var.flo_namespace
         service_account = "default"
       }
-    ] : [],
-    # f5-utils namespace service accounts
+    ],
+    # Utils-namespace service accounts.
     [
       {
         namespace       = var.utils_namespace
@@ -497,8 +504,14 @@ resource "kubectl_manifest" "internal_vlan" {
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {
+  # distinct() because collapsing both namespaces onto one makes some
+  # (namespace, service_account) pairs identical — `default` exists in both
+  # groups — and a `for` expression that produces the same key twice is a
+  # plan-time error, not a merge. The entries carry only those two fields, so an
+  # identical key means an identical object and dropping the duplicate loses
+  # nothing (#66).
   for_each = local.use_kubectl ? {
-    for assignment in local.scc_policy_assignments :
+    for assignment in distinct(local.scc_policy_assignments) :
     "${assignment.namespace}-${assignment.service_account}" => assignment
   } : {}
 

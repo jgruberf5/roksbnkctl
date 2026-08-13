@@ -350,6 +350,48 @@ variable "flo_trusted_profile_id" {
   default     = ""
 }
 
+variable "flo_trusted_profile_sa_name" {
+  description = <<-EOT
+    Kubernetes service account name the CNE controller's IBM Cloud Trusted Profile is
+    linked to — i.e. which service account may ASSUME the profile and act on the VPC.
+
+    Must match the service account the CNE controller pod actually runs as. It is
+    created by the FLO Helm chart, not by this terraform, so a value that does not
+    match produces a profile nobody can assume: the pod starts, and its IBM Cloud
+    calls fail later with an authorization error that says nothing about this setting.
+
+    The same value also drives the privileged-SCC ClusterRoleBinding for that account
+    (see modules/cne_instance), because a profile the pod may assume and an SCC the
+    pod may use have to name the same account or one of them is inert.
+
+    NOT part of the profile's uniqueness. See the note on the trusted profile resource:
+    uniqueness comes from the profile name (which carries the cluster name) and from
+    the link's cluster CRN, so every cluster in an account can safely use this same
+    service account name.
+  EOT
+  type        = string
+  default     = "f5-cne-controller"
+}
+
+variable "flo_trusted_profile_roles" {
+  description = <<-EOT
+    IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's
+    OWN VPC (serviceName=is, vpcId=<cluster vpc>).
+
+    Editor is required for the controller to manage the VPC network attachments it
+    creates for TMM. Narrow this only with a policy you have actually tested — an
+    under-privileged profile fails at attachment time, on a running cluster, not at
+    apply.
+  EOT
+  type        = list(string)
+  default     = ["Viewer", "Editor"]
+
+  validation {
+    condition     = length(var.flo_trusted_profile_roles) > 0
+    error_message = "flo_trusted_profile_roles cannot be empty; the CNE controller needs at least one role on the cluster VPC."
+  }
+}
+
 variable "flo_cluster_issuer_name" {
   description = "Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override"
   type        = string

@@ -422,6 +422,25 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
+	// Trusted Profile. Emitted only when set; absent leaves the HCL defaults
+	// ("f5-cne-controller" and ["Viewer","Editor"]), which is today's behaviour.
+	if tp := ws.BNK.TrustedProfile; tp != nil {
+		if sa := strings.TrimSpace(tp.ServiceAccount); sa != "" {
+			fmt.Fprintf(w, "flo_trusted_profile_sa_name = %q\n", sa)
+		}
+		if len(tp.Roles) > 0 {
+			quoted := make([]string, 0, len(tp.Roles))
+			for _, r := range tp.Roles {
+				if r = strings.TrimSpace(r); r != "" {
+					quoted = append(quoted, fmt.Sprintf("%q", r))
+				}
+			}
+			if len(quoted) > 0 {
+				fmt.Fprintf(w, "flo_trusted_profile_roles = [%s]\n", strings.Join(quoted, ", "))
+			}
+		}
+	}
+
 	if ws.BNK.GSLBDatacenterName != "" {
 		fmt.Fprintf(w, "cneinstance_gslb_datacenter_name = %q\n", ws.BNK.GSLBDatacenterName)
 	}

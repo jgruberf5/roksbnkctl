@@ -85,6 +85,35 @@ type BNKForgeCfg struct {
 	Insecure bool `yaml:"insecure,omitempty"`
 }
 
+// BNKTrustedProfileCfg is the IBM Cloud Trusted Profile the CNE controller
+// assumes at runtime — the identity that lets it manage the VPC network
+// attachments it creates for TMM, without a stored API key.
+//
+// Both fields default in the HCL rather than here, so an absent block renders
+// nothing and the shipped terraform decides — the same rule every other
+// optional BNK field follows.
+type BNKTrustedProfileCfg struct {
+	// ServiceAccount is the Kubernetes service account the profile is LINKED to:
+	// which account may assume it. Default "f5-cne-controller".
+	//
+	// It must match the account the CNE controller pod actually runs as, which
+	// the FLO Helm chart creates — not this tool. A value that does not match
+	// produces a profile nobody can assume, and the symptom is an IBM Cloud
+	// authorization failure at VPC-attachment time that names neither this
+	// setting nor the profile.
+	//
+	// Safe to share across clusters. Uniqueness comes from the profile name
+	// (which carries the cluster name) and from the link's cluster CRN, so the
+	// same account name on every cluster in an account cannot collide.
+	ServiceAccount string `yaml:"service_account,omitempty"`
+
+	// Roles granted to the profile, scoped to the cluster's OWN VPC. Default
+	// ["Viewer", "Editor"]. Editor is what lets the controller manage TMM's
+	// network attachments; narrowing it fails at attachment time on a running
+	// cluster rather than at apply, so change it only against a tested policy.
+	Roles []string `yaml:"roles,omitempty"`
+}
+
 // AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is
 // purely advisory metadata for launching an external coding-agent CLI against
 // the workspace's scaffolded AGENTS.md + personas/ — roksbnkctl embeds no LLM.
@@ -361,6 +390,11 @@ type BNKCfg struct {
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
 	// these for multi-tenant clusters or to avoid namespace collisions.
+	// TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller
+	// assumes to manage its own cluster's VPC. nil/absent → the terraform
+	// defaults, which are today's behaviour exactly.
+	TrustedProfile *BNKTrustedProfileCfg `yaml:"trusted_profile,omitempty"`
+
 	FLONamespace      string `yaml:"flo_namespace,omitempty"`
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
 

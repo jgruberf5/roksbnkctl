@@ -53,6 +53,7 @@ module "cneinstance" {
   registry_mirror_password           = var.registry_mirror_password
   f5_bigip_k8s_manifest_version      = var.f5_bigip_k8s_manifest_version
   cneinstance_ibm_trusted_profile_id = var.flo_trusted_profile_id
+  trusted_profile_sa_name            = var.flo_trusted_profile_sa_name
 
   kube_host  = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
   kube_token = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
