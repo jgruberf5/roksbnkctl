@@ -40,6 +40,7 @@ import (
 //	ROKSBNKCTL_TRUSTED_PROFILE_ROLES → bnk.trusted_profile.roles (comma-separated)
 //	ROKSBNKCTL_VLAN_PREFIXLEN       → bnk.network.vlan_prefixlen (TMM self-IP mask; independent of the zone CIDRs)
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
+//	ROKSBNKCTL_EXISTING_SUBNET_IDS  → cluster.existing_subnet_ids (comma-separated, zone order)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_NAME      → resources.client_vpc.existing (adopt a client VPC)
@@ -173,6 +174,27 @@ func OverrideFromEnv(ws *Workspace) []string {
 			}
 			ws.BNK.TrustedProfile.Roles = roles
 			applied = append(applied, "bnk.trusted_profile.roles (ROKSBNKCTL_TRUSTED_PROFILE_ROLES)")
+		}
+	}
+
+	// ── bring-your-own network (#60, #61) — issue #64 ────────────────────────
+	// These shipped in v1.43.0 with a config surface and no env override, which
+	// made them unreachable from BNK Forge: every module runs
+	// `init --override-from-env --non-interactive` and there is no config.yaml to
+	// edit. A field reachable only through YAML cannot be used by a blueprint.
+	//
+	// The FLP VSI half lives in envoverride_flp.go, which already owns every
+	// other ROKSBNKCTL_FLP_VSI_* variable.
+	if v := envValue("ROKSBNKCTL_EXISTING_SUBNET_IDS"); v != "" {
+		ids := []string{}
+		for _, id := range strings.Split(v, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			ws.Cluster.ExistingSubnetIDs = ids
+			applied = append(applied, "cluster.existing_subnet_ids (ROKSBNKCTL_EXISTING_SUBNET_IDS)")
 		}
 	}
 
