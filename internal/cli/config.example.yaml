@@ -83,17 +83,23 @@ resources:
 # ---- BNK install -----------------------------------------------------------
 bnk:
   # trusted_profile:            # the IBM Cloud identity the CNE controller assumes
-  #   service_account: f5-cne-controller
+  #   service_account:          # blank derives FLO's own long name; see below
   #   roles: [Viewer, Editor]
   #   The CNE controller manages the VPC network attachments it creates for TMM. It
   #   does that as an IBM Cloud Trusted Profile rather than with a stored API key —
   #   `service_account` names the Kubernetes account allowed to ASSUME the profile,
   #   and `roles` are what it may do, scoped to this cluster's OWN VPC.
   #
-  #   service_account must match the account the CNE controller pod actually runs
-  #   as (created by the FLO Helm chart, not by this tool). A mismatch yields a
-  #   profile nobody can assume, and the symptom is an IBM Cloud authorization
-  #   failure at attachment time that names neither this setting nor the profile.
+  #   Leave service_account BLANK unless you know better. Blank derives the
+  #   account FLO actually creates:
+  #     f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount
+  #
+  #   The IAM trust rule is a MATCHER, not a pointer: IBM compares a pod's token
+  #   against crn/namespace/name with EQUALS. A name that does not match the
+  #   account the controller runs as makes the profile unassumable with NO error
+  #   anywhere — it looks correct in the IBM Cloud console and works for nothing.
+  #   roksbnkctl cannot rename the account: FLO creates it when it reconciles the
+  #   CNEInstance, and that spec has no service-account field.
   #
   #   Safe to leave identical on every cluster: uniqueness comes from the profile
   #   name (which carries the cluster name) and the link's cluster CRN, so the same

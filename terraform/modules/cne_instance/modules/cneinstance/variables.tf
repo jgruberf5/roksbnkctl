@@ -138,7 +138,7 @@ variable "cneinstance_cloud_region" {
 variable "trusted_profile_sa_name" {
   description = "The CNE controller service account. Must be the SAME value the flo module links its Trusted Profile to — a profile the pod may assume and an SCC the pod may use have to name the same account, or one of them is inert."
   type        = string
-  default     = "f5-cne-controller"
+  default     = ""
 }
 
 variable "cneinstance_ibm_trusted_profile_id" {

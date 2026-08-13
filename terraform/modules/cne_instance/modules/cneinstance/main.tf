@@ -23,6 +23,11 @@ locals {
 
   # Define all service accounts that require privileged SCC
   # These service accounts are created by CNEInstance and FLO deployment
+  # Must resolve to the SAME account the flo module links the Trusted Profile
+  # to — a profile the pod may assume and an SCC the pod may use have to name
+  # one account, or one of them is inert. Empty derives FLO's own name.
+  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+
   # Every entry below is already parameterised on var.flo_namespace /
   # var.utils_namespace, so it follows whatever those are. There used to be a
   # `var.flo_namespace == "f5-bnk" ?` guard on the first group, comparing against
@@ -51,7 +56,7 @@ locals {
       },
       {
         namespace       = var.flo_namespace
-        service_account = var.trusted_profile_sa_name
+        service_account = local.trusted_profile_sa
       },
       {
         namespace       = var.flo_namespace

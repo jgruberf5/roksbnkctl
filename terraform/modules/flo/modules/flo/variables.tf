@@ -108,7 +108,7 @@ variable "bigip_url" {
 variable "trusted_profile_sa_name" {
   description = "Service account the CNE controller Trusted Profile is linked to. Must match the SA the FLO chart creates."
   type        = string
-  default     = "f5-cne-controller"
+  default     = ""
 }
 
 variable "trusted_profile_roles" {

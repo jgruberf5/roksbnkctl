@@ -94,13 +94,23 @@ type BNKForgeCfg struct {
 // optional BNK field follows.
 type BNKTrustedProfileCfg struct {
 	// ServiceAccount is the Kubernetes service account the profile is LINKED to:
-	// which account may assume it. Default "f5-cne-controller".
+	// which account may assume it.
 	//
-	// It must match the account the CNE controller pod actually runs as, which
-	// the FLO Helm chart creates — not this tool. A value that does not match
-	// produces a profile nobody can assume, and the symptom is an IBM Cloud
-	// authorization failure at VPC-attachment time that names neither this
-	// setting nor the profile.
+	// EMPTY (the default) derives the account FLO actually creates:
+	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount".
+	//
+	// This is a MATCHER, not a pointer. The IBM IAM trust relationship compares a
+	// pod's service-account token against crn/namespace/name with EQUALS, so a
+	// name that does not match the account the CNE controller runs as makes the
+	// profile unassumable — with no error anywhere. The pod simply loses its IBM
+	// Cloud permissions, and it surfaces as an authorization failure at
+	// VPC-attachment time naming neither this setting nor the profile.
+	//
+	// Set it only if you can ALSO make FLO name the account differently.
+	// roksbnkctl cannot: FLO creates the account when it reconciles the
+	// CNEInstance, and that spec has no service-account field. A shorter name in
+	// the IAM trust rule without a matching change on the F5 side produces a
+	// profile that looks right in the IBM Cloud console and works for nothing.
 	//
 	// Safe to share across clusters. Uniqueness comes from the profile name
 	// (which carries the cluster name) and from the link's cluster CRN, so the
@@ -390,12 +400,7 @@ type BNKCfg struct {
 	// assumes to manage its own cluster's VPC. nil/absent → the terraform
 	// defaults.
 	//
-	// The ROLES default is unchanged. The SERVICE ACCOUNT default is not:
-	// releases before this one used
-	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount", and
-	// the default is now plain "f5-cne-controller". Leaving this nil on a
-	// workspace that already has a cluster retargets the IAM link and the
-	// privileged-SCC binding; guardTrustedProfileSADefault warns first.
+	// Unset reproduces today's behaviour exactly, for both fields.
 	TrustedProfile *BNKTrustedProfileCfg `yaml:"trusted_profile,omitempty"`
 
 	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle

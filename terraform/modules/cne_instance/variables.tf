@@ -89,7 +89,7 @@ variable "f5_bigip_k8s_manifest_version" {
 variable "flo_trusted_profile_sa_name" {
   description = "The CNE controller service account; must match what the flo module linked."
   type        = string
-  default     = "f5-cne-controller"
+  default     = ""
 }
 
 variable "flo_trusted_profile_id" {

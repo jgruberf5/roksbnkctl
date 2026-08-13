@@ -370,7 +370,7 @@ variable "flo_trusted_profile_sa_name" {
     service account name.
   EOT
   type        = string
-  default     = "f5-cne-controller"
+  default     = ""
 }
 
 variable "flo_trusted_profile_roles" {

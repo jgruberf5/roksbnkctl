@@ -144,7 +144,7 @@ variable "f5_cne_subscription_jwt_file" {
 variable "flo_trusted_profile_sa_name" {
   description = "Service account the CNE controller Trusted Profile is linked to."
   type        = string
-  default     = "f5-cne-controller"
+  default     = ""
 }
 
 variable "flo_trusted_profile_roles" {

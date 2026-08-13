@@ -1037,6 +1037,25 @@ resource "kubectl_manifest" "node_labeler_job" {
 # IBM IAM Trusted Profile for CNE Controller Service Account
 # ==============================================================================
 
+locals {
+  # Empty means DERIVE the name FLO actually creates:
+  #   f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount
+  #
+  # That is FLO's construction — <release>-<chart>-serviceaccount, with the
+  # namespace baked in — so it is not a static default and cannot be one.
+  #
+  # It is a MATCHER, not a pointer. The IBM IAM trust relationship evaluates a
+  # pod's service-account token against crn/namespace/name, all EQUALS. A name
+  # that does not match the account the CNE controller actually runs as makes the
+  # profile unassumable, with no error anywhere — the pod just loses its IBM
+  # Cloud permissions. A confirmed BNK 2.3 install runs as the long name.
+  #
+  # Set the variable only if you can also make FLO name the account differently;
+  # roksbnkctl cannot, since FLO creates it in response to the CNEInstance and
+  # the spec has no service-account field.
+  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+}
+
 # WHY MULTIPLE CLUSTERS CAN SHARE ONE SERVICE ACCOUNT NAME.
 #
 # Trusted profile NAMES are unique per IBM Cloud ACCOUNT, and this one carries
@@ -1056,7 +1075,7 @@ resource "kubectl_manifest" "node_labeler_job" {
 resource "ibm_iam_trusted_profile" "cne_controller" {
   count       = local.global_enabled ? 1 : 0
   name        = "${var.openshift_cluster_name}-f5-cne-controller-${var.flo_namespace}"
-  description = "Trusted profile for F5 CNE controller service account ${var.trusted_profile_sa_name} in namespace ${var.flo_namespace} on cluster ${var.openshift_cluster_name}"
+  description = "Trusted profile for F5 CNE controller service account ${local.trusted_profile_sa} in namespace ${var.flo_namespace} on cluster ${var.openshift_cluster_name}"
 }
 
 resource "ibm_iam_trusted_profile_link" "cne_controller_roks" {
@@ -1066,7 +1085,7 @@ resource "ibm_iam_trusted_profile_link" "cne_controller_roks" {
   link {
     crn       = var.openshift_cluster_crn
     namespace = var.flo_namespace
-    name      = var.trusted_profile_sa_name
+    name      = local.trusted_profile_sa
   }
   # The LINK's own name is unique within its profile, not within the account, and
   # each cluster has its own profile — so a fixed name is correct here.

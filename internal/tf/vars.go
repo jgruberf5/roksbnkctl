@@ -422,14 +422,9 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
-	// Trusted Profile. Emitted only when set; absent leaves the HCL defaults.
-	//
-	// NOT unchanged behaviour for the service account. The default is
-	// "f5-cne-controller"; releases before this one linked the profile to
-	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount". An
-	// existing workspace that leaves this unset therefore RETARGETS the IAM link
-	// and the privileged-SCC binding. guardTrustedProfileSADefault warns before
-	// the apply that does it. The roles half IS unchanged.
+	// Trusted Profile. Emitted only when set; absent leaves the HCL defaults,
+	// which reproduce today's behaviour exactly — the service account derives
+	// FLO's own long name rather than a static short one.
 	if tp := ws.BNK.TrustedProfile; tp != nil {
 		if sa := strings.TrimSpace(tp.ServiceAccount); sa != "" {
 			fmt.Fprintf(w, "flo_trusted_profile_sa_name = %q\n", sa)

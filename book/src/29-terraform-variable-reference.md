@@ -54,7 +54,7 @@ Source: `terraform/variables.tf`
 | `bigip_password` | `string` | `"admin"` | BIG-IP password for the CIS controller | **yes** |
 | `bigip_url` | `string` | `"192.168.1.245"` | BIG-IP URL for the CIS controller | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM Cloud Trusted Profile ID created by flo — wired automatically from flo output; set here to override | no |
-| `flo_trusted_profile_sa_name` | `string` | `"f5-cne-controller"` | Kubernetes service account name the CNE controller's IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC. | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | Kubernetes service account name the CNE controller's IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC. | no |
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=<cluster vpc>). | no |
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
@@ -166,7 +166,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules | no |
-| `flo_trusted_profile_sa_name` | `string` | `"f5-cne-controller"` | The CNE controller service account; must match what the flo module linked. | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | The CNE controller service account; must match what the flo module linked. | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM IAM Trusted Profile ID for provisioning VPC routes | no |
 | `flo_cluster_issuer_name` | `string` | `""` | mTLS certificate issuer name | no |
 | `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
@@ -214,7 +214,7 @@ Source: `terraform/modules/flo/variables.tf`
 | `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
 | `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
-| `flo_trusted_profile_sa_name` | `string` | `"f5-cne-controller"` | Service account the CNE controller Trusted Profile is linked to. | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | Service account the CNE controller Trusted Profile is linked to. | no |
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC. | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
