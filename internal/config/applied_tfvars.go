@@ -190,6 +190,19 @@ func appliedTFVarsPath(workspace, phase string) (string, error) {
 // grade variables extend the list here (one-line change), no config knob.
 var redactedVarNames = map[string]struct{}{
 	"ibmcloud_api_key": {},
+	// Every other variable roksbnkctl renders that carries a credential. The
+	// snapshot is documented as suitable for git commit once the operator has
+	// checked the redaction against their threat model (Chapter 6), so a secret
+	// that is not listed here is a secret that ends up in a repository.
+	//
+	// bigip_password and registry_mirror_password predate this list and were
+	// missed; cneinstance_gtm_password arrived with the GTM work and would have
+	// been missed the same way. Adding a rendered credential to vars.go means
+	// adding it here — the comment above promised a one-line change, and three
+	// releases went by without anyone making it.
+	"bigip_password":           {},
+	"registry_mirror_password": {},
+	"cneinstance_gtm_password": {},
 }
 
 // tfvarsAssignmentRE matches one HCL-tfvars assignment per line. The

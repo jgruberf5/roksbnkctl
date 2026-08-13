@@ -458,3 +458,24 @@ func TestAppliedTFVars_StripsTrailingComment(t *testing.T) {
 		t.Errorf("trailing comment leaked into output:\n%s", out)
 	}
 }
+
+// Every credential roksbnkctl renders into tfvars must be redacted from the
+// snapshot. The snapshot is documented as git-committable after review, so a
+// missing entry puts a secret in a repository.
+//
+// This test is a LIST CHECK on purpose: adding a rendered credential to
+// internal/tf/vars.go without adding it here fails, which is the only thing
+// that would have caught bigip_password and registry_mirror_password going
+// three releases unredacted.
+func TestEveryRenderedCredentialIsRedacted(t *testing.T) {
+	for _, name := range []string{
+		"ibmcloud_api_key",
+		"bigip_password",
+		"registry_mirror_password",
+		"cneinstance_gtm_password",
+	} {
+		if _, ok := redactedVarNames[name]; !ok {
+			t.Errorf("%s is rendered into tfvars but not redacted from the applied snapshot", name)
+		}
+	}
+}
