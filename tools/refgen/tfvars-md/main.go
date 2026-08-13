@@ -142,39 +142,64 @@ func parseFile(path string) ([]Variable, error) {
 
 // findMatchingBrace returns the index of the `}` that closes the `{`
 // at openIdx, ignoring braces inside strings. Returns -1 if no match.
-func findMatchingBrace(src string, openIdx int) int {
-	if openIdx >= len(src) || src[openIdx] != '{' {
-		return -1
-	}
+func findMatchingBrace(src string, start int) int {
+	// Heredoc-aware. Without this, prose inside a `description = <<-EOT` block
+	// corrupts the block boundary: a `}` in a sentence ends the variable early
+	// and truncates it SILENTLY, and an odd number of quotes (or a `{`) makes the
+	// whole run fail with "unbalanced braces" naming the wrong variable — taking
+	// `make book` down.
+	//
+	// That matters now because heredocs became the house style for long rationale
+	// in terraform/variables.tf. The next author to write "the \"external\" VLAN"
+	// or "ends with a }" would have broken the docs build for a comment.
 	depth := 0
 	inString := false
-	escape := false
-	for i := openIdx; i < len(src); i++ {
-		c := src[i]
-		if escape {
-			escape = false
+	var heredocMarker string
+	lines := strings.Split(src[start:], "\n")
+	offset := start
+	for _, ln := range lines {
+		if heredocMarker != "" {
+			if strings.TrimSpace(ln) == heredocMarker {
+				heredocMarker = ""
+			}
+			offset += len(ln) + 1
 			continue
 		}
-		if c == '\\' && inString {
-			escape = true
-			continue
-		}
-		if c == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch c {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return i
+		if idx := strings.Index(ln, "<<"); idx >= 0 && strings.Contains(ln[:idx], "=") {
+			marker := strings.TrimSpace(strings.TrimLeft(ln[idx+2:], "-"))
+			if marker != "" {
+				heredocMarker = marker
+				offset += len(ln) + 1
+				continue
 			}
 		}
+		for k := 0; k < len(ln); k++ {
+			c := ln[k]
+			if inString {
+				if c == '\\' {
+					k++
+					continue
+				}
+				if c == '"' {
+					inString = false
+				}
+				continue
+			}
+			switch c {
+			case '"':
+				inString = true
+			case '#':
+				k = len(ln) // rest of the line is a comment
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return offset + k
+				}
+			}
+		}
+		offset += len(ln) + 1
 	}
 	return -1
 }
@@ -199,6 +224,33 @@ func extractField(body, name string) string {
 			continue
 		}
 		value := strings.TrimSpace(trim[idx+1:])
+		// Heredoc descriptions (`description = <<-EOT` … `EOT`). Without this
+		// the marker itself was emitted as the description — chapter 29 carried
+		// literal `<<-EOT` cells, which is worse than a missing row because it
+		// looks like content. Collapse the body to one line: the table has one
+		// cell per variable, and a paragraph's first sentences are what a lookup
+		// table is for.
+		if strings.HasPrefix(value, "<<") {
+			marker := strings.TrimLeft(strings.TrimPrefix(value, "<<"), "-")
+			marker = strings.TrimSpace(marker)
+			var para []string
+			for j := i + 1; j < len(lines); j++ {
+				t := strings.TrimSpace(lines[j])
+				if t == marker {
+					break
+				}
+				if t == "" {
+					// Paragraph break: the first paragraph is the summary, and
+					// the rest is rationale that does not belong in a cell.
+					if len(para) > 0 {
+						break
+					}
+					continue
+				}
+				para = append(para, t)
+			}
+			return strings.Join(para, " ")
+		}
 		// Handle multi-line list/object literals: if the value starts
 		// with `[` or `{` and isn't closed on the same line, walk
 		// forward concatenating until balanced.

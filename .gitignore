@@ -63,3 +63,8 @@ scripts/scratchpad/
 
 # A working scratch document, not a repo artifact — committed here by mistake.
 docs/HANDOFF-PLAN.md
+
+# editor swap files
+*.swp
+*.swo
+*~

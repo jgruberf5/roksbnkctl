@@ -85,6 +85,45 @@ type BNKForgeCfg struct {
 	Insecure bool `yaml:"insecure,omitempty"`
 }
 
+// BNKTrustedProfileCfg is the IBM Cloud Trusted Profile the CNE controller
+// assumes at runtime — the identity that lets it manage the VPC network
+// attachments it creates for TMM, without a stored API key.
+//
+// Both fields default in the HCL rather than here, so an absent block renders
+// nothing and the shipped terraform decides — the same rule every other
+// optional BNK field follows.
+type BNKTrustedProfileCfg struct {
+	// ServiceAccount is the Kubernetes service account the profile is LINKED to:
+	// which account may assume it.
+	//
+	// EMPTY (the default) derives the account FLO actually creates:
+	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount".
+	//
+	// This is a MATCHER, not a pointer. The IBM IAM trust relationship compares a
+	// pod's service-account token against crn/namespace/name with EQUALS, so a
+	// name that does not match the account the CNE controller runs as makes the
+	// profile unassumable — with no error anywhere. The pod simply loses its IBM
+	// Cloud permissions, and it surfaces as an authorization failure at
+	// VPC-attachment time naming neither this setting nor the profile.
+	//
+	// Set it only if you can ALSO make FLO name the account differently.
+	// roksbnkctl cannot: FLO creates the account when it reconciles the
+	// CNEInstance, and that spec has no service-account field. A shorter name in
+	// the IAM trust rule without a matching change on the F5 side produces a
+	// profile that looks right in the IBM Cloud console and works for nothing.
+	//
+	// Safe to share across clusters. Uniqueness comes from the profile name
+	// (which carries the cluster name) and from the link's cluster CRN, so the
+	// same account name on every cluster in an account cannot collide.
+	ServiceAccount string `yaml:"service_account,omitempty"`
+
+	// Roles granted to the profile, scoped to the cluster's OWN VPC. Default
+	// ["Viewer", "Editor"]. Editor is what lets the controller manage TMM's
+	// network attachments; narrowing it fails at attachment time on a running
+	// cluster rather than at apply, so change it only against a tested policy.
+	Roles []string `yaml:"roles,omitempty"`
+}
+
 // AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is
 // purely advisory metadata for launching an external coding-agent CLI against
 // the workspace's scaffolded AGENTS.md + personas/ — roksbnkctl embeds no LLM.
@@ -357,6 +396,13 @@ type BNKCfg struct {
 	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
 	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
 
+	// TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller
+	// assumes to manage its own cluster's VPC. nil/absent → the terraform
+	// defaults.
+	//
+	// Unset reproduces today's behaviour exactly, for both fields.
+	TrustedProfile *BNKTrustedProfileCfg `yaml:"trusted_profile,omitempty"`
+
 	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
@@ -368,6 +414,9 @@ type BNKCfg struct {
 	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
 	// (unset).
 	GSLBDatacenterName string `yaml:"gslb_datacenter_name,omitempty"`
+	// GTM is the BIG-IP DNS the datacenter above registers with (#51). nil →
+	// unchanged behaviour: the datacenter name alone, as before.
+	GTM *BNKGTMCfg `yaml:"gtm,omitempty"`
 
 	// CertManager overrides cert-manager's namespace + chart version. nil → the
 	// terraform defaults (cert-manager / the pinned chart version). The
@@ -603,6 +652,25 @@ type BNKCertManagerCfg struct {
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
+// BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB
+// datacenter with (#51) — the connection half of GSLB, which until now only had
+// the datacenter NAME.
+//
+// The password is stored base64-encoded (obfuscation, NOT encryption — like
+// ibmcloud.api_key_b64 and bnk.cis.bigip_password_b64) and rendered raw into
+// terraform.tfvars at apply time.
+//
+// Absent → nothing is emitted and the CNEInstance is unchanged, so GSLB stays
+// exactly as it behaves today for every workspace that does not use it.
+type BNKGTMCfg struct {
+	// URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com.
+	URL string `yaml:"url,omitempty"`
+	// Username to authenticate with.
+	Username string `yaml:"username,omitempty"`
+	// PasswordB64 is the base64 of the password. Env sets it from the RAW value.
+	PasswordB64 string `yaml:"password_b64,omitempty"`
+}
+
 // BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
 // encryption — like ibmcloud.api_key_b64); the raw value is rendered to
 // terraform.tfvars as bigip_password at apply time.
@@ -622,6 +690,18 @@ type BNKNetworkCfg struct {
 	// (fall back to the default) is distinct from a literal 0. Rendered as
 	// cneinstance_vlan_prefixlen.
 	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty"`
+	// VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one
+	// VLAN. nil → that VLAN uses VLANPrefixLen, so a deployment that does not need
+	// them keeps one knob and one value.
+	//
+	// They exist because the two VLANs are not always the same size: TMM can front
+	// a /23 externally while the internal side is a /26, which one shared scalar
+	// cannot express. Setting them does NOT imply the subnets differ — the mask is
+	// deliberately independent of the CIDRs, so a smaller or larger
+	// directly-connected block can be forced and the remainder steered with static
+	// routes.
+	VLANPrefixLenExternal *int `yaml:"vlan_prefixlen_external,omitempty"`
+	VLANPrefixLenInternal *int `yaml:"vlan_prefixlen_internal,omitempty"`
 	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
 	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set

@@ -141,6 +141,18 @@ variable "f5_cne_subscription_jwt_file" {
 # FLO Namespace Configuration
 # ============================================================
 
+variable "flo_trusted_profile_sa_name" {
+  description = "Service account the CNE controller Trusted Profile is linked to."
+  type        = string
+  default     = ""
+}
+
+variable "flo_trusted_profile_roles" {
+  description = "IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC."
+  type        = list(string)
+  default     = ["Viewer", "Editor"]
+}
+
 variable "flo_namespace" {
   description = "Namespace for F5 Lifecycle Operator"
   type        = string

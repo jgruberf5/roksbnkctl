@@ -84,6 +84,8 @@ module "flo" {
   # FLO Configuration
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flo_namespace                 = var.flo_namespace
+  trusted_profile_sa_name       = var.flo_trusted_profile_sa_name
+  trusted_profile_roles         = var.flo_trusted_profile_roles
   utils_namespace               = var.flo_utils_namespace
   kube_host                     = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
   kube_token                    = try(data.ibm_container_cluster_config.runtime_config[0].token, "")

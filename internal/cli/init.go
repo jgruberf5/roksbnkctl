@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -361,21 +362,13 @@ func promptBNKNetwork(prior *config.BNKNetworkCfg) *config.BNKNetworkCfg {
 	if prior != nil && len(prior.Zones) == len(seed) {
 		seed = prior.Zones
 	}
-	// Network-wide TMM knobs (shared across all zones): the self-IP prefix length
-	// TMM applies on the F5SPKVlan CRs (match your VLAN subnet mask), and the pod
-	// CIDR TMM installs a route toward (your cluster's pod subnet).
-	prefixDef, routesDef := config.DefaultVLANPrefixLen, config.DefaultTMMK8SRoutes
-	if prior != nil {
-		if prior.VLANPrefixLen != nil {
-			prefixDef = *prior.VLANPrefixLen
-		}
-		if prior.TMMK8SRoutes != "" {
-			routesDef = prior.TMMK8SRoutes
-		}
-	}
-	prefixLen := promptInt("  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; match your VLAN CIDRs)", prefixDef)
-	tmmRoutes := promptString("  Kubernetes pod CIDR TMM routes to (TMM_K8S_ROUTES; the cluster's pod subnet)", routesDef)
 
+	// ZONES FIRST. The self-IP prefix length used to be asked BEFORE these, with
+	// the instruction "match your VLAN CIDRs" — CIDRs the operator had not been
+	// shown yet. The default 24 was offered, accepted, and then contradicted by
+	// the subnets entered seconds later, with nothing reconciling the two. That
+	// produced /24 self-IPs on /23 VLANs, which surfaces as unreachable
+	// neighbours rather than as a configuration error.
 	zones := make([]config.BNKZoneCfg, len(seed))
 	for i, d := range seed {
 		fmt.Fprintf(os.Stderr, "\n  Availability zone %d of %d:\n", i+1, len(seed))
@@ -388,7 +381,93 @@ func promptBNKNetwork(prior *config.BNKNetworkCfg) *config.BNKNetworkCfg {
 			InternalSelfIP: promptString(fmt.Sprintf("  zone %d internal TMM self-IP", i+1), d.InternalSelfIP),
 		}
 	}
-	return &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
+
+	// Network-wide TMM knobs, now asked with the zones on screen.
+	prefixDef, routesDef := config.DefaultVLANPrefixLen, config.DefaultTMMK8SRoutes
+	if prior != nil {
+		if prior.VLANPrefixLen != nil {
+			prefixDef = *prior.VLANPrefixLen
+		}
+		if prior.TMMK8SRoutes != "" {
+			routesDef = prior.TMMK8SRoutes
+		}
+	}
+	// A SUGGESTION, not a derivation. Offered only when every VLAN CIDR just
+	// entered agrees on one mask — if they disagree there is no single right
+	// answer, and inventing one would be worse than the stale default. A saved
+	// value from a previous run always wins: it was chosen deliberately, and
+	// overriding it here would undo that on every re-init.
+	//
+	// The operator can still type anything. A prefix that deliberately disagrees
+	// with the subnet is a legitimate tool — it changes what TMM treats as
+	// directly connected, and static routes then steer the remainder to force a
+	// specific traffic pattern. Nothing here validates the two against each
+	// other, by design.
+	// Suggest whenever the CIDRs agree — including on re-init.
+	//
+	// This used to be gated on `prior.VLANPrefixLen == nil`, which never held
+	// after the first interview (the constructor below always writes a value), so
+	// the suggestion was suppressed in exactly the case that matters: an operator
+	// re-running init to change /24 subnets to /23 was offered the saved 24 under
+	// a label claiming it came from the CIDRs above. That is #67 again, from the
+	// other direction.
+	//
+	// A saved value still wins when the CIDRs do NOT agree — there is no single
+	// right suggestion then, and the previous deliberate choice is better than a
+	// constant.
+	label := "  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; override to force a routed pattern)"
+	if n, ok := commonVLANPrefixLen(zones); ok {
+		prefixDef = n
+		label = "  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; suggested from the VLAN CIDRs above — override to force a routed pattern)"
+	}
+	prefixLen := promptInt(label, prefixDef)
+	tmmRoutes := promptString("  Kubernetes pod CIDR TMM routes to (TMM_K8S_ROUTES; the cluster's pod subnet)", routesDef)
+
+	// Carry the per-VLAN overrides through. They are not prompted for — they are
+	// the unusual case — but a re-init that silently dropped them would revert
+	// the external or internal self-IP mask on a live cluster, which is the exact
+	// failure this batch exists to prevent.
+	cfg := &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
+	if prior != nil {
+		cfg.VLANPrefixLenExternal = prior.VLANPrefixLenExternal
+		cfg.VLANPrefixLenInternal = prior.VLANPrefixLenInternal
+	}
+	return cfg
+}
+
+// commonVLANPrefixLen returns the mask shared by every external and internal
+// VLAN CIDR across the zones, and whether one exists.
+//
+// Only the VLAN CIDRs are considered: the self-IPs sit on those, not on the SNAT
+// or VIP ranges, which are routed and legitimately sized differently.
+//
+// Returns false on any disagreement or unparseable entry, so the caller falls
+// back rather than suggesting a mask that is right for only some of the zones.
+// This is a prompt default and nothing more — the value it seeds stays freely
+// overridable, and no code path derives the mask from the CIDRs.
+func commonVLANPrefixLen(zones []config.BNKZoneCfg) (int, bool) {
+	found := -1
+	for _, z := range zones {
+		for _, c := range []string{z.ExtVLANCIDR, z.IntVLANCIDR} {
+			_, ipnet, err := net.ParseCIDR(strings.TrimSpace(c))
+			if err != nil || ipnet == nil {
+				return 0, false
+			}
+			ones, bits := ipnet.Mask.Size()
+			if bits != 32 {
+				return 0, false // IPv4 only; prefixlen_v4 has no meaning otherwise
+			}
+			if found == -1 {
+				found = ones
+			} else if found != ones {
+				return 0, false // zones disagree — no single right suggestion
+			}
+		}
+	}
+	if found == -1 {
+		return 0, false
+	}
+	return found, true
 }
 
 // persistAPIKey saves the API key to the workspace keychain (or the config.yaml

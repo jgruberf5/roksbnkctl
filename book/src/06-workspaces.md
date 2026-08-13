@@ -73,7 +73,7 @@ Source-attribution comments matter because the same variable can appear in multi
 
 ### Redaction
 
-Exactly one variable is redacted: `ibmcloud_api_key`. It's the only var whose value comes from the [cred resolver](./14-credentials-resolver.md) rather than being authored by the user in `config.yaml` or a tfvars file — so it's the only value the snapshot would expose that the user didn't put there themselves. See [PRD 04 §"Cred tmpfile-bind-mount pattern"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend) for why the API key isn't in tfvars in the first place. The redacted line carries an inline comment:
+Every variable carrying a credential is redacted: `ibmcloud_api_key`, `bigip_password`, `registry_mirror_password`, and `cneinstance_gtm_password`. `ibmcloud_api_key` is the one whose value comes from the [cred resolver](./14-credentials-resolver.md) rather than being authored by the user; the other three are authored in `config.yaml` (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to `redactedVarNames` now fails a test. See [PRD 04 §"Cred tmpfile-bind-mount pattern"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend) for why the API key isn't in tfvars in the first place. The redacted line carries an inline comment:
 
 ```hcl
 ibmcloud_api_key = "<redacted>"  # source: cred resolver, not persisted

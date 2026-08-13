@@ -82,6 +82,9 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `flo_namespace` | `f5-bnk` | Where the F5 Lifecycle Operator runs. |
 | `testing_create_tgw_jumphost` | `true` | Create the testing jumphost in a client VPC over Transit Gateway. |
 | `testing_ssh_key_name` | `""` (must set) | Existing IBM Cloud SSH key name for jumphost provisioning. |
+| `flo_trusted_profile_sa_name` / `flo_trusted_profile_roles` | the CNE controller's IBM Cloud identity — modelled as `bnk.trusted_profile.*` |
+| `cneinstance_gtm_url` / `_username` / `_password` | the BIG-IP DNS the GSLB datacenter registers with — modelled as `bnk.gtm.*` |
+| `cneinstance_vlan_prefixlen_external` / `_internal` | per-VLAN self-IP masks — modelled as `bnk.network.vlan_prefixlen_{external,internal}` |
 | `cneinstance_gslb_datacenter_name` | `""` | Set when wiring BNK into an F5 BIG-IP GSLB datacenter. |
 | `cneinstance_network_zones` | `[]` (install-guide defaults) | Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors `config.yaml`'s `bnk.network.zones`. Supply all three zones or none. |
 | `cneinstance_vlan_prefixlen` | `24` | TMM self-IP prefix length (F5SPKVlan `spec.prefixlen_v4`). `bnk.network.vlan_prefixlen`. Match your VLAN CIDRs. |
@@ -133,7 +136,7 @@ Because the prefix flows into all three, `roksbnkctl` enforces the **strictest**
 
 ### Namespaces are NOT prefixed
 
-Kubernetes namespaces — `cert_manager_namespace` (`cert-manager`), `flo_namespace` (`f5-bnk`), `flo_utils_namespace` (`f5-utils`) — keep their conventional fixed values and are **never** prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the **same** cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only **account-scoped** IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.
+Kubernetes namespaces — `cert_manager_namespace` (`cert-manager`), `flo_namespace` (`f5-bnk`), `flo_utils_namespace` (`f5-utils`) — default to their conventional values (and are settable via `bnk.flo_namespace` / `bnk.flo_utils_namespace` — including to the **same** value, for one namespace instead of two) and are **never** prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the **same** cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only **account-scoped** IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.
 
 ### Overriding a generated name
 
@@ -239,7 +242,7 @@ A rough decision matrix:
 |---|---|
 | Cluster identity, region, OpenShift version, worker count | `config.yaml` (via `roksbnkctl init` or by hand) |
 | BNK chart version, CNEInstance size, FAR repo | `config.yaml` (the `bnk:` block) |
-| A variable not modelled in `config.yaml` (e.g. `cneinstance_gslb_datacenter_name`, `bigip_password`) | `terraform.tfvars.user` (workspace-local, persistent) |
+| A variable not modelled in `config.yaml` | `terraform.tfvars.user` (workspace-local, persistent) |
 | You have a complete `./terraform.tfvars` you want this workspace to always use | Copy it to `~/.roksbnkctl/<ws>/terraform.tfvars.user` (sibling to `config.yaml`, mode `0600`) so bare `-w <ws>` commands Just Work for both phases. See [Chapter 6 §"Raw terraform-variable overrides"](./06-workspaces.md#raw-terraform-variable-overrides). |
 | A one-off override for a single run (perf test, capacity bump) | `--var-file ./oneoff.tfvars` (CLI) |
 | A CI-pipeline variable bundle that's checked into git | `--var-file ./ci-overrides.tfvars` (CLI; the file lives in your CI repo, not the workspace) |

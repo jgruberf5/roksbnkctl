@@ -25,6 +25,9 @@ import (
 //	ROKSBNKCTL_FLP_MODE                     → bnk.flp.mode ("" | helm | vsi)
 //	ROKSBNKCTL_FLP_VSI_VPC                  → bnk.flp.vsi.vpc (existing VPC id — the
 //	                                          standalone, cluster-less appliance)
+//	ROKSBNKCTL_FLP_VSI_CREATE_VPC           → bnk.flp.vsi.create_vpc (bool; #60/#64)
+//	ROKSBNKCTL_FLP_VSI_VPC_NAME             → bnk.flp.vsi.vpc_name
+//	ROKSBNKCTL_FLP_VSI_SUBNET_CIDR          → bnk.flp.vsi.subnet_cidr
 //	ROKSBNKCTL_FLP_VSI_ZONE                 → bnk.flp.vsi.zone
 //	ROKSBNKCTL_FLP_VSI_PROFILE              → bnk.flp.vsi.profile
 //	ROKSBNKCTL_FLP_VSI_SSH_KEY              → bnk.flp.vsi.ssh_key
@@ -60,6 +63,17 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 		{"ROKSBNKCTL_FLP_VSI_PROFILE", "bnk.flp.vsi.profile", func(c *BNKFLPVSICfg, v string) { c.Profile = v }},
 		{"ROKSBNKCTL_FLP_VSI_SSH_KEY", "bnk.flp.vsi.ssh_key", func(c *BNKFLPVSICfg, v string) { c.SSHKey = v }},
 		{"ROKSBNKCTL_FLP_VSI_REACH", "bnk.flp.vsi.reach", func(c *BNKFLPVSICfg, v string) { c.Reach = v }},
+		// #60 gave the proxy its own VPC; #64 makes that reachable from a
+		// blueprint, which until now it was not — the field existed only in a
+		// config.yaml the Forge modules never write.
+		//
+		// NOTE: create_vpc does not yet let the FLP be deployed with no cluster
+		// at all. StandaloneFLPVSI still requires bnk.flp.vsi.vpc, so the
+		// no-cluster path refuses and points at a field that is mutually
+		// exclusive with this one. Pre-existing gap from #60; this override does
+		// not close it, and the comment should not imply otherwise.
+		{"ROKSBNKCTL_FLP_VSI_VPC_NAME", "bnk.flp.vsi.vpc_name", func(c *BNKFLPVSICfg, v string) { c.VPCName = v }},
+		{"ROKSBNKCTL_FLP_VSI_SUBNET_CIDR", "bnk.flp.vsi.subnet_cidr", func(c *BNKFLPVSICfg, v string) { c.SubnetCIDR = v }},
 		{"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "bnk.flp.vsi.status_image", func(c *BNKFLPVSICfg, v string) { c.StatusImage = v }},
 		{"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST", "bnk.flp.vsi.status_registry_host", func(c *BNKFLPVSICfg, v string) { c.StatusRegistryHost = v }},
 		// Already base64 (that is how the operator captures a mirror's CA), so it is
@@ -83,6 +97,16 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 			applied = append(applied, "bnk.flp.vsi.boot_size_gb (ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB)")
 		}
 	}
+	// CreateVPC is mutually exclusive with VPC (see the config docs); it is a
+	// plain bool, so an unparseable value must leave it false rather than pin it
+	// true — false is the existing-workspace behaviour.
+	if v := envValue("ROKSBNKCTL_FLP_VSI_CREATE_VPC"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			flpVSI(ws).CreateVPC = b
+			applied = append(applied, "bnk.flp.vsi.create_vpc (ROKSBNKCTL_FLP_VSI_CREATE_VPC)")
+		}
+	}
+
 	// FloatingIP is a *bool: unset means "the module default (true)", so it is only
 	// written when the variable actually parses — an empty/garbage value must leave
 	// the pointer nil rather than pinning false.

@@ -36,7 +36,13 @@ import (
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
 //	ROKSBNKCTL_CLUSTER_VPC_CIDR     → cluster.vpc_cidr (per-zone prefixes; avoids TGW overlap)
 //	ROKSBNKCTL_CLUSTER_NETWORK_MODE → cluster.network_mode (single-nic default, or multi-nic)
+//	ROKSBNKCTL_TRUSTED_PROFILE_SA   → bnk.trusted_profile.service_account
+//	ROKSBNKCTL_TRUSTED_PROFILE_ROLES → bnk.trusted_profile.roles (comma-separated)
+//	ROKSBNKCTL_VLAN_PREFIXLEN       → bnk.network.vlan_prefixlen (TMM self-IP mask; independent of the zone CIDRs)
+//	ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL → bnk.network.vlan_prefixlen_external (overrides the shared value for one VLAN)
+//	ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL → bnk.network.vlan_prefixlen_internal
 //	ROKSBNKCTL_CLUSTER_VPC_ID       → resources.cluster_vpc (create:false + existing=<vpc-id>)
+//	ROKSBNKCTL_EXISTING_SUBNET_IDS  → cluster.existing_subnet_ids (comma-separated, zone order)
 //	ROKSBNKCTL_TGW_JUMPHOST_CREATE  → resources.tgw_jumphost.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_NAME      → resources.client_vpc.existing (adopt a client VPC)
@@ -48,6 +54,9 @@ import (
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_GENERIC_CA_B64       → registry.generic_ca_b64 (verbatim; already base64)
 //	ROKSBNKCTL_GENERIC_CA_SHA256    → registry.generic_ca_sha256 (the out-of-band CA pin)
+//	ROKSBNKCTL_GTM_URL              → bnk.gtm.url (BIG-IP DNS for GSLB; #51)
+//	ROKSBNKCTL_GTM_USERNAME         → bnk.gtm.username
+//	ROKSBNKCTL_GTM_PASSWORD         → bnk.gtm.password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
@@ -146,6 +155,79 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "cluster.network_mode (ROKSBNKCTL_CLUSTER_NETWORK_MODE)")
 	}
 
+	// The CNE controller's Trusted Profile. Present for the same reason the other
+	// env overrides are: the CI/Forge runners build a whole deployment from the
+	// environment and never write a config.yaml, so without these the profile is
+	// not tunable on that path at all.
+	if v := envValue("ROKSBNKCTL_TRUSTED_PROFILE_SA"); v != "" {
+		if ws.BNK.TrustedProfile == nil {
+			ws.BNK.TrustedProfile = &BNKTrustedProfileCfg{}
+		}
+		ws.BNK.TrustedProfile.ServiceAccount = v
+		applied = append(applied, "bnk.trusted_profile.service_account (ROKSBNKCTL_TRUSTED_PROFILE_SA)")
+	}
+	if v := envValue("ROKSBNKCTL_TRUSTED_PROFILE_ROLES"); v != "" {
+		roles := []string{}
+		for _, r := range strings.Split(v, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				roles = append(roles, r)
+			}
+		}
+		if len(roles) > 0 {
+			if ws.BNK.TrustedProfile == nil {
+				ws.BNK.TrustedProfile = &BNKTrustedProfileCfg{}
+			}
+			ws.BNK.TrustedProfile.Roles = roles
+			applied = append(applied, "bnk.trusted_profile.roles (ROKSBNKCTL_TRUSTED_PROFILE_ROLES)")
+		}
+	}
+
+	// ── bring-your-own network (#60, #61) — issue #64 ────────────────────────
+	// These shipped in v1.43.0 with a config surface and no env override, which
+	// made them unreachable from BNK Forge: every module runs
+	// `init --override-from-env --non-interactive` and there is no config.yaml to
+	// edit. A field reachable only through YAML cannot be used by a blueprint.
+	//
+	// The FLP VSI half lives in envoverride_flp.go, which already owns every
+	// other ROKSBNKCTL_FLP_VSI_* variable.
+	if v := envValue("ROKSBNKCTL_EXISTING_SUBNET_IDS"); v != "" {
+		ids := []string{}
+		for _, id := range strings.Split(v, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			ws.Cluster.ExistingSubnetIDs = ids
+			applied = append(applied, "cluster.existing_subnet_ids (ROKSBNKCTL_EXISTING_SUBNET_IDS)")
+		}
+	}
+
+	// GTM / BIG-IP DNS connection for GSLB (#51). Same shape as the CIS BIG-IP
+	// credentials: the password arrives RAW and is stored base64.
+	if v := envValue("ROKSBNKCTL_GTM_URL"); v != "" {
+		gtmCfg(ws).URL = v
+		applied = append(applied, "bnk.gtm.url (ROKSBNKCTL_GTM_URL)")
+	}
+	if v := envValue("ROKSBNKCTL_GTM_USERNAME"); v != "" {
+		gtmCfg(ws).Username = v
+		applied = append(applied, "bnk.gtm.username (ROKSBNKCTL_GTM_USERNAME)")
+	}
+	if v := envValue("ROKSBNKCTL_GTM_PASSWORD"); v != "" {
+		gtmCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
+		applied = append(applied, "bnk.gtm.password_b64 (ROKSBNKCTL_GTM_PASSWORD)")
+	}
+	// Credentials without a URL configure nothing: the render is gated on the
+	// URL, so a pipeline that sets the user and password but forgets
+	// ROKSBNKCTL_GTM_URL would see both reported as applied, written to
+	// config.yaml, and silently never rendered — GSLB simply never registers,
+	// with nothing anywhere saying why. Say it here, where the omission is.
+	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) == "" &&
+		(g.Username != "" || g.PasswordB64 != "") {
+		applied = append(applied,
+			"! bnk.gtm credentials set without ROKSBNKCTL_GTM_URL — GTM stays DISABLED and they will not be used")
+	}
+
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
 	// it. Preserves the other resource toggles.
@@ -217,6 +299,8 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// self-IPs). Fixed indexed env vars ROKSBNKCTL_ZONE<n>_* for up to maxZones;
 	// a zone is emitted only when all six of its fields are set.
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
+	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
+	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
 		if ws.Resources == nil {
 			ws.Resources = &ResourcesCfg{}
@@ -350,6 +434,14 @@ func preflightCfg(ws *Workspace) *BNKPreflightCfg {
 	return ws.BNK.Preflight
 }
 
+// gtmCfg lazily creates bnk.gtm so the overrides above can populate it.
+func gtmCfg(ws *Workspace) *BNKGTMCfg {
+	if ws.BNK.GTM == nil {
+		ws.BNK.GTM = &BNKGTMCfg{}
+	}
+	return ws.BNK.GTM
+}
+
 // flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
 // are pointers, so a config that never mentioned the FLP would otherwise nil-panic
 // the moment CI sets only the handoff vars.
@@ -426,6 +518,74 @@ func overrideNetworkZonesFromEnv(ws *Workspace) []string {
 	}
 	ws.BNK.Network.Zones = zones
 	return []string{"bnk.network.zones (ROKSBNKCTL_ZONE*_*)"}
+}
+
+// overrideVLANPrefixLenFromEnv overlays the TMM self-IP prefix length from
+// ROKSBNKCTL_VLAN_PREFIXLEN.
+//
+// DELIBERATELY INDEPENDENT OF THE ZONE CIDRs, and not derived from them. It is
+// tempting to treat a prefix length that disagrees with its subnet as a mistake
+// — it usually is — but the disagreement is also a tool: a mask that makes TMM
+// treat a smaller or larger block as directly connected, with static routes
+// steering the remainder, is how a specific traffic pattern gets forced. Deriving
+// this from the VPC subnet would remove that, so it stays an independent value
+// with no cross-validation against the zones.
+//
+// Exists because without it the setting was unreachable from the environment
+// entirely: the per-zone overrides above carry six fields and no mask, so every
+// env-driven deployment — CI, and every BNK Forge blueprint — was pinned to the
+// terraform default of 24 no matter what CIDRs it supplied. Separate from the
+// zone loop because it is network-wide, not per-zone, and must be settable
+// WITHOUT respecifying the zones.
+func overrideVLANPrefixLenFromEnv(ws *Workspace) []string {
+	v := envValue("ROKSBNKCTL_VLAN_PREFIXLEN")
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 || n > 32 {
+		// Ignore rather than fail: this runs during config assembly, where a
+		// hard error would abort a deployment over one malformed variable. An
+		// out-of-range mask cannot be honoured and cannot be guessed at, so the
+		// terraform default stands and the value is simply not reported as
+		// applied.
+		return nil
+	}
+	if ws.BNK.Network == nil {
+		ws.BNK.Network = &BNKNetworkCfg{}
+	}
+	ws.BNK.Network.VLANPrefixLen = &n
+	return []string{"bnk.network.vlan_prefixlen (ROKSBNKCTL_VLAN_PREFIXLEN)"}
+}
+
+// overrideVLANPrefixLenPerVLANFromEnv overlays the per-VLAN overrides. Same
+// independence rule as the shared value: nothing derives or validates these
+// against the zone CIDRs.
+func overrideVLANPrefixLenPerVLANFromEnv(ws *Workspace) []string {
+	var applied []string
+	for _, f := range []struct {
+		env   string
+		label string
+		set   func(*BNKNetworkCfg, *int)
+	}{
+		{"ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL", "bnk.network.vlan_prefixlen_external", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenExternal = n }},
+		{"ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL", "bnk.network.vlan_prefixlen_internal", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenInternal = n }},
+	} {
+		v := envValue(f.env)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 32 {
+			continue // ignored, not fatal — same rule as the shared value
+		}
+		if ws.BNK.Network == nil {
+			ws.BNK.Network = &BNKNetworkCfg{}
+		}
+		f.set(ws.BNK.Network, &n)
+		applied = append(applied, f.label+" ("+f.env+")")
+	}
+	return applied
 }
 
 // envValue returns the trimmed value of an environment variable, or "" when

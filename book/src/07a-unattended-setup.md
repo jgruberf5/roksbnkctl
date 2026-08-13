@@ -98,9 +98,25 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_OPENSHIFT_VERSION` | `cluster.openshift_version` | verbatim |
 | `ROKSBNKCTL_WORKERS_PER_ZONE` | `cluster.workers_per_zone` | integer |
 | `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY` | `cluster.public_gateway` | bool — `false` builds a **disconnected** cluster whose workers have no Internet egress. Unset inherits the terraform default (`true`). |
+| `ROKSBNKCTL_TRUSTED_PROFILE_SA` | `bnk.trusted_profile.service_account` | Kubernetes account allowed to assume the CNE controller's IBM Cloud Trusted Profile. Must match the account the FLO chart creates. |
+| `ROKSBNKCTL_TRUSTED_PROFILE_ROLES` | `bnk.trusted_profile.roles` | IAM roles for that profile, scoped to the cluster's own VPC. **Comma-separated.** An unparseable entry is dropped. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN` | `bnk.network.vlan_prefixlen` | TMM self-IP mask. **Independent of the zone CIDRs and never derived from them** — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are **silently ignored** and the terraform default stands. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL` | `bnk.network.vlan_prefixlen_external` | Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range. |
+| `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL` | `bnk.network.vlan_prefixlen_internal` | Same, internal VLAN. The two need not match. |
+| `ROKSBNKCTL_GTM_URL` | `bnk.gtm.url` | BIG-IP DNS / GTM the GSLB datacenter registers **with**. Without it, `gslb_datacenter_name` is a label pointing at nothing. |
+| `ROKSBNKCTL_GTM_USERNAME` | `bnk.gtm.username` | GTM user. |
+| `ROKSBNKCTL_GTM_PASSWORD` | `bnk.gtm.password_b64` | GTM password — supplied **raw**, stored base64 (like `IBMCLOUD_API_KEY` and `ROKSBNKCTL_BIGIP_PASSWORD`). |
+| `ROKSBNKCTL_GENERIC_CA_B64` | `registry.generic_ca_b64` | Mirror CA, **verbatim** — already base64, not re-encoded. |
+| `ROKSBNKCTL_GENERIC_CA_SHA256` | `registry.generic_ca_sha256` | The out-of-band CA pin. |
+| `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` | `bnk.preflight.reachability_retry_seconds` | Per-target retry window before the verdict is believed. |
+| `ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS` | `bnk.preflight.reachability_timeout_seconds` | Total wait for every node to report. |
 | `ROKSBNKCTL_CLUSTER_NETWORK_MODE` | `cluster.network_mode` | How the workers are attached: `single-nic` (default) or `multi-nic`. Create-time only. Exists for exactly this chapter's case — a runner that never writes a `config.yaml` would otherwise have no way to ask for it. |
 | `ROKSBNKCTL_CLUSTER_VPC_CIDR` | `cluster.vpc_cidr` | CIDR (`/18` or larger) for a **new** cluster VPC's per-zone address prefixes. Unset = IBM `auto`, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See [Chapter 9a](./09a-transit-gateway-sharing.md#first-give-each-cluster-vpc-its-own-address-block). |
 | `ROKSBNKCTL_TRANSIT_GATEWAY_NAME` | `resources.transit_gateway` (`create:false` + `existing`) | a Transit Gateway **name or id** — `cluster up`/`register` attaches the cluster VPC to it (see [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md)) |
+| `ROKSBNKCTL_EXISTING_SUBNET_IDS` | `cluster.existing_subnet_ids` | Place the cluster in subnets that already exist. Comma-separated, **in zone order** — each subnet's zone is read from the subnet, so a reordered list places the cluster differently. Requires `resources.cluster_vpc: {create: false, existing: <vpc-id>}`. |
+| `ROKSBNKCTL_FLP_VSI_CREATE_VPC` | `bnk.flp.vsi.create_vpc` | Give the FLP VSI its **own** VPC instead of placing it in one that exists. This is what lets the proxy be the first thing deployed in an air-gapped estate. Mutually exclusive with `ROKSBNKCTL_FLP_VSI_VPC`. |
+| `ROKSBNKCTL_FLP_VSI_VPC_NAME` | `bnk.flp.vsi.vpc_name` | Name for that VPC. Empty → `flp-vsi-vpc`. |
+| `ROKSBNKCTL_FLP_VSI_SUBNET_CIDR` | `bnk.flp.vsi.subnet_cidr` | Its address prefix. Must not overlap anything the consuming clusters can already route to — a transit gateway silently blackholes one of two overlapping VPCs. |
 | `ROKSBNKCTL_CLUSTER_VPC_ID` | `resources.cluster_vpc` (`create:false` + `existing`) | verbatim — adopt an existing cluster VPC by **ID** |
 | `ROKSBNKCTL_TESTING_VPC_NAME` | `resources.testing_client_vpc_name` | verbatim (names the client VPC to create) |
 | `ROKSBNKCTL_TGW_JUMPHOST_CREATE` | `resources.tgw_jumphost.create` | bool — the optional testing jumphost. Defaults **off**, as the interview does. |

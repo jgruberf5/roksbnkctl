@@ -6,6 +6,14 @@ This is the longest chapter in the testing section because the question it answe
 
 The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in [PRD 03 §"DNS probe (GSLB-aware)"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware); read that for the *why*, this chapter for the *how*.
 
+
+> **Pointing the deployment at a BIG-IP DNS.** This chapter covers *testing* GSLB
+> behaviour. The deployment side is two settings: `bnk.gslb_datacenter_name` names
+> the datacenter, and `bnk.gtm.{url,username,password_b64}` is the BIG-IP DNS it
+> registers **with**. Setting the name alone leaves a label pointing at nothing.
+> See [Chapter 28](./28-configuration-reference.md) — env equivalents are
+> `ROKSBNKCTL_GTM_URL` / `_USERNAME` / `_PASSWORD` (raw password; stored base64).
+
 ## Three vantages, one comparison
 
 `--gslb-compare` is the flagship workflow: a single `roksbnkctl test dns` invocation fans out across `local`, `k8s`, and (optionally) `ssh:<target>` vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.

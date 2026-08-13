@@ -135,10 +135,35 @@ variable "cneinstance_cloud_region" {
   default     = ""
 }
 
+variable "trusted_profile_sa_name" {
+  description = "The CNE controller service account. Must be the SAME value the flo module links its Trusted Profile to — a profile the pod may assume and an SCC the pod may use have to name the same account, or one of them is inert."
+  type        = string
+  default     = ""
+}
+
 variable "cneinstance_ibm_trusted_profile_id" {
   description = "IBM Trusted Profile ID for authentication"
   type        = string
   default     = ""
+}
+
+variable "cneinstance_gtm_url" {
+  description = "BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gtm_username" {
+  description = "Username for the GTM at cneinstance_gtm_url."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gtm_password" {
+  description = "Password for the GTM at cneinstance_gtm_url."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "cneinstance_gslb_datacenter_name" {
@@ -233,6 +258,18 @@ variable "cneinstance_vlan_internal_interface" {
   description = "TMM interface id for the internal F5SPKVlan (spec.interfaces)"
   type        = string
   default     = "1.2"
+}
+
+variable "cneinstance_vlan_prefixlen_external" {
+  description = "External VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen."
+  type        = number
+  default     = 0
+}
+
+variable "cneinstance_vlan_prefixlen_internal" {
+  description = "Internal VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen."
+  type        = number
+  default     = 0
 }
 
 variable "cneinstance_vlan_prefixlen" {

@@ -54,11 +54,18 @@ Source: `terraform/variables.tf`
 | `bigip_password` | `string` | `"admin"` | BIG-IP password for the CIS controller | **yes** |
 | `bigip_url` | `string` | `"192.168.1.245"` | BIG-IP URL for the CIS controller | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM Cloud Trusted Profile ID created by flo — wired automatically from flo output; set here to override | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | Kubernetes service account name the CNE controller's IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC. | no |
+| `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=<cluster vpc>). | no |
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
 | `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
+| `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
+| `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
+| `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults) | no |
+| `cneinstance_vlan_prefixlen_external` | `number` | `0` | External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value. | no |
+| `cneinstance_vlan_prefixlen_internal` | `number` | `0` | Internal VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen. See the external variable for why the two can differ. | no |
 | `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
 | `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
 | `license_mode` | `string` | `"connected"` | License operation mode (connected, disconnected, or f5licenseproxy) | no |
@@ -114,7 +121,7 @@ Source: `terraform/variables.tf`
 | `tgw_connection_name` | `string` | `""` | Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide). | no |
 | `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
-| `cluster_vpc_cidr` | `string` | `""` | <<-EOT | no |
+| `cluster_vpc_cidr` | `string` | `""` | CIDR block the cluster VPC's per-zone address prefixes are carved from (e.g. "10.241.0.0/16" → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). | no |
 | `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
 | `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
 | `flp_vsi_create_vpc` | `bool` | `false` | Build the F5 License Proxy its own VPC instead of placing it in an existing one. | no |
@@ -159,12 +166,18 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `f5_bigip_k8s_manifest_version` | `string` | `"2.3.0-3.2598.3-0.0.170"` | Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | The CNE controller service account; must match what the flo module linked. | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM IAM Trusted Profile ID for provisioning VPC routes | no |
 | `flo_cluster_issuer_name` | `string` | `""` | mTLS certificate issuer name | no |
 | `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
+| `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
+| `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
+| `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | The Multus Network Attachment Definitions for the CNEInstance TMM deployments | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults) | no |
+| `cneinstance_vlan_prefixlen_external` | `number` | `0` | External VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen. | no |
+| `cneinstance_vlan_prefixlen_internal` | `number` | `0` | Internal VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen. | no |
 | `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
 | `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
@@ -201,6 +214,8 @@ Source: `terraform/modules/flo/variables.tf`
 | `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
 | `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
+| `flo_trusted_profile_sa_name` | `string` | `""` | Service account the CNE controller Trusted Profile is linked to. | no |
+| `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC. | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager - used by cert-manager, flo modules | no |
@@ -392,7 +407,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `kubeconfig_dir` | `string` | _required_ | Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider's HOME-derived default, which resolves empty under the roksbnkctl runner. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the cluster phase invokes `roksbnkctl tfx <verb>` in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
-| `cluster_vpc_cidr` | `string` | `""` | <<-EOT | no |
+| `cluster_vpc_cidr` | `string` | `""` | CIDR block the cluster VPC's per-zone address prefixes are carved from (e.g. "10.241.0.0/16" → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). | no |
 | `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
 | `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
 

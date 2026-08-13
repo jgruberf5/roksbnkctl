@@ -147,6 +147,7 @@ cluster:
 | `min_worker_vcpu_count` | int | `16` | Minimum vCPUs when the cluster module auto-selects the `bx2` worker flavor (smallest profile meeting both minimums). `0`/omitted ⇒ HCL default. Sets `roks_min_worker_vcpu_count`. |
 | `min_worker_memory_gb` | int | `64` | Minimum memory (GB) for the same auto-select. `0`/omitted ⇒ HCL default. Sets `roks_min_worker_memory_gb`. |
 | `vpc_cidr` | string | empty (IBM `auto`) | Address block a **new** cluster VPC's three per-zone prefixes are carved from, so `/18` is the smallest usable value. Empty leaves IBM's `auto`, which gives every VPC in a region the same prefixes — two such VPCs cannot share a Transit Gateway. Sets `cluster_vpc_cidr`. **CREATE-time only**; changing it later warns. |
+| `existing_subnet_ids` | list | (empty) | Place the cluster in subnets that **already exist**, one per zone, **in zone order** — each subnet's zone is read from the subnet itself, so a reordered list places the cluster differently rather than failing. Requires `resources.cluster_vpc: {create: false, existing: <vpc-id>}`. Renders `use_existing_cluster_subnets` + `existing_cluster_subnet_ids`. Env: `ROKSBNKCTL_EXISTING_SUBNET_IDS` (comma-separated). |
 | `network_mode` | string | `single-nic` | How the worker nodes are attached. Omitted means `single-nic`, which is what every cluster built with this tool is — the field exists to *name* that, not to change it. `multi-nic` requires BNK 2.4+. Sets `cluster_network_mode`. **CREATE-time only and enforced**: an explicit value contradicting the built cluster is refused, because there is no in-place conversion. See [Chapter 28](./28-configuration-reference.md#bnk-release-and-network-mode). |
 
 The `cluster:` block translates to terraform variables `create_roks_cluster`, `openshift_cluster_name`, `roks_cluster_id_or_name`, `openshift_cluster_version`, `roks_workers_per_zone`, `cluster_public_gateway`, `cluster_vpc_cidr`, `cluster_network_mode` — see [Chapter 13](./13-terraform-variables.md) and [Chapter 29](./29-terraform-variable-reference.md) for the full mapping.
@@ -198,6 +199,8 @@ bnk:
     version: v1.17.3
   network:                            # optional; data-plane subnets + TMM self-IPs
     vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
+    vlan_prefixlen_external: 23       #   optional; overrides the shared value
+    vlan_prefixlen_internal: 26       #   optional; the two VLANs need not match
     tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
     zones:                            #   one entry per AZ (3 total)
       - ext_vlan_cidr: 10.155.15.0/24
@@ -218,7 +221,12 @@ bnk:
 | `manifest_version` | string | upstream HCL default | Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL's pin. |
 | `flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace. Sets `flo_namespace`. |
 | `flo_utils_namespace` | string | `f5-utils` | F5 utility-components namespace. Sets `flo_utils_namespace`. |
-| `gslb_datacenter_name` | string | empty | Optional CNEInstance GSLB datacenter name. Sets `cneinstance_gslb_datacenter_name`. |
+| `gslb_datacenter_name` | string | empty | CNEInstance GSLB datacenter **name**. Sets `cneinstance_gslb_datacenter_name`. Names the datacenter; `gtm.*` is what it registers **with**. |
+| `gtm.url` | string | empty | BIG-IP DNS / GTM management URL. Empty disables GTM. Without it the datacenter name is a label pointing at nothing. Sets `cneinstance_gtm_url`. Env: `ROKSBNKCTL_GTM_URL`. |
+| `gtm.username` | string | empty | GTM user. Env: `ROKSBNKCTL_GTM_USERNAME`. |
+| `gtm.password_b64` | string | empty | GTM password, base64 (obfuscation, **not** encryption — like `ibmcloud.api_key_b64`). `ROKSBNKCTL_GTM_PASSWORD` takes the raw value. |
+| `trusted_profile.service_account` | string | (derived) | Account allowed to assume the CNE controller's IBM Cloud Trusted Profile. Empty derives FLO's own name, `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount`. The IAM trust rule is a **matcher**, not a pointer: IBM compares a pod's service-account token against `crn`/`namespace`/`name` with `EQUALS`, so a name that does not match the account the CNE controller actually runs as means **nothing can assume the profile, and nothing reports an error**. Set this only if you can also make FLO name the account differently — roksbnkctl cannot, since FLO creates it when it reconciles the CNEInstance and that spec has no service-account field. Env: `ROKSBNKCTL_TRUSTED_PROFILE_SA`. |
+| `trusted_profile.roles` | list | `[Viewer, Editor]` | IAM roles for that profile, scoped to the cluster's own VPC. Env: `ROKSBNKCTL_TRUSTED_PROFILE_ROLES` (comma-separated). |
 | `cert_manager.namespace` | string | `cert-manager` | cert-manager namespace. Sets `cert_manager_namespace`. Install/skip stays on `resources.cert_manager.create`. |
 | `cert_manager.version` | string | HCL default | Pin the cert-manager chart version. Sets `cert_manager_version`. |
 | `license_mode` | enum | `connected` | `connected` \| `disconnected` \| `f5licenseproxy`. Sets `license_mode`. |
@@ -238,10 +246,12 @@ BNK's data plane (TMM) needs per-availability-zone VLAN subnets, SNAT/VIP ranges
 | `zones[].int_vip_cidr` | `10.135.15.0/24` | Internal VIP CIDR. |
 | `zones[].external_selfip` | `10.155.15.101` | External TMM self-IP. |
 | `zones[].internal_selfip` | `10.254.99.101` | Internal TMM self-IP. |
-| `vlan_prefixlen` | `24` | Self-IP prefix length (`spec.prefixlen_v4` on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs. Sets `cneinstance_vlan_prefixlen`. |
+| `vlan_prefixlen` | `24` | Self-IP prefix length (`spec.prefixlen_v4` on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Usually you want it to match your VLAN CIDRs — but it is **independent of them and never derived from them**, and nothing validates the two against each other. A deliberate disagreement, paired with static routes, is how a specific traffic pattern is forced. Sets `cneinstance_vlan_prefixlen`. |
+| `vlan_prefixlen_external` | (inherit) | Overrides `vlan_prefixlen` for the **external** VLAN only. Unset inherits. Sets `cneinstance_vlan_prefixlen_external`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL`. |
+| `vlan_prefixlen_internal` | (inherit) | Same for the **internal** VLAN. Sets `cneinstance_vlan_prefixlen_internal`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL`. |
 | `tmm_k8s_routes` | `172.17.0.0/18` | Pod CIDR TMM installs a route toward (`TMM_K8S_ROUTES`) so it can reach backend pods. Set to your cluster's pod subnet if it isn't the ROKS default. Sets `cneinstance_tmm_k8s_routes`. |
 
-Provide **all three zones** when you set `zones` — supplying zones replaces the defaults entirely (they render `cneinstance_network_zones`, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone *names* are derived from the region and aren't configurable. `vlan_prefixlen` and `tmm_k8s_routes` are network-wide (shared across all zones). Unset either scalar to keep the terraform default.
+Provide **all three zones** when you set `zones` — supplying zones replaces the defaults entirely (they render `cneinstance_network_zones`, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone *names* are derived from the region and aren't configurable. `vlan_prefixlen` and `tmm_k8s_routes` are network-wide (shared across all zones), though the mask can differ **between the two VLANs** via `vlan_prefixlen_external` / `vlan_prefixlen_internal` — TMM can front a `/23` externally while the internal side is a `/26`, which one shared scalar could not express. Unset either scalar to keep the terraform default.
 
 ## `test:`
 

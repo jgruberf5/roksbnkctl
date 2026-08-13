@@ -422,6 +422,47 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
+	// Trusted Profile. Emitted only when set; absent leaves the HCL defaults,
+	// which reproduce today's behaviour exactly — the service account derives
+	// FLO's own long name rather than a static short one.
+	if tp := ws.BNK.TrustedProfile; tp != nil {
+		if sa := strings.TrimSpace(tp.ServiceAccount); sa != "" {
+			fmt.Fprintf(w, "flo_trusted_profile_sa_name = %q\n", sa)
+		}
+		if len(tp.Roles) > 0 {
+			// Trim and drop blanks first — a comma-separated env value like
+			// "Viewer, Editor," would otherwise render a "" role, which
+			// terraform accepts and IAM rejects. hclStringList only quotes, so
+			// the filtering has to happen here rather than in the shared helper,
+			// whose other callers do not want it.
+			roles := make([]string, 0, len(tp.Roles))
+			for _, r := range tp.Roles {
+				if r = strings.TrimSpace(r); r != "" {
+					roles = append(roles, r)
+				}
+			}
+			if len(roles) > 0 {
+				fmt.Fprintf(w, "flo_trusted_profile_roles = %s\n", hclStringList(roles))
+			}
+		}
+	}
+
+	// GTM / BIG-IP DNS connection (#51). Emitted only when a URL is set, so a
+	// workspace that does not use GSLB renders exactly what it did before.
+	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) != "" {
+		fmt.Fprintf(w, "cneinstance_gtm_url = %q\n", strings.TrimSpace(g.URL))
+		if g.Username != "" {
+			fmt.Fprintf(w, "cneinstance_gtm_username = %q\n", g.Username)
+		}
+		if g.PasswordB64 != "" {
+			raw, err := base64.StdEncoding.DecodeString(g.PasswordB64)
+			if err != nil {
+				return fmt.Errorf("bnk.gtm.password_b64 is not valid base64: %w", err)
+			}
+			fmt.Fprintf(w, "cneinstance_gtm_password = %q\n", string(raw))
+		}
+	}
+
 	if ws.BNK.GSLBDatacenterName != "" {
 		fmt.Fprintf(w, "cneinstance_gslb_datacenter_name = %q\n", ws.BNK.GSLBDatacenterName)
 	}
@@ -633,6 +674,14 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		}
 		if net.VLANPrefixLen != nil {
 			fmt.Fprintf(w, "cneinstance_vlan_prefixlen = %d\n", *net.VLANPrefixLen)
+		}
+		// Emitted only when set; the HCL reads 0 as "inherit the shared value", so
+		// an unset per-VLAN override renders nothing and changes nothing.
+		if net.VLANPrefixLenExternal != nil {
+			fmt.Fprintf(w, "cneinstance_vlan_prefixlen_external = %d\n", *net.VLANPrefixLenExternal)
+		}
+		if net.VLANPrefixLenInternal != nil {
+			fmt.Fprintf(w, "cneinstance_vlan_prefixlen_internal = %d\n", *net.VLANPrefixLenInternal)
 		}
 		if net.TMMK8SRoutes != "" {
 			fmt.Fprintf(w, "cneinstance_tmm_k8s_routes = %q\n", net.TMMK8SRoutes)

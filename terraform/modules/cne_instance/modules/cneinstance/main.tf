@@ -23,9 +23,21 @@ locals {
 
   # Define all service accounts that require privileged SCC
   # These service accounts are created by CNEInstance and FLO deployment
+  # Must resolve to the SAME account the flo module links the Trusted Profile
+  # to — a profile the pod may assume and an SCC the pod may use have to name
+  # one account, or one of them is inert. Empty derives FLO's own name.
+  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+
+  # Every entry below is already parameterised on var.flo_namespace /
+  # var.utils_namespace, so it follows whatever those are. There used to be a
+  # `var.flo_namespace == "f5-bnk" ?` guard on the first group, comparing against
+  # the DEFAULT as a literal — which meant any custom flo_namespace silently
+  # dropped all nine FLO-side bindings while the utils half stayed. The install
+  # then failed in the cluster, at pod start, naming service accounts rather than
+  # the setting that caused it (#65).
   scc_policy_assignments = concat(
-    # f5-bnk namespace service accounts (if this is the main FLO namespace)
-    var.flo_namespace == "f5-bnk" ? [
+    # FLO-namespace service accounts.
+    [
       {
         namespace       = var.flo_namespace
         service_account = "f5-cne-env-discovery-serviceaccount"
@@ -44,7 +56,7 @@ locals {
       },
       {
         namespace       = var.flo_namespace
-        service_account = "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+        service_account = local.trusted_profile_sa
       },
       {
         namespace       = var.flo_namespace
@@ -64,8 +76,8 @@ locals {
         namespace       = var.flo_namespace
         service_account = "default"
       }
-    ] : [],
-    # f5-utils namespace service accounts
+    ],
+    # Utils-namespace service accounts.
     [
       {
         namespace       = var.utils_namespace
@@ -109,6 +121,29 @@ locals {
       }
     ]
   )
+
+  # GTM / BIG-IP DNS connection (#51). Built as a CONDITIONAL list rather than
+  # six always-present entries with empty values: an existing deployment that
+  # sets no GTM variables must produce no diff at all. Six new env entries in the
+  # CNEInstance spec is a real yaml_body change, so a no-op `bnk up` would
+  # server-side-apply a changed CR, FLO would reconcile it, and the CNE
+  # controller pod template would change — bouncing the controller on a running
+  # cluster for a feature nobody enabled.
+  #
+  # It also avoids asserting that an empty GTM_URL means "off". If a controller
+  # build does read that name, an empty value may select a GSLB path with a blank
+  # endpoint rather than no path at all.
+  cnecontroller_gtm_env = var.cneinstance_gtm_url == "" ? [] : [
+    { name = "GSLB_GTM_URL", value = var.cneinstance_gtm_url },
+    { name = "GSLB_GTM_USERNAME", value = var.cneinstance_gtm_username },
+    { name = "GSLB_GTM_PASSWORD", value = var.cneinstance_gtm_password },
+    # Emitted under both prefixes for the same reason CLOUD_VPC sits beside
+    # VPC_NAME: the real names are F5's contract from the install guide.
+    # VERIFY against BNK 2.3 and drop the pair that is not real.
+    { name = "GTM_URL", value = var.cneinstance_gtm_url },
+    { name = "GTM_USERNAME", value = var.cneinstance_gtm_username },
+    { name = "GTM_PASSWORD", value = var.cneinstance_gtm_password },
+  ]
 
   cneinstance_spec = {
     product = {
@@ -163,7 +198,7 @@ locals {
         runAfterSuccess = var.cneinstance_env_discovery
       }
       cneController = {
-        env = [
+        env = concat([
           {
             name  = "TMM_DEFAULT_MTU"
             value = "9000"
@@ -196,11 +231,6 @@ locals {
             name  = "GSLB_DATACENTER_NAME"
             value = var.cneinstance_gslb_datacenter_name
           },
-          # BNK 2.3 install-guide env names, emitted ALONGSIDE VPC_NAME /
-          # IBM_TRUSTED_PROFILE_ID above for cross-version compatibility: the
-          # 2.3 CNE controller reads CLOUD_VPC / CLOUD_TRUSTED_PROFILE for the
-          # VPC route programming. Same values; harmless to whichever version
-          # ignores them.
           {
             name  = "CLOUD_VPC"
             value = var.cneinstance_vpc_name
@@ -209,7 +239,7 @@ locals {
             name  = "CLOUD_TRUSTED_PROFILE"
             value = var.cneinstance_ibm_trusted_profile_id
           }
-        ]
+        ], local.cnecontroller_gtm_env)
       }
       demoMode = {
         enabled = true
@@ -332,6 +362,11 @@ locals {
     }
   }
 
+  # 0 means "inherit", so a deployment that never sets these behaves exactly as
+  # it did when one scalar served both VLANs.
+  vlan_prefixlen_external = var.cneinstance_vlan_prefixlen_external != 0 ? var.cneinstance_vlan_prefixlen_external : var.cneinstance_vlan_prefixlen
+  vlan_prefixlen_internal = var.cneinstance_vlan_prefixlen_internal != 0 ? var.cneinstance_vlan_prefixlen_internal : var.cneinstance_vlan_prefixlen
+
   external_vlan_manifest = {
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKVlan"
@@ -340,7 +375,7 @@ locals {
       name         = "external-vlan"
       interfaces   = [var.cneinstance_vlan_external_interface]
       selfip_v4s   = [for z in var.cneinstance_network_zones : z.external_selfip]
-      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      prefixlen_v4 = local.vlan_prefixlen_external
       auto_lasthop = "AUTO_LASTHOP_ENABLED"
     }
   }
@@ -353,7 +388,7 @@ locals {
       name         = "internal-vlan"
       interfaces   = [var.cneinstance_vlan_internal_interface]
       selfip_v4s   = [for z in var.cneinstance_network_zones : z.internal_selfip]
-      prefixlen_v4 = var.cneinstance_vlan_prefixlen
+      prefixlen_v4 = local.vlan_prefixlen_internal
       auto_lasthop = "AUTO_LASTHOP_ENABLED"
       internal     = true
     }
@@ -497,9 +532,19 @@ resource "kubectl_manifest" "internal_vlan" {
 }
 
 resource "kubectl_manifest" "cneinstance_scc_policies" {
+  # distinct() because collapsing both namespaces onto one makes some
+  # (namespace, service_account) pairs identical — `default` exists in both
+  # groups — and a `for` expression that produces the same key twice is a
+  # plan-time error, not a merge. The entries carry only those two fields, so an
+  # identical key means an identical object and dropping the duplicate loses
+  # nothing (#66).
   for_each = local.use_kubectl ? {
-    for assignment in local.scc_policy_assignments :
-    "${assignment.namespace}-${assignment.service_account}" => assignment
+    for assignment in distinct(local.scc_policy_assignments) :
+    # "/" rather than "-": a namespace cannot contain a slash, so the key is
+    # collision-free. With "-", the pairs (f5, bnk-default) and (f5-bnk, default)
+    # produce the same key and distinct() would not save them — no plausible
+    # naming hits it today, but the separator costs nothing to get right.
+    "${assignment.namespace}/${assignment.service_account}" => assignment
   } : {}
 
   server_side_apply = true

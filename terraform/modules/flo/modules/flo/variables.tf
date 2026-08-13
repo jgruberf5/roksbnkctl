@@ -105,6 +105,18 @@ variable "bigip_url" {
   default     = ""
 }
 
+variable "trusted_profile_sa_name" {
+  description = "Service account the CNE controller Trusted Profile is linked to. Must match the SA the FLO chart creates."
+  type        = string
+  default     = ""
+}
+
+variable "trusted_profile_roles" {
+  description = "IAM roles for the CNE controller Trusted Profile on the cluster VPC."
+  type        = list(string)
+  default     = ["Viewer", "Editor"]
+}
+
 variable "flo_namespace" {
   description = "Namespace for f5-lifecycle-operator installation"
   type        = string
