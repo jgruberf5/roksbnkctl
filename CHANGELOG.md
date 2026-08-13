@@ -4,6 +4,45 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.44.0 — 2026-08-13
+
+Surfaces settings that existed only in embedded HCL, closes the environment-override gaps that made the v1.43.0 bring-your-own-network work unusable from BNK Forge, and adds the connection half of GSLB. **Additive**: absence of every new setting reproduces the previous behaviour exactly.
+
+### Added
+
+- **The CNE controller's IBM Cloud Trusted Profile is configurable** ([#65](https://github.com/jgruberf5/roksbnkctl/issues/65)) — the identity granting it `Editor` on the cluster VPC had no config surface at all.
+
+  ```yaml
+  bnk:
+    trusted_profile:
+      service_account:            # blank derives what FLO actually creates
+      roles: [Viewer, Editor]
+  ```
+
+  Blank derives `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount`. The IAM trust rule is a **matcher**, not a pointer — IBM compares a pod's service-account token against `crn`/`namespace`/`name` with `EQUALS` — so a name that does not match the account the controller runs as means nothing can assume the profile, and nothing reports an error. Set it only if you can also make FLO name the account differently.
+
+- **One namespace instead of two** ([#66](https://github.com/jgruberf5/roksbnkctl/issues/66)) — `bnk.flo_namespace` and `bnk.flo_utils_namespace` may now be the same value. Four resource collisions previously made that impossible.
+
+- **The GTM connection for GSLB** ([#51](https://github.com/jgruberf5/roksbnkctl/issues/51)) — `bnk.gtm.{url,username,password_b64}`. `gslb_datacenter_name` named a datacenter with nothing to register it with.
+
+- **Per-VLAN self-IP masks** ([#67](https://github.com/jgruberf5/roksbnkctl/issues/67)) — `bnk.network.vlan_prefixlen_external` / `_internal`. TMM can front a `/23` externally while the internal side is a `/26`; one shared scalar could not express that.
+
+- **Twelve environment overrides**, closing [#64](https://github.com/jgruberf5/roksbnkctl/issues/64) and the same gap in every field added here. `ROKSBNKCTL_EXISTING_SUBNET_IDS`, `ROKSBNKCTL_FLP_VSI_{CREATE_VPC,VPC_NAME,SUBNET_CIDR}`, `ROKSBNKCTL_TRUSTED_PROFILE_{SA,ROLES}`, `ROKSBNKCTL_VLAN_PREFIXLEN{,_EXTERNAL,_INTERNAL}`, `ROKSBNKCTL_GTM_{URL,USERNAME,PASSWORD}`. Every Forge module builds its workspace from the environment alone, so a field reachable only through YAML could not be used by a blueprint.
+
+### Fixed
+
+- **A custom `bnk.flo_namespace` silently dropped nine SCC bindings** ([#65](https://github.com/jgruberf5/roksbnkctl/issues/65)). A guard compared the namespace against the *default as a literal*, so any other value kept the utils half and lost the FLO half — TMM and DSSM came up without privileged SCC, failing in the cluster at pod start, naming service accounts rather than the setting that caused it.
+
+- **Credentials were not redacted from the applied-tfvars snapshot.** That file is documented as suitable for committing, and `bigip_password` and `registry_mirror_password` had been in it unredacted; `cneinstance_gtm_password` would have joined them.
+
+- **`roksbnkctl init` asked for the self-IP mask before the VLAN CIDRs** it told you to match, then offered `24`. Zones now come first, and the mask is suggested from the CIDRs when they agree — a prompt default only, never a derivation.
+
+- **The docs generator could be broken by its own house style.** Heredoc descriptions became the way rationale is written in `variables.tf`, but a `}` in prose truncated a variable silently and a lone quote failed the whole run, taking `make book` down.
+
+### Notes
+
+The GTM environment-variable names inside the CNEInstance are emitted under both `GSLB_GTM_*` and `GTM_*`, pending verification against the BNK 2.3 install guide — the same cross-version hedge already used for `CLOUD_VPC`/`VPC_NAME`. The book documents no CNEInstance env name until that is settled.
+
 ## v1.43.0 — 2026-08-11
 
 Preparation for BNK 2.4 and multi-NIC ROKS, neither of which has shipped. Everything here is **additive**: absence of every new setting reproduces the previous behaviour exactly, and no existing `config.yaml`, environment variable, or CLI invocation changes.
