@@ -403,15 +403,36 @@ func promptBNKNetwork(prior *config.BNKNetworkCfg) *config.BNKNetworkCfg {
 	// directly connected, and static routes then steer the remainder to force a
 	// specific traffic pattern. Nothing here validates the two against each
 	// other, by design.
-	if prior == nil || prior.VLANPrefixLen == nil {
-		if n, ok := commonVLANPrefixLen(zones); ok {
-			prefixDef = n
-		}
+	// Suggest whenever the CIDRs agree — including on re-init.
+	//
+	// This used to be gated on `prior.VLANPrefixLen == nil`, which never held
+	// after the first interview (the constructor below always writes a value), so
+	// the suggestion was suppressed in exactly the case that matters: an operator
+	// re-running init to change /24 subnets to /23 was offered the saved 24 under
+	// a label claiming it came from the CIDRs above. That is #67 again, from the
+	// other direction.
+	//
+	// A saved value still wins when the CIDRs do NOT agree — there is no single
+	// right suggestion then, and the previous deliberate choice is better than a
+	// constant.
+	label := "  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; override to force a routed pattern)"
+	if n, ok := commonVLANPrefixLen(zones); ok {
+		prefixDef = n
+		label = "  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; suggested from the VLAN CIDRs above — override to force a routed pattern)"
 	}
-	prefixLen := promptInt("  self-IP prefix length (F5SPKVlan spec.prefixlen_v4; suggested from the VLAN CIDRs above — override to force a routed pattern)", prefixDef)
+	prefixLen := promptInt(label, prefixDef)
 	tmmRoutes := promptString("  Kubernetes pod CIDR TMM routes to (TMM_K8S_ROUTES; the cluster's pod subnet)", routesDef)
 
-	return &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
+	// Carry the per-VLAN overrides through. They are not prompted for — they are
+	// the unusual case — but a re-init that silently dropped them would revert
+	// the external or internal self-IP mask on a live cluster, which is the exact
+	// failure this batch exists to prevent.
+	cfg := &config.BNKNetworkCfg{Zones: zones, VLANPrefixLen: &prefixLen, TMMK8SRoutes: tmmRoutes}
+	if prior != nil {
+		cfg.VLANPrefixLenExternal = prior.VLANPrefixLenExternal
+		cfg.VLANPrefixLenInternal = prior.VLANPrefixLenInternal
+	}
+	return cfg
 }
 
 // commonVLANPrefixLen returns the mask shared by every external and internal

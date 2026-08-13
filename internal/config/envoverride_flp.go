@@ -64,10 +64,14 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 		{"ROKSBNKCTL_FLP_VSI_SSH_KEY", "bnk.flp.vsi.ssh_key", func(c *BNKFLPVSICfg, v string) { c.SSHKey = v }},
 		{"ROKSBNKCTL_FLP_VSI_REACH", "bnk.flp.vsi.reach", func(c *BNKFLPVSICfg, v string) { c.Reach = v }},
 		// #60 gave the proxy its own VPC; #64 makes that reachable from a
-		// blueprint. Being able to create the VPC is what lets the FLP be the
-		// FIRST thing deployed in an air-gapped estate, which is exactly the
-		// case a Forge module automates — and until now it could only be
-		// expressed in a config.yaml the modules never write.
+		// blueprint, which until now it was not — the field existed only in a
+		// config.yaml the Forge modules never write.
+		//
+		// NOTE: create_vpc does not yet let the FLP be deployed with no cluster
+		// at all. StandaloneFLPVSI still requires bnk.flp.vsi.vpc, so the
+		// no-cluster path refuses and points at a field that is mutually
+		// exclusive with this one. Pre-existing gap from #60; this override does
+		// not close it, and the comment should not imply otherwise.
 		{"ROKSBNKCTL_FLP_VSI_VPC_NAME", "bnk.flp.vsi.vpc_name", func(c *BNKFLPVSICfg, v string) { c.VPCName = v }},
 		{"ROKSBNKCTL_FLP_VSI_SUBNET_CIDR", "bnk.flp.vsi.subnet_cidr", func(c *BNKFLPVSICfg, v string) { c.SubnetCIDR = v }},
 		{"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "bnk.flp.vsi.status_image", func(c *BNKFLPVSICfg, v string) { c.StatusImage = v }},

@@ -386,15 +386,22 @@ type BNKCfg struct {
 	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
 	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
 
+	// TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller
+	// assumes to manage its own cluster's VPC. nil/absent → the terraform
+	// defaults.
+	//
+	// The ROLES default is unchanged. The SERVICE ACCOUNT default is not:
+	// releases before this one used
+	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount", and
+	// the default is now plain "f5-cne-controller". Leaving this nil on a
+	// workspace that already has a cluster retargets the IAM link and the
+	// privileged-SCC binding; guardTrustedProfileSADefault warns first.
+	TrustedProfile *BNKTrustedProfileCfg `yaml:"trusted_profile,omitempty"`
+
 	// FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
 	// these for multi-tenant clusters or to avoid namespace collisions.
-	// TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller
-	// assumes to manage its own cluster's VPC. nil/absent → the terraform
-	// defaults, which are today's behaviour exactly.
-	TrustedProfile *BNKTrustedProfileCfg `yaml:"trusted_profile,omitempty"`
-
 	FLONamespace      string `yaml:"flo_namespace,omitempty"`
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
 
@@ -640,9 +647,6 @@ type BNKCertManagerCfg struct {
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
-// BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
-// encryption — like ibmcloud.api_key_b64); the raw value is rendered to
-// terraform.tfvars as bigip_password at apply time.
 // BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB
 // datacenter with (#51) — the connection half of GSLB, which until now only had
 // the datacenter NAME.
@@ -662,6 +666,9 @@ type BNKGTMCfg struct {
 	PasswordB64 string `yaml:"password_b64,omitempty"`
 }
 
+// BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
+// encryption — like ibmcloud.api_key_b64); the raw value is rendered to
+// terraform.tfvars as bigip_password at apply time.
 type BNKCISCfg struct {
 	BigIPURL         string `yaml:"bigip_url,omitempty"`
 	BigIPUsername    string `yaml:"bigip_username,omitempty"`

@@ -110,7 +110,7 @@ terraform destroy -auto-approve
 
 **IBM IAM Trusted Profile** (created by FLO module, passed to CNEInstance):
 - `openshift_cluster_name`: Name of the OpenShift cluster — used to make the trusted profile name unique per cluster (sourced from cluster data source)
-- `openshift_cluster_crn`: CRN of the OpenShift cluster — used to link the trusted profile to the ROKS service account `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount` in `flo_namespace` (sourced from cluster data source)
+- `openshift_cluster_crn`: CRN of the OpenShift cluster — used to link the trusted profile to a ROKS service account in `flo_namespace` (sourced from cluster data source). The account is `var.trusted_profile_sa_name`, default `f5-cne-controller`. **Releases before v1.44.0 hardcoded `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount`** — an existing deployment that leaves the variable unset therefore retargets both the IAM link and the privileged-SCC binding; `roksbnkctl` warns before the apply that does it
 - `cluster_vpc_id`: ID of the cluster VPC — grants the trusted profile Viewer and Editor IAM roles on this VPC (sourced from cluster data source)
 
 **COS Bucket Integration** (FAR auth key and JWT fetched from IBM Cloud Object Storage):

@@ -229,3 +229,61 @@ func grepLines(s, substr string) string {
 	}
 	return b.String()
 }
+
+// Heredoc descriptions became the house style for long rationale in
+// terraform/variables.tf, which put prose inside the region findMatchingBrace
+// scans. These are the characters that used to break it: a `}` truncated the
+// variable SILENTLY, and an unbalanced quote or a `{` failed the whole run with
+// a message naming the wrong variable — taking `make book` down for a comment.
+func TestHeredocProseCannotBreakBraceMatching(t *testing.T) {
+	for _, tc := range []struct{ name, hcl string }{
+		{"closing brace in prose", `variable "a" {
+  description = <<-EOT
+    Ends the block with a } character.
+  EOT
+  type    = string
+  default = "x"
+}`},
+		{"lone double quote", `variable "a" {
+  description = <<-EOT
+    the "external" VLAN and a lone " mark
+  EOT
+  type    = string
+  default = "x"
+}`},
+		{"opening brace in prose", `variable "a" {
+  description = <<-EOT
+    An object like { foo = bar } in prose.
+  EOT
+  type    = string
+  default = "x"
+}`},
+		{"no-dash heredoc", `variable "a" {
+  description = <<EOT
+plain heredoc
+EOT
+  type    = string
+  default = "x"
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "test.tf")
+			if err := os.WriteFile(path, []byte(tc.hcl), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			vars, err := parseFile(path)
+			if err != nil {
+				t.Fatalf("parse failed: %v", err)
+			}
+			if len(vars) != 1 {
+				t.Fatalf("got %d variables, want 1", len(vars))
+			}
+			// The default proves the parser reached the END of the block rather
+			// than stopping at a brace inside the prose.
+			if vars[0].Default != `"x"` {
+				t.Errorf("default = %q, want \"x\" — the block boundary was corrupted", vars[0].Default)
+			}
+		})
+	}
+}

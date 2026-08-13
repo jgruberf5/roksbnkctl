@@ -117,6 +117,29 @@ locals {
     ]
   )
 
+  # GTM / BIG-IP DNS connection (#51). Built as a CONDITIONAL list rather than
+  # six always-present entries with empty values: an existing deployment that
+  # sets no GTM variables must produce no diff at all. Six new env entries in the
+  # CNEInstance spec is a real yaml_body change, so a no-op `bnk up` would
+  # server-side-apply a changed CR, FLO would reconcile it, and the CNE
+  # controller pod template would change — bouncing the controller on a running
+  # cluster for a feature nobody enabled.
+  #
+  # It also avoids asserting that an empty GTM_URL means "off". If a controller
+  # build does read that name, an empty value may select a GSLB path with a blank
+  # endpoint rather than no path at all.
+  cnecontroller_gtm_env = var.cneinstance_gtm_url == "" ? [] : [
+    { name = "GSLB_GTM_URL", value = var.cneinstance_gtm_url },
+    { name = "GSLB_GTM_USERNAME", value = var.cneinstance_gtm_username },
+    { name = "GSLB_GTM_PASSWORD", value = var.cneinstance_gtm_password },
+    # Emitted under both prefixes for the same reason CLOUD_VPC sits beside
+    # VPC_NAME: the real names are F5's contract from the install guide.
+    # VERIFY against BNK 2.3 and drop the pair that is not real.
+    { name = "GTM_URL", value = var.cneinstance_gtm_url },
+    { name = "GTM_USERNAME", value = var.cneinstance_gtm_username },
+    { name = "GTM_PASSWORD", value = var.cneinstance_gtm_password },
+  ]
+
   cneinstance_spec = {
     product = {
       gatewayAPI = var.cneinstance_gateway_api
@@ -170,7 +193,7 @@ locals {
         runAfterSuccess = var.cneinstance_env_discovery
       }
       cneController = {
-        env = [
+        env = concat([
           {
             name  = "TMM_DEFAULT_MTU"
             value = "9000"
@@ -203,48 +226,6 @@ locals {
             name  = "GSLB_DATACENTER_NAME"
             value = var.cneinstance_gslb_datacenter_name
           },
-          # GTM / BIG-IP DNS connection (#51) — the half GSLB was missing: a
-          # datacenter name with nothing to register it with.
-          #
-          # Emitted under BOTH prefixes, for the same reason CLOUD_VPC sits
-          # alongside VPC_NAME below: the exact names the CNE controller reads
-          # are F5's contract from the BNK install guide, and GSLB_DATACENTER_NAME
-          # is the only one appearing anywhere in this repo to pattern-match
-          # against. Emitting both costs nothing — the controller ignores what it
-          # does not know — and the alternative is a name that is silently wrong,
-          # which for a credential means GSLB quietly never registers.
-          #
-          # VERIFY against the BNK 2.3 install guide and drop the pair that is
-          # not real.
-          {
-            name  = "GSLB_GTM_URL"
-            value = var.cneinstance_gtm_url
-          },
-          {
-            name  = "GSLB_GTM_USERNAME"
-            value = var.cneinstance_gtm_username
-          },
-          {
-            name  = "GSLB_GTM_PASSWORD"
-            value = var.cneinstance_gtm_password
-          },
-          {
-            name  = "GTM_URL"
-            value = var.cneinstance_gtm_url
-          },
-          {
-            name  = "GTM_USERNAME"
-            value = var.cneinstance_gtm_username
-          },
-          {
-            name  = "GTM_PASSWORD"
-            value = var.cneinstance_gtm_password
-          },
-          # BNK 2.3 install-guide env names, emitted ALONGSIDE VPC_NAME /
-          # IBM_TRUSTED_PROFILE_ID above for cross-version compatibility: the
-          # 2.3 CNE controller reads CLOUD_VPC / CLOUD_TRUSTED_PROFILE for the
-          # VPC route programming. Same values; harmless to whichever version
-          # ignores them.
           {
             name  = "CLOUD_VPC"
             value = var.cneinstance_vpc_name
@@ -253,7 +234,7 @@ locals {
             name  = "CLOUD_TRUSTED_PROFILE"
             value = var.cneinstance_ibm_trusted_profile_id
           }
-        ]
+        ], local.cnecontroller_gtm_env)
       }
       demoMode = {
         enabled = true
@@ -554,7 +535,11 @@ resource "kubectl_manifest" "cneinstance_scc_policies" {
   # nothing (#66).
   for_each = local.use_kubectl ? {
     for assignment in distinct(local.scc_policy_assignments) :
-    "${assignment.namespace}-${assignment.service_account}" => assignment
+    # "/" rather than "-": a namespace cannot contain a slash, so the key is
+    # collision-free. With "-", the pairs (f5, bnk-default) and (f5-bnk, default)
+    # produce the same key and distinct() would not save them — no plausible
+    # naming hits it today, but the separator costs nothing to get right.
+    "${assignment.namespace}/${assignment.service_account}" => assignment
   } : {}
 
   server_side_apply = true

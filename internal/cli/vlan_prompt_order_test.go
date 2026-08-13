@@ -32,7 +32,7 @@ func TestCommonVLANPrefixLenAgrees(t *testing.T) {
 // looks like the tool worked it out.
 func TestCommonVLANPrefixLenDisagreementSuggestsNothing(t *testing.T) {
 	for _, c := range [][]config.BNKZoneCfg{
-		zones([2]string{"10.155.15.0/23", "10.254.99.0/24"}),                                  // ext vs int
+		zones([2]string{"10.155.15.0/23", "10.254.99.0/24"}),                                          // ext vs int
 		zones([2]string{"10.155.15.0/23", "10.254.99.0/23"}, [2]string{"10.1.0.0/24", "10.2.0.0/24"}), // zone vs zone
 	} {
 		if got, ok := commonVLANPrefixLen(c); ok {

@@ -217,6 +217,16 @@ func OverrideFromEnv(ws *Workspace) []string {
 		gtmCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "bnk.gtm.password_b64 (ROKSBNKCTL_GTM_PASSWORD)")
 	}
+	// Credentials without a URL configure nothing: the render is gated on the
+	// URL, so a pipeline that sets the user and password but forgets
+	// ROKSBNKCTL_GTM_URL would see both reported as applied, written to
+	// config.yaml, and silently never rendered — GSLB simply never registers,
+	// with nothing anywhere saying why. Say it here, where the omission is.
+	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) == "" &&
+		(g.Username != "" || g.PasswordB64 != "") {
+		applied = append(applied,
+			"! bnk.gtm credentials set without ROKSBNKCTL_GTM_URL — GTM stays DISABLED and they will not be used")
+	}
 
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
@@ -424,9 +434,6 @@ func preflightCfg(ws *Workspace) *BNKPreflightCfg {
 	return ws.BNK.Preflight
 }
 
-// flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
-// are pointers, so a config that never mentioned the FLP would otherwise nil-panic
-// the moment CI sets only the handoff vars.
 // gtmCfg lazily creates bnk.gtm so the overrides above can populate it.
 func gtmCfg(ws *Workspace) *BNKGTMCfg {
 	if ws.BNK.GTM == nil {
@@ -435,6 +442,9 @@ func gtmCfg(ws *Workspace) *BNKGTMCfg {
 	return ws.BNK.GTM
 }
 
+// flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
+// are pointers, so a config that never mentioned the FLP would otherwise nil-panic
+// the moment CI sets only the handoff vars.
 func flpExternal(ws *Workspace) *BNKFLPExternalCfg {
 	if ws.BNK.FLP == nil {
 		ws.BNK.FLP = &BNKFLPCfg{}

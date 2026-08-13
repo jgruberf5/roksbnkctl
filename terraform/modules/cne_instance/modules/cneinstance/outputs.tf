@@ -23,19 +23,23 @@ output "cneinstance_namespace" {
 output "cneinstance_manifest" {
   description = "The full CNEInstance manifest (as JSON)"
   value       = var.enabled ? jsonencode(local.cneinstance_manifest) : null
+  # Carries cneinstance_gtm_password through the spec.
+  sensitive = true
 }
 
 output "cneinstance_scc_policies_applied" {
   description = "Summary of SCC policies applied by CNEInstance module"
   value = {
-    total_policies = length(local.scc_policy_assignments)
+    # distinct(), because that is what for_each actually consumes — counting the
+    # raw list over-reports by one whenever the namespaces are collapsed.
+    total_policies = length(distinct(local.scc_policy_assignments))
     flo_namespace_policies = [
       for assignment in local.scc_policy_assignments
       : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == var.flo_namespace
     ]
     f5_utils_policies = [
       for assignment in local.scc_policy_assignments
-      : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == "f5-utils"
+      : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == var.utils_namespace
     ]
     policy_names = [
       for key, km in kubectl_manifest.cneinstance_scc_policies : km.name

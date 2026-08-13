@@ -352,6 +352,10 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 	}
 	// A create-time setting that contradicts the built cluster means a REPLACEMENT,
 	// not a change. Refuse the enforceable ones, warn on the rest.
+	// The Trusted Profile service-account default changed; warn where it bites.
+	if err := guardTrustedProfileSADefault(cctx, w); err != nil {
+		return false, nil, err
+	}
 	if err := guardCreateTimeSettings(cctx, w); err != nil {
 		return false, nil, err
 	}
