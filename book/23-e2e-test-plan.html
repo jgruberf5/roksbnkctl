@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -327,8 +327,8 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 <p>A realistic scenario: workspace config routes each tool to its preferred backend, then a full <code>up</code> + <code>test</code> + <code>down</code> cycle runs end-to-end. Concretely, <code>exec.terraform=local</code>, <code>exec.ibmcloud=ssh:jumphost</code>, <code>exec.iperf3=k8s</code> — three different backends in one lifecycle. The phase asserts state is preserved across the per-tool dispatch (the workspace’s terraform state file is touched only by the local-backend terraform; the API key projected into the k8s ops pod is the same one resolved for the SSH dispatch) and that <code>down</code> cleanly destroys everything.</p>
 <h2 id="how-ci-runs-it"><a class="header" href="#how-ci-runs-it">How CI runs it</a></h2>
 <p><code>.github/workflows/ci.yml</code> runs <strong>unit + integration</strong> on every PR — <code>go test ./...</code> plus the testcontainers-go-backed integration tests. The full e2e suite is too expensive (4-6 hours, $5-10 of IBM Cloud spend per run) to gate on every PR.</p>
-<p>The full e2e suite is run <strong>manually, out of band</strong> — on demand and on release branches — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with <code>IBMCLOUD_API_KEY</code> set) and its log artefacts archived against the run.</p>
-<p>The release-cut policy is: don’t tag <code>vX.Y.Z</code> until the most recent manual-trigger run on the release branch is green for <strong>three consecutive nights</strong>. This catches the flakes that don’t reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.</p>
+<p>The full e2e suite is run <strong>manually, out of band</strong> — on demand against <code>main</code> — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with <code>IBMCLOUD_API_KEY</code> set) and its log artefacts archived against the run.</p>
+<p>The release-cut policy is: don’t tag <code>vX.Y.Z</code> until the most recent manual-trigger run on <code>main</code> is green for <strong>three consecutive nights</strong>. (This project is trunk-based — there are no release branches. A per-BNK-release branch model was tried and withdrawn; what replaced it is the per-line terraform overlay in <a href="./13-terraform-variables.html">Chapter 13</a>.) This catches the flakes that don’t reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.</p>
 <h2 id="cost-and-time"><a class="header" href="#cost-and-time">Cost and time</a></h2>
 <p>A full <code>scripts/e2e-test-full.sh</code> run currently costs:</p>
 <div class="table-wrapper">

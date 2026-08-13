@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -262,13 +262,15 @@ roksbnkctl cluster register canada-roks
 </ol>
 <p>Either way, <code>cluster register</code> won’t write <code>cluster-outputs.json</code> until both the cluster and its registry COS instance exist.</p>
 <h2 id="the-cluster-outputsjson-write"><a class="header" href="#the-cluster-outputsjson-write">The <code>cluster-outputs.json</code> write</a></h2>
-<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look identical except for one field:</p>
+<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look nearly identical; the differences are <code>source</code>, and what is deliberately left <strong>empty</strong>:</p>
 <pre><code class="language-json">{
   "cluster_name": "canada-roks",
   "cluster_id": "cre6h4l20jjsg4kvt3a0",
   "region": "ca-tor",
   "resource_group_id": "abc123...",
   "vpc_id": "r038-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "canada-roks-cos",
   "master_url": "https://c106.ca-tor.containers.cloud.ibm.com:31415",
@@ -278,6 +280,21 @@ roksbnkctl cluster register canada-roks
 }
 </code></pre>
 <p>The <code>source</code> field is <code>cluster-register</code> (vs <code>cluster-up</code> for self-provisioned clusters). Downstream commands that care about provenance — for example, a future <code>roksbnkctl cluster down</code> would refuse to destroy a <code>cluster-register</code>-sourced cluster — read this field. Subnet IDs (<code>subnet_ids</code>) and transit gateway ID (<code>transit_gateway_id</code>) are left blank for registered clusters; the bundled HCL doesn’t need them when <code>roksbnkctl up</code> runs against a pre-existing cluster.</p>
+<p><strong><code>vpc_cidr</code> is also left empty here, and that is deliberate.</strong> It records the
+block <em>this tool used to create</em> a VPC. On the adopt path the setting never
+applied, so writing the configured value would record something that was never
+true of the VPC.</p>
+<p>That has one consequence worth knowing: because the create-time warning for
+<code>cluster.vpc_cidr</code> fires only on a disagreement with a <strong>recorded</strong> value, a
+workspace built by <code>cluster register</code> will never emit it — there is nothing
+recorded to disagree with. Silence there means “not knowable”, not “your value
+is fine”. See <a href="./26-troubleshooting.html">Chapter 26</a>.</p>
+<p><strong><code>network_mode</code>, by contrast, is recorded</strong> — from the config, since an adopted
+cluster’s mode cannot yet be detected from the IBM API. On a single-NIC cluster
+(every cluster today) the default is correct and nothing needs saying. When
+multi-NIC ROKS ships, adopting one will mean setting <code>cluster.network_mode</code> to
+match <strong>what the cluster is</strong>, not what you want — the opposite of how the same
+field reads on <code>cluster up</code>.</p>
 <h2 id="worked-example-register-canada-roks"><a class="header" href="#worked-example-register-canada-roks">Worked example: register canada-roks</a></h2>
 <p>The full flow for attaching to a hypothetical <code>canada-roks</code> cluster.</p>
 <h3 id="step-1--create-or-pick-a-workspace"><a class="header" href="#step-1--create-or-pick-a-workspace">Step 1 — create or pick a workspace</a></h3>

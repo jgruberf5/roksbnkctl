@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -898,7 +898,7 @@ fi
 <ul>
 <li><strong><code>~/.roksbnkctl/config.yaml</code></strong> is <em>global</em> — non-secret user-wide preferences plus the <code>current_workspace</code> pointer. It is <strong>not</strong> a workspace config; the per-workspace files live one level deeper.</li>
 <li><strong><code>state/</code> and <code>state-cluster/</code></strong> are intentionally separate so <a href="#the-cluster-phase-cluster-updown"><code>roksbnkctl cluster up</code></a> and <code>roksbnkctl up</code> don’t tangle their Terraform state. Most users won’t touch either directly.</li>
-<li><strong><code>cluster-outputs.json</code></strong> is the persisted identity of the workspace’s ROKS cluster — written by <code>cluster up</code> or <a href="#registering-an-existing-cluster"><code>cluster register</code></a>, read by <code>roksbnkctl up</code> so BNK trials don’t have to re-state cluster identity in every tfvars.</li>
+<li><strong><code>cluster-outputs.json</code></strong> is the persisted identity of the workspace’s ROKS cluster — written by <code>cluster up</code> or <a href="#registering-an-existing-cluster"><code>cluster register</code></a>, read by <code>roksbnkctl up</code> so BNK trials don’t have to re-state cluster identity in every tfvars. It also records the <strong>create-time</strong> settings the cluster was built with, and for those it outranks <code>config.yaml</code> — the record says what the cluster <em>is</em>, the config says what is wanted. See <a href="#which-side-wins">Chapter 8a §Which side wins</a>.</li>
 </ul>
 <p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var. Test fixtures use this; everyday users shouldn’t need it.</p>
 <h2 id="terraformappliedtfvars--whats-deployed-right-now"><a class="header" href="#terraformappliedtfvars--whats-deployed-right-now"><code>terraform.applied.tfvars</code> — what’s deployed right now</a></h2>
@@ -933,7 +933,7 @@ fi
 <li><strong>Never read by <code>roksbnkctl</code> itself.</strong> The snapshot is an output for the user — never an input the tool depends on. Making it an input would create a feedback loop where redacted values get written back as the literal string <code>&lt;redacted&gt;</code>.</li>
 </ul>
 <h3 id="redaction"><a class="header" href="#redaction">Redaction</a></h3>
-<p>Exactly one variable is redacted: <code>ibmcloud_api_key</code>. It’s the only var whose value comes from the <a href="#credentials-and-the-resolver-chain">cred resolver</a> rather than being authored by the user in <code>config.yaml</code> or a tfvars file — so it’s the only value the snapshot would expose that the user didn’t put there themselves. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
+<p>Every variable carrying a credential is redacted: <code>ibmcloud_api_key</code>, <code>bigip_password</code>, <code>registry_mirror_password</code>, and <code>cneinstance_gtm_password</code>. <code>ibmcloud_api_key</code> is the one whose value comes from the <a href="#credentials-and-the-resolver-chain">cred resolver</a> rather than being authored by the user; the other three are authored in <code>config.yaml</code> (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to <code>redactedVarNames</code> now fails a test. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
 <pre><code class="language-hcl">ibmcloud_api_key = "&lt;redacted&gt;"  # source: cred resolver, not persisted
 </code></pre>
 <p>For team-handoff scenarios (a teammate receives this file out-of-band and wants to re-create the workspace): replace the <code>&lt;redacted&gt;</code> value with the teammate’s own API key, or simply remove the <code>ibmcloud_api_key</code> line so the <a href="#credentials-and-the-resolver-chain">cred resolver</a> supplies it from the teammate’s own environment (keychain, shell env, <code>~/.bluemix/api_key</code>, etc.) at apply time. Every other line round-trips verbatim.</p>
@@ -1454,8 +1454,25 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code></td><td><code>cluster.public_gateway</code></td><td>bool — <code>false</code> builds a <strong>disconnected</strong> cluster whose workers have no Internet egress. Unset inherits the terraform default (<code>true</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code></td><td><code>bnk.trusted_profile.service_account</code></td><td>Kubernetes account allowed to assume the CNE controller’s IBM Cloud Trusted Profile. Must match the account the FLO chart creates.</td></tr>
+<tr><td><code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code></td><td><code>bnk.trusted_profile.roles</code></td><td>IAM roles for that profile, scoped to the cluster’s own VPC. <strong>Comma-separated.</strong> An unparseable entry is dropped.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN</code></td><td><code>bnk.network.vlan_prefixlen</code></td><td>TMM self-IP mask. <strong>Independent of the zone CIDRs and never derived from them</strong> — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are <strong>silently ignored</strong> and the terraform default stands.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_external</code></td><td>Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_internal</code></td><td>Same, internal VLAN. The two need not match.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_URL</code></td><td><code>bnk.gtm.url</code></td><td>BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong>. Without it, <code>gslb_datacenter_name</code> is a label pointing at nothing.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_USERNAME</code></td><td><code>bnk.gtm.username</code></td><td>GTM user.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_PASSWORD</code></td><td><code>bnk.gtm.password_b64</code></td><td>GTM password — supplied <strong>raw</strong>, stored base64 (like <code>IBMCLOUD_API_KEY</code> and <code>ROKSBNKCTL_BIGIP_PASSWORD</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_B64</code></td><td><code>registry.generic_ca_b64</code></td><td>Mirror CA, <strong>verbatim</strong> — already base64, not re-encoded.</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_SHA256</code></td><td><code>registry.generic_ca_sha256</code></td><td>The out-of-band CA pin.</td></tr>
+<tr><td><code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code></td><td><code>bnk.preflight.reachability_retry_seconds</code></td><td>Per-target retry window before the verdict is believed.</td></tr>
+<tr><td><code>ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS</code></td><td><code>bnk.preflight.reachability_timeout_seconds</code></td><td>Total wait for every node to report.</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_NETWORK_MODE</code></td><td><code>cluster.network_mode</code></td><td>How the workers are attached: <code>single-nic</code> (default) or <code>multi-nic</code>. Create-time only. Exists for exactly this chapter’s case — a runner that never writes a <code>config.yaml</code> would otherwise have no way to ask for it.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code></td><td><code>cluster.vpc_cidr</code></td><td>CIDR (<code>/18</code> or larger) for a <strong>new</strong> cluster VPC’s per-zone address prefixes. Unset = IBM <code>auto</code>, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See <a href="#first-give-each-cluster-vpc-its-own-address-block">Chapter 9a</a>.</td></tr>
 <tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>)</td></tr>
+<tr><td><code>ROKSBNKCTL_EXISTING_SUBNET_IDS</code></td><td><code>cluster.existing_subnet_ids</code></td><td>Place the cluster in subnets that already exist. Comma-separated, <strong>in zone order</strong> — each subnet’s zone is read from the subnet, so a reordered list places the cluster differently. Requires <code>resources.cluster_vpc: {create: false, existing: &lt;vpc-id&gt;}</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_CREATE_VPC</code></td><td><code>bnk.flp.vsi.create_vpc</code></td><td>Give the FLP VSI its <strong>own</strong> VPC instead of placing it in one that exists. This is what lets the proxy be the first thing deployed in an air-gapped estate. Mutually exclusive with <code>ROKSBNKCTL_FLP_VSI_VPC</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC_NAME</code></td><td><code>bnk.flp.vsi.vpc_name</code></td><td>Name for that VPC. Empty → <code>flp-vsi-vpc</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SUBNET_CIDR</code></td><td><code>bnk.flp.vsi.subnet_cidr</code></td><td>Its address prefix. Must not overlap anything the consuming clusters can already route to — a transit gateway silently blackholes one of two overlapping VPCs.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>
 <tr><td><code>ROKSBNKCTL_TGW_JUMPHOST_CREATE</code></td><td><code>resources.tgw_jumphost.create</code></td><td>bool — the optional testing jumphost. Defaults <strong>off</strong>, as the interview does.</td></tr>
@@ -1816,7 +1833,7 @@ subnets, naming them, rather than failing mid-destroy with <code>The VPC is in u
 teardown no longer errors even if the owner’s gateway is already gone.)</p>
 </blockquote>
 <h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
-<p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
+<p>When <code>roksbnkctl cluster up</code> apply succeeds, it writes a workspace-scoped JSON file describing the cluster. Most of it comes from Terraform outputs (cluster name, ID, region, RG, VPC, registry COS); the <strong>create-time settings</strong> — <code>network_mode</code>, and <code>vpc_cidr</code> when this tool created the VPC — come from the workspace config instead, because that is the only place they are knowable and the moment they become settled:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json
 </code></pre>
 <p>Sample contents:</p>
@@ -1826,6 +1843,9 @@ teardown no longer errors even if the owner’s gateway is already gone.)</p>
   "region": "us-south",
   "resource_group_id": "abc123...",
   "vpc_id": "r006-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
+  "vpc_cidr": "10.242.0.0/16",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "bnk-quickstart-cos-instance",
   "master_url": "https://c106.us-south.containers.cloud.ibm.com:31415",
@@ -1835,6 +1855,31 @@ teardown no longer errors even if the owner’s gateway is already gone.)</p>
 }
 </code></pre>
 <p>The <code>source</code> field discriminates between <code>cluster-up</code> (we created it) and <code>cluster-register</code> (we discovered an existing cluster — see <a href="#registering-an-existing-cluster">Chapter 9</a>). Subsequent commands read this file to learn the workspace’s cluster identity without hitting IBM APIs.</p>
+<h3 id="reading-this-file-from-your-own-tooling"><a class="header" href="#reading-this-file-from-your-own-tooling">Reading this file from your own tooling</a></h3>
+<p>The file is a <strong>versioned contract</strong>, and the rules for reading it matter more
+than the field list, because every rule exists to keep a file written by one
+version readable by another.</p>
+<ul>
+<li><strong><code>schema_version</code> absent means 1.</strong> Every record written before the field
+existed describes a real cluster and must stay readable; treating a missing
+value as <code>0</code> would invalidate all of them.</li>
+<li><strong><code>network_mode</code> absent means <code>single-nic</code>.</strong> That is what every cluster built
+before the field existed actually is.</li>
+<li><strong><code>vpc_cidr</code> absent means unknown, not “no block was set.”</strong> It is recorded
+only when <em>this tool created the VPC</em>; on the adopt path the setting never
+applied, so recording the configured value would record something that was
+never true.</li>
+<li><strong><code>node_interfaces</code> is declared but written by nothing today.</strong> Multi-NIC ROKS
+has not shipped, so no code path can populate it honestly yet. Empty means
+<em>unknown</em> — never “this cluster has no extra interfaces”. Both readings are
+true of every cluster that exists right now, which is exactly what makes the
+wrong one easy to adopt and expensive to unwind later.</li>
+<li><strong>Unknown fields are ignored, deliberately.</strong> New keys are only ever added, so
+an older reader keeps working against a newer file.</li>
+</ul>
+<p>For the create-time settings, this file — not <code>config.yaml</code> — is the authority.
+See <a href="#which-side-wins">Chapter 8a</a> for what happens
+when the two disagree.</p>
 <p><code>roksbnkctl cluster down</code> deletes the file as part of its post-destroy cleanup. <code>roksbnkctl cluster show</code> pretty-prints it for human readers:</p>
 <pre><code class="language-bash">roksbnkctl cluster show
 workspace:        default
@@ -2027,14 +2072,46 @@ the jumphosts.</p>
 <code>cluster register</code> writes it for a pre-existing cluster). Both BNK and
 Testing read it to learn the cluster’s identity without re-specifying it:</p>
 <ul>
-<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster) and
-the VPC id.</li>
+<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster), the
+VPC id, and the cluster’s <strong>network mode</strong> and <strong>contract schema version</strong> —
+which it checks against the BNK release it is about to install, before it
+plans anything (see <a href="#bnk-release-and-network-mode">Chapter 28</a>).</li>
 <li><strong>Testing</strong> reads the cluster VPC id (the jumphost attaches to it), the
 cluster id/name, and the <strong>transit gateway name</strong> (the Testing module
 looks the gateway up by name to bridge the client VPC to the cluster).</li>
 </ul>
 <p>The transit-gateway <em>name</em> is recorded alongside the id specifically so the
 Testing phase can run standalone against a registered cluster.</p>
+<h3 id="which-side-wins"><a class="header" href="#which-side-wins">Which side wins</a></h3>
+<p>For most settings <code>config.yaml</code> is the input and the record is just an echo of
+the result. For <strong>create-time</strong> settings the relationship inverts: the record
+describes what the cluster <em>is</em>, and the config is a request that has to agree
+with it. A cluster is never converted in place, so a contradiction is either a
+mistake or a request for a different cluster.</p>
+<p>That gives three cases, and the middle one is the one worth knowing:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>cluster.network_mode</code></th><th>vs the record</th><th>result</th></tr>
+</thead>
+<tbody>
+<tr><td>set, and matches</td><td>agrees</td><td>proceeds</td></tr>
+<tr><td><strong>unset</strong></td><td>cannot disagree</td><td><strong>defers to the record</strong></td></tr>
+<tr><td>set, and differs</td><td>contradicts</td><td><strong>refused</strong>, before planning</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Silence is not an assertion.</strong> An unset <code>network_mode</code> means the config has no
+opinion, not that it insists on <code>single-nic</code> — so it defers to whatever the
+cluster actually is. This matters because a <code>config.yaml</code> is not always
+hand-written and durable: the <a href="#registering-the-cluster-with-bnk-forge">BNK Forge modules</a>
+regenerate one per step from a curated environment, so a mode set by the step
+that <em>created</em> the cluster is simply absent by the time the step that <em>installs
+BNK</em> runs. Reading that absence as a demand for <code>single-nic</code> would refuse a
+correct deployment at its second step, over a contradiction nobody expressed.</p>
+<p>The refusal in the third row is what stops terraform from planning a
+<strong>replacement</strong> of a running cluster — which it will do quite happily, rendered
+as output that reads like an update.</p>
 <h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
 <p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
 siblings depend on it), then launches <strong>BNK and Testing concurrently</strong>:</p>
@@ -2298,13 +2375,15 @@ roksbnkctl cluster register canada-roks
 </ol>
 <p>Either way, <code>cluster register</code> won’t write <code>cluster-outputs.json</code> until both the cluster and its registry COS instance exist.</p>
 <h2 id="the-cluster-outputsjson-write"><a class="header" href="#the-cluster-outputsjson-write">The <code>cluster-outputs.json</code> write</a></h2>
-<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look identical except for one field:</p>
+<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look nearly identical; the differences are <code>source</code>, and what is deliberately left <strong>empty</strong>:</p>
 <pre><code class="language-json">{
   "cluster_name": "canada-roks",
   "cluster_id": "cre6h4l20jjsg4kvt3a0",
   "region": "ca-tor",
   "resource_group_id": "abc123...",
   "vpc_id": "r038-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "canada-roks-cos",
   "master_url": "https://c106.ca-tor.containers.cloud.ibm.com:31415",
@@ -2314,6 +2393,21 @@ roksbnkctl cluster register canada-roks
 }
 </code></pre>
 <p>The <code>source</code> field is <code>cluster-register</code> (vs <code>cluster-up</code> for self-provisioned clusters). Downstream commands that care about provenance — for example, a future <code>roksbnkctl cluster down</code> would refuse to destroy a <code>cluster-register</code>-sourced cluster — read this field. Subnet IDs (<code>subnet_ids</code>) and transit gateway ID (<code>transit_gateway_id</code>) are left blank for registered clusters; the bundled HCL doesn’t need them when <code>roksbnkctl up</code> runs against a pre-existing cluster.</p>
+<p><strong><code>vpc_cidr</code> is also left empty here, and that is deliberate.</strong> It records the
+block <em>this tool used to create</em> a VPC. On the adopt path the setting never
+applied, so writing the configured value would record something that was never
+true of the VPC.</p>
+<p>That has one consequence worth knowing: because the create-time warning for
+<code>cluster.vpc_cidr</code> fires only on a disagreement with a <strong>recorded</strong> value, a
+workspace built by <code>cluster register</code> will never emit it — there is nothing
+recorded to disagree with. Silence there means “not knowable”, not “your value
+is fine”. See <a href="#troubleshooting-1">Chapter 26</a>.</p>
+<p><strong><code>network_mode</code>, by contrast, is recorded</strong> — from the config, since an adopted
+cluster’s mode cannot yet be detected from the IBM API. On a single-NIC cluster
+(every cluster today) the default is correct and nothing needs saying. When
+multi-NIC ROKS ships, adopting one will mean setting <code>cluster.network_mode</code> to
+match <strong>what the cluster is</strong>, not what you want — the opposite of how the same
+field reads on <code>cluster up</code>.</p>
 <h2 id="worked-example-register-canada-roks"><a class="header" href="#worked-example-register-canada-roks">Worked example: register canada-roks</a></h2>
 <p>The full flow for attaching to a hypothetical <code>canada-roks</code> cluster.</p>
 <h3 id="step-1--create-or-pick-a-workspace"><a class="header" href="#step-1--create-or-pick-a-workspace">Step 1 — create or pick a workspace</a></h3>
@@ -2815,8 +2909,8 @@ roksbnkctl cluster down --auto
 <p>cert-manager, FLO, and CIS install as <code>helm_release</code> resources with <code>wait = true</code>. <code>helm_release</code> runs Helm in-process (via the <code>hashicorp/helm</code> provider), tracks the installed chart/version in Terraform state, and — with <code>wait = true</code> — blocks until the release’s workloads report ready. FAR version discovery stays Terraform-side: the manifest chart is still pulled to read the FLO and CIS chart versions, which feed the <code>helm_release.version</code> argument.</p>
 <p>The chart installs have <strong>prerequisites</strong> that must exist first, or <code>helm_release wait = true</code> would hang on <code>ImagePullBackOff</code>:</p>
 <ul>
-<li><strong>Namespaces</strong> (<code>f5-bnk</code>, <code>f5-utils</code>) — <code>kubernetes_namespace</code>.</li>
-<li><strong>Secrets</strong> — the FAR image-pull secret <code>far-secret</code> (in both namespaces) and the CIS <code>f5-bigip-ctlr-login</code> login secret — <code>kubernetes_secret</code>. These carry the registry credentials the charts pull with, so they are ordered <em>before</em> the charts via <code>depends_on</code>.</li>
+<li><strong>Namespaces</strong> (<code>f5-bnk</code>, <code>f5-utils</code>) — <code>kubernetes_namespace</code>. <strong>One namespace if you collapse them</strong>: setting <code>bnk.flo_namespace</code> and <code>bnk.flo_utils_namespace</code> to the same value is supported, and the utils-side namespace (and its duplicate secrets) are then not created at all.</li>
+<li><strong>Secrets</strong> — the FAR image-pull secret <code>far-secret</code> (in both namespaces — or once, when they are collapsed to one) and the CIS <code>f5-bigip-ctlr-login</code> login secret — <code>kubernetes_secret</code>. These carry the registry credentials the charts pull with, so they are ordered <em>before</em> the charts via <code>depends_on</code>.</li>
 </ul>
 <h3 id="2-the-cr-layer--kubectl_manifest--wait_for"><a class="header" href="#2-the-cr-layer--kubectl_manifest--wait_for">2. The CR layer — <code>kubectl_manifest</code> + <code>wait_for</code></a></h3>
 <p>Every custom resource — the cert-manager issuer chain (<code>ClusterIssuer</code>, the CA <code>Certificate</code>, the CA <code>ClusterIssuer</code>), the two <code>NetworkAttachmentDefinition</code>s, the OpenShift SCC <code>ClusterRoleBinding</code>s, the node-labeler <code>Job</code>, the <strong>CNEInstance</strong>, and the <strong>License</strong> — is a <code>kubectl_manifest</code> resource from the <code>alekc/kubectl</code> provider. Each manifest body is the CR spec rendered by <code>yamlencode</code>.</p>
@@ -2854,7 +2948,7 @@ resource "kubectl_manifest" "license" {
 <p>Covered above as the chart prerequisites. They use the <code>hashicorp/kubernetes</code> provider rather than <code>kubectl_manifest</code> because they have typed, first-class resource schemas (<code>kubernetes_namespace</code>, <code>kubernetes_secret</code>) and no plan-time-CRD concern.</p>
 <h3 id="provider-wiring-and-ordering"><a class="header" href="#provider-wiring-and-ordering">Provider wiring and ordering</a></h3>
 <p>All three providers are fed from the <strong>same</strong> <code>data "ibm_container_cluster_config"</code> the modules already use — <code>host</code>, <code>token</code>, and the decoded <code>cluster_ca_certificate</code>. The <code>create_roks_cluster ? 0 : 1</code> guard that keeps the provider config valid when the cluster doesn’t exist yet at plan time is unchanged.</p>
-<p>The only <strong>genuinely serial</strong> spine is <code>cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License</code>. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the ~16 CNEInstance SCC bindings — carries no <code>depends_on</code> edge back to the spine, so Terraform’s default parallelism applies them concurrently with the install spine. That parallelism, plus real-readiness gating instead of fixed sleeps, is where the speed comes from.</p>
+<p>The only <strong>genuinely serial</strong> spine is <code>cert-manager helm_release → the CA issuer chain → flo helm_release → CNEInstance → License</code>. Everything else — the NADs, the three Secrets, the node-labeler subtree, and the CNEInstance SCC bindings (19 — 9 FLO-side, 10 utils-side; 18 when the namespaces are collapsed and the duplicate <code>default</code> binding dedupes) — carries no <code>depends_on</code> edge back to the spine, so Terraform’s default parallelism applies them concurrently with the install spine. That parallelism, plus real-readiness gating instead of fixed sleeps, is where the speed comes from.</p>
 <h2 id="why-alekckubectl"><a class="header" href="#why-alekckubectl">Why <code>alekc/kubectl</code></a></h2>
 <p>A concept note on the deployment model, for readers who want the <em>why</em> rather than the <em>how</em>.</p>
 <p><strong>The plan-time-CRD problem.</strong> Applying a CR whose CRD is installed <em>in the same apply</em> (the FLO chart installs the CNEInstance and License CRDs, then we apply those CRs) is the classic Terraform trap. HashiCorp’s own <code>kubernetes_manifest</code> does a typed-schema lookup of the kind at <strong>plan</strong> time and fails with <code>cannot select exact GVK ... no matches for kind</code> because the CRD doesn’t exist yet. The <code>alekc/kubectl</code> provider’s <code>kubectl_manifest</code> carries the manifest as an opaque YAML string and resolves the GVK at <strong>apply</strong> time — so it applies a CR whose CRD is created in the same run, no plan-time schema lookup. It gives us real state + drift + finalizer-aware delete + <code>wait_for</code>, <em>without</em> the plan-time-CRD failure and <em>without</em> building a custom provider or a Go reconciler. Ordering (CRD before CR) is expressed with <code>depends_on</code> on the chart’s <code>helm_release</code> — <code>wait_for</code> removes the sleep, not the ordering.</p>
@@ -3689,6 +3783,15 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 </thead>
 <tbody>
 <tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code> (<code>""</code> | <code>helm</code> | <code>vsi</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code> — license via a proxy in <strong>another</strong> cluster</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code> (verbatim; already base64)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_CREATE_VPC</code></td><td><code>bnk.flp.vsi.create_vpc</code> — give the proxy its <strong>own</strong> VPC</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC_NAME</code></td><td><code>bnk.flp.vsi.vpc_name</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SUBNET_CIDR</code></td><td><code>bnk.flp.vsi.subnet_cidr</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code> — adopt an existing VPC (mutually exclusive with <code>_CREATE_VPC</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code> / <code>_PROFILE</code> / <code>_SSH_KEY</code> / <code>_BOOT_SIZE_GB</code> / <code>_REACH</code> / <code>_FLOATING_IP</code></td><td>the rest of <code>bnk.flp.vsi.*</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS</code> / <code>_LICENSING_ALLOWED_CIDRS</code></td><td>the two per-plane security-group lists (comma-separated)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td></tr>
 </tbody>
 </table>
@@ -4131,6 +4234,8 @@ cos:             # optional COS supply-chain config
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
+  vpc_cidr: 10.242.0.0/16       # optional; address block for a NEW cluster VPC
+  network_mode: single-nic      # optional; single-nic (default) | multi-nic
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -4145,10 +4250,13 @@ cos:             # optional COS supply-chain config
 <tr><td><code>public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Attach a public gateway to each cluster subnet for worker Internet egress. <code>false</code> builds a <strong>private/disconnected</strong> cluster with no egress (no <code>ibm_is_public_gateway</code>, no subnet attachment). Sets <code>cluster_public_gateway</code>. <strong>Expert:</strong> a <code>false</code> cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/<code>disconnected</code> licensing — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a §“A truly disconnected cluster”</a>. Governs worker egress only; the master keeps its public API endpoint.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>int</td><td><code>64</code></td><td>Minimum memory (GB) for the same auto-select. <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_memory_gb</code>.</td></tr>
+<tr><td><code>vpc_cidr</code></td><td>string</td><td>empty (IBM <code>auto</code>)</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from, so <code>/18</code> is the smallest usable value. Empty leaves IBM’s <code>auto</code>, which gives every VPC in a region the same prefixes — two such VPCs cannot share a Transit Gateway. Sets <code>cluster_vpc_cidr</code>. <strong>CREATE-time only</strong>; changing it later warns.</td></tr>
+<tr><td><code>existing_subnet_ids</code></td><td>list</td><td>(empty)</td><td>Place the cluster in subnets that <strong>already exist</strong>, one per zone, <strong>in zone order</strong> — each subnet’s zone is read from the subnet itself, so a reordered list places the cluster differently rather than failing. Requires <code>resources.cluster_vpc: {create: false, existing: &lt;vpc-id&gt;}</code>. Renders <code>use_existing_cluster_subnets</code> + <code>existing_cluster_subnet_ids</code>. Env: <code>ROKSBNKCTL_EXISTING_SUBNET_IDS</code> (comma-separated).</td></tr>
+<tr><td><code>network_mode</code></td><td>string</td><td><code>single-nic</code></td><td>How the worker nodes are attached. Omitted means <code>single-nic</code>, which is what every cluster built with this tool is — the field exists to <em>name</em> that, not to change it. <code>multi-nic</code> requires BNK 2.4+. Sets <code>cluster_network_mode</code>. <strong>CREATE-time only and enforced</strong>: an explicit value contradicting the built cluster is refused, because there is no in-place conversion. See <a href="#bnk-release-and-network-mode">Chapter 28</a>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code>, <code>cluster_public_gateway</code> — see <a href="#terraform-variables-terraformtfvars">Chapter 13</a> and <a href="#terraform-variable-reference">Chapter 29</a> for the full mapping.</p>
+<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code>, <code>cluster_public_gateway</code>, <code>cluster_vpc_cidr</code>, <code>cluster_network_mode</code> — see <a href="#terraform-variables-terraformtfvars">Chapter 13</a> and <a href="#terraform-variable-reference">Chapter 29</a> for the full mapping.</p>
 <p>When a <code>prefix</code> is set, <code>init</code> fills <code>cluster.name</code> with the prefix itself (the cluster name carries no suffix — see <a href="#why-the-cluster-name-takes-no-suffix">Chapter 13</a>). Setting <code>cluster.create: false</code> adopts an existing cluster by name/ID via <code>cluster.name</code>, exactly as before — the cluster is <strong>not</strong> part of the <code>resources:</code> block below.</p>
 <h2 id="resources"><a class="header" href="#resources"><code>resources:</code></a></h2>
 <pre><code class="language-yaml">resources:
@@ -4193,6 +4301,8 @@ cos:             # optional COS supply-chain config
     version: v1.17.3
   network:                            # optional; data-plane subnets + TMM self-IPs
     vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
+    vlan_prefixlen_external: 23       #   optional; overrides the shared value
+    vlan_prefixlen_internal: 26       #   optional; the two VLANs need not match
     tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
     zones:                            #   one entry per AZ (3 total)
       - ext_vlan_cidr: 10.155.15.0/24
@@ -4216,7 +4326,12 @@ cos:             # optional COS supply-chain config
 <tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace. Sets <code>flo_namespace</code>.</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace. Sets <code>flo_utils_namespace</code>.</td></tr>
-<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>Optional CNEInstance GSLB datacenter name. Sets <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>CNEInstance GSLB datacenter <strong>name</strong>. Sets <code>cneinstance_gslb_datacenter_name</code>. Names the datacenter; <code>gtm.*</code> is what it registers <strong>with</strong>.</td></tr>
+<tr><td><code>gtm.url</code></td><td>string</td><td>empty</td><td>BIG-IP DNS / GTM management URL. Empty disables GTM. Without it the datacenter name is a label pointing at nothing. Sets <code>cneinstance_gtm_url</code>. Env: <code>ROKSBNKCTL_GTM_URL</code>.</td></tr>
+<tr><td><code>gtm.username</code></td><td>string</td><td>empty</td><td>GTM user. Env: <code>ROKSBNKCTL_GTM_USERNAME</code>.</td></tr>
+<tr><td><code>gtm.password_b64</code></td><td>string</td><td>empty</td><td>GTM password, base64 (obfuscation, <strong>not</strong> encryption — like <code>ibmcloud.api_key_b64</code>). <code>ROKSBNKCTL_GTM_PASSWORD</code> takes the raw value.</td></tr>
+<tr><td><code>trusted_profile.service_account</code></td><td>string</td><td>(derived)</td><td>Account allowed to assume the CNE controller’s IBM Cloud Trusted Profile. Empty derives FLO’s own name, <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code>. The IAM trust rule is a <strong>matcher</strong>, not a pointer: IBM compares a pod’s service-account token against <code>crn</code>/<code>namespace</code>/<code>name</code> with <code>EQUALS</code>, so a name that does not match the account the CNE controller actually runs as means <strong>nothing can assume the profile, and nothing reports an error</strong>. Set this only if you can also make FLO name the account differently — roksbnkctl cannot, since FLO creates it when it reconciles the CNEInstance and that spec has no service-account field. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code>.</td></tr>
+<tr><td><code>trusted_profile.roles</code></td><td>list</td><td><code>[Viewer, Editor]</code></td><td>IAM roles for that profile, scoped to the cluster’s own VPC. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code> (comma-separated).</td></tr>
 <tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace. Sets <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
 <tr><td><code>cert_manager.version</code></td><td>string</td><td>HCL default</td><td>Pin the cert-manager chart version. Sets <code>cert_manager_version</code>.</td></tr>
 <tr><td><code>license_mode</code></td><td>enum</td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Sets <code>license_mode</code>.</td></tr>
@@ -4239,12 +4354,14 @@ cos:             # optional COS supply-chain config
 <tr><td><code>zones[].int_vip_cidr</code></td><td><code>10.135.15.0/24</code></td><td>Internal VIP CIDR.</td></tr>
 <tr><td><code>zones[].external_selfip</code></td><td><code>10.155.15.101</code></td><td>External TMM self-IP.</td></tr>
 <tr><td><code>zones[].internal_selfip</code></td><td><code>10.254.99.101</code></td><td>Internal TMM self-IP.</td></tr>
-<tr><td><code>vlan_prefixlen</code></td><td><code>24</code></td><td>Self-IP prefix length (<code>spec.prefixlen_v4</code> on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs. Sets <code>cneinstance_vlan_prefixlen</code>.</td></tr>
+<tr><td><code>vlan_prefixlen</code></td><td><code>24</code></td><td>Self-IP prefix length (<code>spec.prefixlen_v4</code> on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Usually you want it to match your VLAN CIDRs — but it is <strong>independent of them and never derived from them</strong>, and nothing validates the two against each other. A deliberate disagreement, paired with static routes, is how a specific traffic pattern is forced. Sets <code>cneinstance_vlan_prefixlen</code>.</td></tr>
+<tr><td><code>vlan_prefixlen_external</code></td><td>(inherit)</td><td>Overrides <code>vlan_prefixlen</code> for the <strong>external</strong> VLAN only. Unset inherits. Sets <code>cneinstance_vlan_prefixlen_external</code>. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code>.</td></tr>
+<tr><td><code>vlan_prefixlen_internal</code></td><td>(inherit)</td><td>Same for the <strong>internal</strong> VLAN. Sets <code>cneinstance_vlan_prefixlen_internal</code>. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code>.</td></tr>
 <tr><td><code>tmm_k8s_routes</code></td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM installs a route toward (<code>TMM_K8S_ROUTES</code>) so it can reach backend pods. Set to your cluster’s pod subnet if it isn’t the ROKS default. Sets <code>cneinstance_tmm_k8s_routes</code>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Provide <strong>all three zones</strong> when you set <code>zones</code> — supplying zones replaces the defaults entirely (they render <code>cneinstance_network_zones</code>, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone <em>names</em> are derived from the region and aren’t configurable. <code>vlan_prefixlen</code> and <code>tmm_k8s_routes</code> are network-wide (shared across all zones). Unset either scalar to keep the terraform default.</p>
+<p>Provide <strong>all three zones</strong> when you set <code>zones</code> — supplying zones replaces the defaults entirely (they render <code>cneinstance_network_zones</code>, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone <em>names</em> are derived from the region and aren’t configurable. <code>vlan_prefixlen</code> and <code>tmm_k8s_routes</code> are network-wide (shared across all zones), though the mask can differ <strong>between the two VLANs</strong> via <code>vlan_prefixlen_external</code> / <code>vlan_prefixlen_internal</code> — TMM can front a <code>/23</code> externally while the internal side is a <code>/26</code>, which one shared scalar could not express. Unset either scalar to keep the terraform default.</p>
 <h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -4623,6 +4740,22 @@ Local state files left in place — verify the remote read-back, then remove the
 ├── terraform.tfvars.example
 └── modules/
 </code></pre>
+<h3 id="the-extracted-tree-is-the-base-plus-a-per-release-overlay"><a class="header" href="#the-extracted-tree-is-the-base-plus-a-per-release-overlay">The extracted tree is the base plus a per-release overlay</a></h3>
+<p>Extraction writes the base tree above, then layers <code>terraform/lines/&lt;line&gt;/</code> on
+top of it, where <code>&lt;line&gt;</code> is the BNK release derived from <code>bnk.manifest_version</code>
+(<code>2.3.0-3.2598.3-0.0.170</code> → <code>2.3</code>). Same relative path replaces, new path is
+added, nothing is removed — so an overlay can only add to or replace the base,
+never quietly delete a resource it declares.</p>
+<p><strong>No supported release needs one today, so <code>lines/</code> ships empty and the extracted
+tree is byte-identical to the base.</strong> It is documented here anyway, because the
+consequence is not obvious and will not announce itself: the extracted tree is no
+longer a function of the binary alone, but of the binary <em>and the workspace’s
+manifest version</em>. If you are ever comparing your extracted <code>main.tf</code> against the
+repo’s and they differ, that is the first thing to check.</p>
+<p>Why this rather than a branch per BNK release — which was tried and withdrawn —
+is in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/lines/README.md"><code>terraform/lines/README.md</code></a>.
+The short version: a branch forks the whole tool to express a difference that
+lives in a handful of <code>.tf</code> files.</p>
 <p>That <code>terraform.tfvars.example</code> file is the canonical reference for what’s tunable — every variable with a sensible starter value, grouped by module (ROKS cluster, cert-manager, FLO, CNEInstance, License, testing). <code>terraform/variables.tf</code> (linked at the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">GitHub canonical URL</a>) is the formal declaration with types, descriptions, and defaults.</p>
 <p>You don’t edit the example file in place. Copy or generate from it instead.</p>
 <h2 id="roksbnkctl-tfvars--bootstrap-a-starter"><a class="header" href="#roksbnkctl-tfvars--bootstrap-a-starter"><code>roksbnkctl tfvars</code> — bootstrap a starter</a></h2>
@@ -4632,6 +4765,7 @@ Local state files left in place — verify the remote read-back, then remove the
 <p>What gets pre-filled:</p>
 <ul>
 <li>Every field from <code>config.yaml</code> that maps to a tfvar (cluster name, region, workers, BNK fields, COS fields)</li>
+<li><code>cluster_network_mode</code> — rendered <strong>unconditionally</strong>, unlike the settings around it. Most are omitted when unset so the HCL default stands; this one decides how a cluster is <em>built</em>, and a value that means two different things depending on which side you read it from is worth avoiding. Unset renders <code>"single-nic"</code>, which is today’s behaviour exactly.</li>
 <li>The cluster’s identity from <code>cluster-outputs.json</code> if <code>cluster up</code> has already run</li>
 <li>A commented-out section for the variables you might want to tune next (jumphost profile, GSLB datacenter, license mode)</li>
 </ul>
@@ -4660,6 +4794,9 @@ Local state files left in place — verify the remote read-back, then remove the
 <tr><td><code>flo_namespace</code></td><td><code>f5-bnk</code></td><td>Where the F5 Lifecycle Operator runs.</td></tr>
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
+<tr><td><code>flo_trusted_profile_sa_name</code> / <code>flo_trusted_profile_roles</code></td><td>the CNE controller’s IBM Cloud identity — modelled as <code>bnk.trusted_profile.*</code></td><td></td></tr>
+<tr><td><code>cneinstance_gtm_url</code> / <code>_username</code> / <code>_password</code></td><td>the BIG-IP DNS the GSLB datacenter registers with — modelled as <code>bnk.gtm.*</code></td><td></td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_external</code> / <code>_internal</code></td><td>per-VLAN self-IP masks — modelled as <code>bnk.network.vlan_prefixlen_{external,internal}</code></td><td></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>[]</code> (install-guide defaults)</td><td>Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors <code>config.yaml</code>’s <code>bnk.network.zones</code>. Supply all three zones or none.</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen</code></td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>). <code>bnk.network.vlan_prefixlen</code>. Match your VLAN CIDRs.</td></tr>
@@ -4715,7 +4852,7 @@ Local state files left in place — verify the remote read-back, then remove the
 </div>
 <p>Because the prefix flows into all three, <code>roksbnkctl</code> enforces the <strong>strictest</strong> applicable rule on the prefix label itself (lowercase, start with a letter, <code>[a-z0-9-]</code>, no trailing hyphen) and the tightest <strong>length</strong> (35, from the cluster). An over-long prefix is rejected with an actionable message naming the offending resource, its computed length, its limit, and the maximum allowable prefix length — and <code>init</code> re-prompts (TTY) or hard-errors (non-TTY). There is <strong>no silent truncation or hashing</strong>.</p>
 <h3 id="namespaces-are-not-prefixed"><a class="header" href="#namespaces-are-not-prefixed">Namespaces are NOT prefixed</a></h3>
-<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — keep their conventional fixed values and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
+<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — default to their conventional values (and are settable via <code>bnk.flo_namespace</code> / <code>bnk.flo_utils_namespace</code> — including to the <strong>same</strong> value, for one namespace instead of two) and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
 <h3 id="overriding-a-generated-name"><a class="header" href="#overriding-a-generated-name">Overriding a generated name</a></h3>
 <p>Every generated name is just a value in the rendered <code>terraform.tfvars</code>, so the normal <a href="#the-layering-rule">layering rule</a> overrides it. To pin a specific name (e.g. to adopt a VPC that doesn’t follow the prefix convention), set the matching variable in <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> or pass it via <code>--var-file</code>:</p>
 <pre><code class="language-bash"># Override just the Transit Gateway name for this workspace, permanently
@@ -4798,7 +4935,7 @@ $ roksbnkctl apply
 <tbody>
 <tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
 <tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
-<tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>A variable not modelled in <code>config.yaml</code></td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
 <tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td>Copy it to <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>, mode <code>0600</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="#raw-terraform-variable-overrides">Chapter 6 §“Raw terraform-variable overrides”</a>.</td></tr>
 <tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
 <tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>
@@ -7040,6 +7177,14 @@ connectivity PASS (3/3 passed)
 <p><code>roksbnkctl test dns</code> is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the <em>answer</em> a name returns isn’t a single global truth but a function of <em>who’s asking from where</em>.</p>
 <p>This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you “the URL works”; throughput testing tells you “the path is fast”. Both assume the name resolved. When the GSLB is the thing under test, “the name resolved” is <em>itself</em> the question — and the answer changes depending on the network vantage of whoever’s asking.</p>
 <p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<blockquote>
+<p><strong>Pointing the deployment at a BIG-IP DNS.</strong> This chapter covers <em>testing</em> GSLB
+behaviour. The deployment side is two settings: <code>bnk.gslb_datacenter_name</code> names
+the datacenter, and <code>bnk.gtm.{url,username,password_b64}</code> is the BIG-IP DNS it
+registers <strong>with</strong>. Setting the name alone leaves a label pointing at nothing.
+See <a href="#configuration-reference">Chapter 28</a> — env equivalents are
+<code>ROKSBNKCTL_GTM_URL</code> / <code>_USERNAME</code> / <code>_PASSWORD</code> (raw password; stored base64).</p>
+</blockquote>
 <h2 id="three-vantages-one-comparison"><a class="header" href="#three-vantages-one-comparison">Three vantages, one comparison</a></h2>
 <p><code>--gslb-compare</code> is the flagship workflow: a single <code>roksbnkctl test dns</code> invocation fans out across <code>local</code>, <code>k8s</code>, and (optionally) <code>ssh:&lt;target&gt;</code> vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.</p>
 <pre class="mermaid">graph TB
@@ -8124,8 +8269,8 @@ PHASE_FROM=L ./scripts/e2e-test-backends.sh
 <p>A realistic scenario: workspace config routes each tool to its preferred backend, then a full <code>up</code> + <code>test</code> + <code>down</code> cycle runs end-to-end. Concretely, <code>exec.terraform=local</code>, <code>exec.ibmcloud=ssh:jumphost</code>, <code>exec.iperf3=k8s</code> — three different backends in one lifecycle. The phase asserts state is preserved across the per-tool dispatch (the workspace’s terraform state file is touched only by the local-backend terraform; the API key projected into the k8s ops pod is the same one resolved for the SSH dispatch) and that <code>down</code> cleanly destroys everything.</p>
 <h2 id="how-ci-runs-it"><a class="header" href="#how-ci-runs-it">How CI runs it</a></h2>
 <p><code>.github/workflows/ci.yml</code> runs <strong>unit + integration</strong> on every PR — <code>go test ./...</code> plus the testcontainers-go-backed integration tests. The full e2e suite is too expensive (4-6 hours, $5-10 of IBM Cloud spend per run) to gate on every PR.</p>
-<p>The full e2e suite is run <strong>manually, out of band</strong> — on demand and on release branches — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with <code>IBMCLOUD_API_KEY</code> set) and its log artefacts archived against the run.</p>
-<p>The release-cut policy is: don’t tag <code>vX.Y.Z</code> until the most recent manual-trigger run on the release branch is green for <strong>three consecutive nights</strong>. This catches the flakes that don’t reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.</p>
+<p>The full e2e suite is run <strong>manually, out of band</strong> — on demand against <code>main</code> — rather than gated on every PR. It provisions real IBM Cloud infrastructure, so it is launched deliberately (with <code>IBMCLOUD_API_KEY</code> set) and its log artefacts archived against the run.</p>
+<p>The release-cut policy is: don’t tag <code>vX.Y.Z</code> until the most recent manual-trigger run on <code>main</code> is green for <strong>three consecutive nights</strong>. (This project is trunk-based — there are no release branches. A per-BNK-release branch model was tried and withdrawn; what replaced it is the per-line terraform overlay in <a href="#terraform-variables-terraformtfvars">Chapter 13</a>.) This catches the flakes that don’t reproduce locally — most of which are IBM Cloud control-plane blips rather than real regressions.</p>
 <h2 id="cost-and-time"><a class="header" href="#cost-and-time">Cost and time</a></h2>
 <p>A full <code>scripts/e2e-test-full.sh</code> run currently costs:</p>
 <div class="table-wrapper">
@@ -8849,6 +8994,25 @@ populated for clusters <code>roksbnkctl</code> didn’t provision.</li>
 <li><a href="#bnkforge-block">Chapter 28 — Configuration reference</a>
 — the <code>bnkforge:</code> field schema.</li>
 </ul>
+<h2 id="two-behaviours-that-exist-because-of-how-forge-drives-this-tool"><a class="header" href="#two-behaviours-that-exist-because-of-how-forge-drives-this-tool">Two behaviours that exist because of how Forge drives this tool</a></h2>
+<p>The <a href="https://github.com/jgruberf5/roksbnkctl-bnk-forge">Forge modules</a> run one
+container per roksbnkctl phase, argv-only, each step re-running
+<code>init --override-from-env --non-interactive</code> from a <strong>curated environment</strong> over
+a deployment-scoped shared <code>/work</code>, against a <strong>digest-pinned</strong> runner image.
+Two of roksbnkctl’s checks are shaped by that, and both would otherwise break
+blueprints:</p>
+<p><strong>An unknown BNK line warns instead of refusing.</strong> <code>manifest_version</code> is a
+free-text input on the <code>bnk-install</code> module, the support matrix ships inside the
+binary, and the image is pinned by digest — so a user selecting a release newer
+than the pinned build would hit a hard refusal on a combination never known to be
+wrong, with no action available to them. It warns and proceeds instead.</p>
+<p><strong>An unset <code>network_mode</code> defers to the recorded cluster.</strong> Each step’s
+environment carries only what that step needs, so a mode set by <code>cluster-create</code>
+is simply absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
+absence as a demand for <code>single-nic</code> would refuse a correct multi-NIC deployment
+at its second module. Only an <em>explicit</em> contradiction is refused.</p>
+<p>The practical rule for blueprint authors: <strong>only the module that CREATES a
+cluster needs to know the network mode.</strong> Everything downstream reads the record.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cos-supply-chain-management"><a class="header" href="#cos-supply-chain-management">COS supply chain management</a></h1>
 <p>BIG-IP Next for Kubernetes (BNK) pulls its runtime artefacts — the F5 Application Runtime (FAR) container images, the JWT licence used at install + renewal time, the f5-bigip-k8s-manifest Helm chart, and the schematic JSON the deployer renders — from IBM Cloud Object Storage (COS). The COS bucket is the <strong>supply chain</strong>: it’s how artefacts produced upstream (F5 build pipeline, licence-issuing service, schematic generator) reach the cluster.</p>
@@ -9271,7 +9435,53 @@ ibmcloud is vpc-address-prefixes &lt;vpc-id&gt;     # per VPC from that list
 <pre><code class="language-yaml">cluster:
   vpc_cidr: 10.242.0.0/16     # ROKSBNKCTL_CLUSTER_VPC_CIDR for CI
 </code></pre>
+<blockquote>
+<p><strong>Set it before <code>cluster up</code>, not after.</strong> Editing <code>vpc_cidr</code> in a workspace
+whose cluster already exists does not re-address anything — an existing VPC’s
+prefixes cannot be changed without replacing its subnets. It now says so:</p>
+<pre><code>! cluster.vpc_cidr is a CREATE-time setting and it has changed.
+  Cluster "x" was created from 10.242.0.0/16; this workspace now says 10.99.0.0/16.
+  The new value is ignored — ...
+  A future release will refuse this rather than ignore it; ...
+</code></pre>
+<p>The warning fires only on a real disagreement with the block the cluster was
+<strong>created from</strong>, so a workspace that set it once and left it alone stays
+silent. A workspace built by <code>cluster register</code> also stays silent, because the
+adopt path records no block to disagree with — see <a href="#registering-an-existing-cluster">Chapter 9</a>.</p>
+</blockquote>
 <p><strong>Prevention (v1.39.0+)</strong>: <code>cluster up</code> refuses before terraform creates anything when the VPC it is about to build would overlap one already on the gateway, and <code>tgw connect</code> refuses before attaching — each naming the other VPC and the colliding prefixes. See <a href="#first-give-each-cluster-vpc-its-own-address-block">Give each cluster VPC its own address block</a>.</p>
+<h3 id="symptom-cluster--was-created-as-a-single-nic-cluster-but-this-workspace-now-asks-for-multi-nic"><a class="header" href="#symptom-cluster--was-created-as-a-single-nic-cluster-but-this-workspace-now-asks-for-multi-nic">Symptom: <code>cluster ... was created as a single-nic cluster, but this workspace now asks for multi-nic</code></a></h3>
+<p><strong>Root cause</strong>: <code>cluster.network_mode</code> is a <strong>create-time</strong> setting and it changed
+after the cluster was built. There is no in-place conversion between modes.</p>
+<p><strong>Why it refuses rather than warns</strong>: terraform would happily plan this — as a
+<em>destroy and create</em> of the running cluster, rendered as ~60 lines that read like
+an update. The refusal happens before planning, so you never get the chance to
+approve it by mistake.</p>
+<p><strong>Fix</strong>: set <code>cluster.network_mode</code> back to what the cluster is, or build the
+other mode as a <strong>new cluster in a new workspace</strong>. What the cluster actually is
+comes from <code>cluster-outputs.json</code>, not from <code>config.yaml</code>.</p>
+<p>Note that <em>removing</em> the setting is not the same as changing it: an unset
+<code>network_mode</code> defers to the record and is never refused. See
+<a href="#which-side-wins">Chapter 8a §Which side wins</a>.</p>
+<h3 id="symptom-bnk-23-does-not-support-multi-nic-clusters-it-supports-single-nic"><a class="header" href="#symptom-bnk-23-does-not-support-multi-nic-clusters-it-supports-single-nic">Symptom: <code>BNK 2.3 does not support multi-nic clusters (it supports single-nic)</code></a></h3>
+<p><strong>Root cause</strong>: the BNK release — derived from <code>bnk.manifest_version</code> — cannot
+drive a cluster of that network mode. 2.3 does not express the multi-NIC network
+attachments or CNEInstance options.</p>
+<p><strong>Fix</strong>: use a <code>bnk.manifest_version</code> on a line that supports the mode (2.4+ for
+multi-nic), or a cluster built in a mode this line supports. The pairing is
+checked at plan time precisely so this is a message rather than a failed apply
+against real infrastructure.</p>
+<h3 id="symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix"><a class="header" href="#symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix">Symptom: <code>! unknown BNK release line: BNK 2.5 is not in this build's support matrix</code></a></h3>
+<p><strong>This is a warning, and the run continues.</strong> It is expected, not a defect.</p>
+<p><strong>Root cause</strong>: the support matrix ships <em>inside</em> the binary, so a release newer
+than your build is unknown to it. That is missing information, not a known
+incompatibility — refusing on it would make every build refuse every BNK release
+that shipped after it, which is unhelpful when the binary is pinned (the
+<a href="#registering-the-cluster-with-bnk-forge">BNK Forge modules</a> pin the runner image by
+digest, so “use a newer build” is not an action available to whoever is choosing
+the release).</p>
+<p><strong>What it means</strong>: the combination is <em>unverified here</em>, not blessed. Upgrade
+<code>roksbnkctl</code> if you want it actually checked.</p>
 <h3 id="symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-"><a class="header" href="#symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-">Symptom: <code>down</code> fails with <code>The VPC is in use and cannot be deleted. Subnets [...]</code></a></h3>
 <p><strong>Root cause</strong>: this workspace <strong>created</strong> the VPC, and another workspace that <strong>adopted</strong> it still has a cluster (its subnets) inside. The VPC owner must be torn down <strong>last</strong> — deleting it first can’t remove a non-empty VPC, and also deletes the shared per-zone public gateways the other cluster still depends on.</p>
 <p><strong>Fix (v1.26.1+)</strong>: <code>down</code> refuses this up front, naming the foreign subnets. Tear down the workspace(s) sharing the VPC first, then re-run <code>down</code> on the owner. See the teardown-order note in <a href="#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</p>
@@ -9523,26 +9733,22 @@ provision takes ~30 min) before the trial apply.</p>
 <p>Configure + drive BNK Forge cluster registration</p>
 <p>Configure and drive registration of this workspace’s cluster with a
 co-located BNK Forge (v3) install — without hand-editing config.yaml.</p>
-<p>enable      turn on auto-registration on <code>cluster up</code> (writes config.yaml)
-disable     turn it back off (LOCAL only — does not unregister)
-status      show the effective config + readiness
-register    register this workspace’s cluster with BNK Forge right now
-unregister  remove this workspace’s cluster from its BNK Forge project</p>
+<p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
+disable   turn it back off
+status    show the effective config + readiness
+register  register this workspace’s cluster with BNK Forge right now</p>
 <p>Registration uses BNK Forge v3’s REST API (it has no CLI). It is credential-
 backed: an IBM Cloud credential template is stored in Forge so it re-derives the
 kubeconfig on demand — nothing perishable is stored. The password is read from
 BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
 session token is cached in the OS keychain.</p>
 <h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
-<p>Turn off BNK Forge auto-registration (<strong>local only — does not unregister</strong>)</p>
-<pre><code>roksbnkctl bnkforge disable
-</code></pre>
-<p>Clears the workspace’s auto-register flag, so <code>cluster up</code> stops registering with
-BNK Forge.</p>
-<p>This is a <strong>local setting and never contacts the server</strong>. Despite reading like the
-inverse of <code>register</code>, it does not remove anything: a cluster already registered
-stays on Forge’s Kubernetes page. To remove it, use
-<a href="#roksbnkctl-bnkforge-unregister"><code>bnkforge unregister</code></a>.</p>
+<p>Turn off BNK Forge auto-registration (LOCAL only — does not unregister)</p>
+<p>Clears the workspace’s auto-register flag, so <code>cluster up</code> stops registering
+with BNK Forge.</p>
+<p>This is a LOCAL setting and never contacts the server. A cluster already
+registered stays on Forge’s Kubernetes page — to remove it, use
+<code>roksbnkctl bnkforge unregister</code>.</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-enable"><a class="header" href="#roksbnkctl-bnkforge-enable"><code>roksbnkctl bnkforge enable</code></a></h3>
 <p>Enable BNK Forge auto-registration on <code>cluster up</code> (writes config.yaml for you)</p>
@@ -9583,35 +9789,23 @@ stays on Forge’s Kubernetes page. To remove it, use
 </tbody>
 </table>
 </div>
-<p>Registering is <strong>non-destructive</strong>: a cluster already held by <em>this</em> project is
-updated in place, so its Forge cluster id and any scan history survive. A cluster
-held by <em>another</em> project is refused, naming the owner — <code>--force</code> moves it
-deliberately. The automatic post-<code>cluster up</code> hook never forces. See
-<a href="#registration-is-non-destructive">Chapter 24a</a>.</p>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-status"><a class="header" href="#roksbnkctl-bnkforge-status"><code>roksbnkctl bnkforge status</code></a></h3>
+<p>Show this workspace’s BNK Forge registration config + readiness</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-unregister"><a class="header" href="#roksbnkctl-bnkforge-unregister"><code>roksbnkctl bnkforge unregister</code></a></h3>
 <p>Remove this workspace’s cluster from its BNK Forge project</p>
 <pre><code>roksbnkctl bnkforge unregister [flags]
 </code></pre>
-<p>Undoes what <code>bnkforge register</code> did. Without it a workspace can create a
-registration it has no way to remove: <code>bnkforge disable</code> only clears the local
-auto-register flag, so after a teardown the cluster stays on Forge’s Kubernetes
-page — inside a project that outlives everything it was created alongside,
-pointing at a cluster that may no longer have BNK on it, or may no longer exist.</p>
-<p><strong>Absence is success.</strong> A destroy path runs when things are already partly
-dismantled, and may well run twice, so every “it was not there” case reports and
-exits 0:</p>
-<ul>
-<li>no project of that name</li>
-<li>the project exists but holds no cluster of that name</li>
-<li>the cluster exists but the DELETE returns 404</li>
-</ul>
-<p>Only a genuine server failure surfaces as an error. It also <strong>never creates
-anything</strong> — unlike <code>register</code>, which ensures the project exists, a teardown asking
-<em>“is this still here?”</em> must not bring it into being.</p>
-<p>The cluster name comes from the workspace’s recorded cluster outputs, falling back
-to the workspace name; the project from <code>bnkforge.project</code>, falling back to the
-workspace name.</p>
+<p>Removes the cluster this workspace registered, so a teardown can undo what
+<code>bnkforge register</code> did.</p>
+<p>Without it a workspace can create a registration it has no way to remove:
+<code>bnkforge disable</code> only clears the local auto-register flag and never contacts
+the server, so the cluster stays on Forge’s Kubernetes page pointing at
+something that may no longer exist.</p>
+<p>Absence is success. No project, no cluster of that name, or a cluster already
+gone all report and exit 0, so this is safe to run from a destroy path that may
+run twice or run late.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -9619,17 +9813,14 @@ workspace name.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge base URL</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge username</td></tr>
-<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer <code>BNK_FORGE_PASSWORD</code>)</td></tr>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
 </tbody>
 </table>
 </div>
-<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
-<h3 id="roksbnkctl-bnkforge-status"><a class="header" href="#roksbnkctl-bnkforge-status"><code>roksbnkctl bnkforge status</code></a></h3>
-<p>Show this workspace’s BNK Forge registration config + readiness</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h2 id="roksbnkctl-cleanup"><a class="header" href="#roksbnkctl-cleanup"><code>roksbnkctl cleanup</code></a></h2>
 <p>Delete orphaned IBM Cloud resources left by a failed <code>down</code></p>
@@ -9678,8 +9869,11 @@ one cluster.</p>
 </code></pre>
 <p>Prints the cluster identity recorded at cluster up / register time
 (~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json): cluster ID, endpoints, VPC,
-transit gateway, and registry COS. This is the RECORDED config; for live runtime
-state (node readiness) use <code>roksbnkctl cluster status</code>.</p>
+transit gateway, registry COS, and the create-time settings the cluster was
+built with (network mode, and the VPC address block when this tool created the
+VPC). This is the RECORDED config, and for the create-time settings it is
+AUTHORITATIVE — config.yaml describes what is wanted, this describes what
+exists. For live runtime state (node readiness) use <code>roksbnkctl cluster status</code>.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -10710,7 +10904,6 @@ roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
 roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
-roksbnkctl registry adopt      Record a mirror this workspace did not populate
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
 roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
 roksbnkctl registry delete     Delete ALL replicated artifacts from the target</p>
@@ -10724,30 +10917,25 @@ any cluster exists.</p>
 <p>Record a mirror this workspace did not populate, so <code>bnk up</code> can use it</p>
 <pre><code>roksbnkctl registry adopt [flags]
 </code></pre>
-<p>Writes <code>registry-mirror.json</code> for a mirror that already exists.</p>
+<p>Writes registry-mirror.json for a mirror that already exists.</p>
 <p><code>bnk up</code> refuses to render against a mirror the workspace has no record of —
-otherwise BNK would be pointed at <code>far_repo_url</code>, which an air-gapped cluster
-cannot reach. Only <code>registry replicate</code> used to write that record, which meant a
+otherwise BNK would be pointed at far_repo_url, which an air-gapped cluster cannot
+reach. Until now only <code>registry replicate</code> wrote that record, which means a
 workspace could only use a mirror it had populated itself.</p>
-<p>That is the wrong constraint for how mirrors are actually used. A registry is
+<p>That is the wrong constraint for how mirrors are actually used. The registry is
 filled once, as a supply-chain step, and then many installs pull from it — often
-from a different workspace, host, or team. Those installs were forced to re-run
-<code>replicate</code> purely to re-derive a record, and <code>replicate</code> needs the FAR source
-reachable at install time. An air-gapped operator frequently does not have that,
-which is the whole point of having mirrored.</p>
-<p><code>adopt</code> derives the record from the configured registry target: the chart and image
-hosts, the repo namespace, the manifest version, and the mirror CA all come from the
-workspace config, so <strong>no source access is needed</strong>. It then asks the <em>mirror</em> what
-it holds under the configured prefix — a sanity check that catches a typo in
-<code>registry.generic_repo_prefix</code>, an empty registry, or a credential that cannot read.
-It does not pretend to prove the contents are correct or complete.</p>
-<p>Pass <code>--verify-contents</code> when the source <em>is</em> reachable and you want proof rather
-than assertion: it builds the BOM, digest-checks every artifact before recording,
-and the record then carries the full artifact inventory <strong>with digests</strong> — which is
-what lets a later <code>registry delete</code> drive from it.</p>
-<p>Adoption does <strong>not</strong> relax the out-of-band CA pinning: an unpinned capture is
-refused here exactly as it is for <code>replicate</code>, because the CA lands in every node’s
-trust store either way. See <a href="#configuration-reference"><code>registry.generic_ca_b64</code> / <code>generic_ca_sha256</code></a>.</p>
+from a different workspace, a different host, or a different team. Those installs
+were forced to re-run replicate purely to re-derive a record, which needs the FAR
+source reachable at install time. An air-gapped operator frequently does not have
+that, and it is the whole point of having mirrored in the first place.</p>
+<p>adopt derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from
+the workspace config, so no source access is needed. It then asks the MIRROR what
+it holds under the configured prefix — a sanity check that catches a typo in the
+prefix or an empty registry, without pretending to prove the contents are correct.</p>
+<p>Pass –verify-contents when the source IS reachable and you want proof rather than
+assertion: it builds the BOM and digest-checks every artifact before recording,
+and the record then carries the full artifact inventory.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -10755,9 +10943,8 @@ trust store either way. See <a href="#configuration-reference"><code>registry.ge
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--verify-contents</code></td><td><code>bool</code></td><td><code>false</code></td><td>digest-check every BOM artifact before recording (needs the FAR source)</td></tr>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>record the mirror even when it holds nothing under the configured prefix</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--verify-contents</code></td><td><code>bool</code></td><td><code>false</code></td><td>digest-check every BOM artifact before recording (needs the FAR source)</td></tr>
 </tbody>
 </table>
 </div>
@@ -10879,11 +11066,11 @@ auth, or –source-sa-b64).</p>
 <tr><td><code>--concurrency</code></td><td><code>int</code></td><td><code>0</code></td><td>parallel copy workers (default: 4)</td></tr>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>adopt a self-signed mirror CA over an UNAUTHENTICATED connection (trust-on-first-use); prefer –registry-ca or –registry-ca-fingerprint</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
-<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else <code>registry.generic_ca_b64</code>)</td></tr>
-<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>Expected SHA-256 of the mirror CA (<code>sha256:ab:cd…</code> or bare hex), authenticating a captured CA out of band</td></tr>
-<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>Adopt a self-signed mirror CA over an <strong>unauthenticated</strong> connection (trust-on-first-use). Prefer <code>--registry-ca</code> or <code>--registry-ca-fingerprint</code></td></tr>
+<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else registry.generic_ca_b64)</td></tr>
+<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>expected SHA-256 of the mirror CA (“sha256:ab:cd…” or bare hex), authenticating a captured CA out of band</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
 <tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
@@ -10900,7 +11087,8 @@ first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):</p>
 <p>Kinds:  icr | generic
 Fields: icr_host  icr_namespace
-generic_host  generic_repo_prefix  generic_username  generic_password</p>
+generic_host  generic_repo_prefix  generic_username  generic_password
+generic_ca (a PEM file)  generic_ca_sha256</p>
 <p>Examples:
 roksbnkctl registry target                          # show current config
 roksbnkctl registry target icr                      # use IBM Container Registry
@@ -10909,7 +11097,8 @@ roksbnkctl registry target generic                  # use a generic OCI registry
 roksbnkctl registry target generic_host art.example.com
 roksbnkctl registry target generic_repo_prefix bnk
 roksbnkctl registry target generic_username ci-bot
-echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdin</p>
+echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdin
+roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -11684,7 +11873,9 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>workers_per_zone</code></td><td>integer</td><td><code>1</code></td><td>1+</td><td>Worker nodes provisioned per availability zone. Multiply by the zone count (typically 3) for the total cluster size. BNK needs ≥1 worker; production deployments use 2-3 per zone.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>2+</td><td>Minimum vCPUs when the cluster module auto-selects the worker flavor (it picks the smallest <code>bx2</code> profile meeting <strong>both</strong> minimums). Renders into <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default. Only meaningful when <code>create: true</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>8+</td><td>Minimum memory (GB) for the same worker-flavor auto-select. Renders into <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
-<tr><td><code>vpc_cidr</code></td><td>string</td><td>(empty)</td><td>a <code>/18</code> or larger IPv4 CIDR</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from (<code>10.242.0.0/16</code> → <code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code>) → <code>cluster_vpc_cidr</code>. Empty leaves IBM’s <code>auto</code> management, which gives <strong>every</strong> VPC in a region the same prefixes — two such clusters cannot share a Transit Gateway, which blackholes traffic for one of them silently. Set a distinct block per cluster when they share a gateway; see <a href="#first-give-each-cluster-vpc-its-own-address-block">Sharing a Transit Gateway</a>. Split three ways, so <code>/18</code> is the smallest usable block. CREATE-time only — ignored when adopting an existing VPC. Env: <code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code>.</td></tr>
+<tr><td><code>existing_subnet_ids</code></td><td>list</td><td>(empty)</td><td>three subnet ids, zone order</td><td>Place the cluster in subnets that <strong>already exist</strong> instead of creating them. Renders <code>use_existing_cluster_subnets</code> + <code>existing_cluster_subnet_ids</code>. Requires <code>resources.cluster_vpc: { create: false, existing: &lt;vpc-id&gt; }</code> — a subnet cannot be adopted independently of its VPC, and terraform fails at plan with that message if you try. Each subnet’s <strong>zone is read from the subnet</strong>, not from the region default, so they may be in any zone order the VPC owner chose. For estates where address space is allocated centrally: adopting the VPC alone still creates three subnets inside it, leaving the cluster outside whatever ACLs and routing made that network acceptable.</td></tr>
+<tr><td><code>vpc_cidr</code></td><td>string</td><td>(empty)</td><td>a <code>/18</code> or larger IPv4 CIDR</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from (<code>10.242.0.0/16</code> → <code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code>) → <code>cluster_vpc_cidr</code>. Empty leaves IBM’s <code>auto</code> management, which gives <strong>every</strong> VPC in a region the same prefixes — two such clusters cannot share a Transit Gateway, which blackholes traffic for one of them silently. Set a distinct block per cluster when they share a gateway; see <a href="#first-give-each-cluster-vpc-its-own-address-block">Sharing a Transit Gateway</a>. Split three ways, so <code>/18</code> is the smallest usable block. CREATE-time only — ignored when adopting an existing VPC. The block a cluster was actually created from is recorded alongside it, and changing this afterwards <strong>warns</strong>: the new value is ignored, because an existing VPC’s prefixes cannot be re-addressed without replacing its subnets. A future release will refuse rather than ignore it. Setting it and leaving it alone — the normal case — says nothing. Env: <code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code>.</td></tr>
+<tr><td><code>network_mode</code></td><td>string</td><td><code>single-nic</code></td><td><code>single-nic</code>, <code>multi-nic</code></td><td>How the worker nodes are attached → <code>cluster_network_mode</code>. Omitted means <code>single-nic</code>, which is what every cluster built with this tool so far is; the setting exists to <em>name</em> that, not to change it. <code>multi-nic</code> needs a BNK release that expresses it — the pairing is checked against the <a href="#bnk-release-and-network-mode">support matrix</a> at plan time, not discovered against a live cluster. <strong>CREATE-time only and enforced:</strong> a cluster is never converted between modes in place, so changing this on a workspace that already has a cluster is refused rather than planned (what terraform would otherwise plan is a <em>replacement</em> of the running cluster that reads like an update). Env: <code>ROKSBNKCTL_CLUSTER_NETWORK_MODE</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -11757,6 +11948,9 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>RFC 1123 namespace label</td><td>Namespace the F5 Lifecycle Operator installs into (<code>flo_namespace</code>). Set for multi-tenant clusters or to avoid a namespace collision.</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>RFC 1123 namespace label</td><td>Namespace for the F5 utility components (<code>flo_utils_namespace</code>).</td></tr>
+<tr><td><code>trusted_profile.service_account</code></td><td>string</td><td>(derived)</td><td>a Kubernetes service account name</td><td>The account allowed to <strong>assume</strong> the CNE controller’s IBM Cloud Trusted Profile → <code>flo_trusted_profile_sa_name</code>. Empty derives what FLO creates: <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code>. The IAM trust rule is a <strong>matcher</strong>, not a pointer: IBM compares a pod’s service-account token against <code>crn</code>/<code>namespace</code>/<code>name</code> with <code>EQUALS</code>, so a name that does not match the account the CNE controller actually runs as means <strong>nothing can assume the profile, and nothing reports an error</strong>. Set this only if you can also make FLO name the account differently — roksbnkctl cannot, since FLO creates it when it reconciles the CNEInstance and that spec has no service-account field. <strong>Safe to share across clusters:</strong> uniqueness comes from the profile name, which carries the cluster name, and from the link’s cluster CRN. The same value also drives the privileged-SCC binding for that account, so the two cannot drift. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code>.</td></tr>
+<tr><td><code>trusted_profile.roles</code></td><td>list</td><td><code>[Viewer, Editor]</code></td><td>IAM role names</td><td>Roles granted to that profile, scoped to the cluster’s <strong>own</strong> VPC (<code>serviceName=is</code>, <code>vpcId=&lt;cluster vpc&gt;</code>) → <code>flo_trusted_profile_roles</code>. <code>Editor</code> is what lets the controller manage TMM’s network attachments; narrowing it fails at attachment time on a running cluster rather than at apply, so change it only against a policy you have tested. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code> (comma-separated).</td></tr>
+<tr><td><code>gtm.url</code> / <code>gtm.username</code> / <code>gtm.password_b64</code></td><td>string</td><td>(empty)</td><td>URL, user, base64 password</td><td>The BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong> (<code>cneinstance_gtm_*</code>). <code>gslb_datacenter_name</code> supplies the datacenter’s <em>name</em>; this supplies the thing it registers with. Empty disables GTM entirely. The password is base64 for obfuscation, not encryption — <code>ROKSBNKCTL_GTM_PASSWORD</code> takes the raw value.</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>any string</td><td>Optional CNEInstance GSLB datacenter name (<code>cneinstance_gslb_datacenter_name</code>).</td></tr>
 <tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>RFC 1123 namespace label</td><td>Namespace cert-manager installs into (<code>cert_manager_namespace</code>). The install/skip toggle stays on <code>resources.cert_manager.create</code>.</td></tr>
 <tr><td><code>cert_manager.version</code></td><td>string</td><td>(HCL default)</td><td>a published cert-manager chart version</td><td>Pins the cert-manager Helm chart (<code>cert_manager_version</code>). Useful for air-gap / compliance version pinning.</td></tr>
@@ -11764,6 +11958,52 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 </table>
 </div>
 <p>All fields are optional; omitting renders the HCL’s own defaults. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the upstream defaults. Data-plane networking (per-AZ subnets, TMM self-IPs, VLAN prefix length, and the pod-route CIDR) lives under <code>bnk.network</code> — <code>roksbnkctl init</code> prompts for it (opt in at <em>“Customize BNK networking?”</em>), or see <a href="#workspace-config-configyaml">Chapter 12 §<code>bnk.network</code></a>. FLP settings live under <code>bnk.flp</code> (see the master table below); <code>bnk.flp.storage_class</code> sets the FLP’s PVC StorageClass.</p>
+<h3 id="bnk-release-and-network-mode"><a class="header" href="#bnk-release-and-network-mode">BNK release and network mode</a></h3>
+<p>Two versions vary here, independently, and they interact.</p>
+<p><strong>The BNK release</strong> decides the terraform and the F5 CRDs. It is not a separate
+setting — it is <em>derived</em> from <code>bnk.manifest_version</code>, which already pins the
+release: <code>2.3.0-3.2598.3-0.0.170</code> is the <code>2.3</code> line. Deriving it is deliberate.
+A second field naming the line could disagree with the manifest actually being
+installed, and the failure from that disagreement would arrive as a CRD mismatch
+against a live cluster, hours later.</p>
+<p><strong>The cluster’s network mode</strong> decides what BNK has to attach to. It comes from
+<code>cluster.network_mode</code>, is fixed when the cluster is built, and is written into
+the cluster’s own record so that later runs read what the cluster <em>is</em> rather
+than what the config currently asks for.</p>
+<p>Not every pairing exists:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>BNK line</th><th><code>single-nic</code></th><th><code>multi-nic</code></th></tr>
+</thead>
+<tbody>
+<tr><td>2.3</td><td><strong>yes</strong></td><td><strong>no</strong> — 2.3 does not express the multi-NIC network attachments or CNEInstance options</td></tr>
+<tr><td>2.4</td><td><strong>yes</strong></td><td><strong>yes</strong> — provisional; see the note below</td></tr>
+</tbody>
+</table>
+</div>
+<p>A 2.4 install still drives a single-NIC cluster, including one created before
+multi-NIC existed. That is what lets an existing deployment move to 2.4 without
+touching its cluster. What does not exist is a conversion: a cluster is built in
+one mode and stays in it.</p>
+<p>The 2.4 row is <strong>provisional</strong>: it was written before 2.4 shipped and has never
+been run against it. Every value in it is an expectation, not an observation.</p>
+<p><code>roksbnkctl</code> checks the pairing before it plans and refuses an unsupported one
+there, rather than letting it fail against real infrastructure. The matrix is
+data (<code>internal/config/support_matrix.yaml</code>), not a rule buried in code, so
+adding a release is an edit to a table.</p>
+<p>A release the matrix has never heard of <strong>warns and proceeds</strong>. The matrix ships
+inside the binary, so an unknown line usually means the binary predates the
+release — that is missing information, not a known incompatibility, and refusing
+on it would make every build refuse every BNK release that shipped after it.
+This matters most where the binary is pinned: the <a href="#registering-the-cluster-with-bnk-forge">BNK Forge
+modules</a> pin the runner image by digest, so
+“use a newer build” is not something a user choosing a BNK release can do.</p>
+<p>Leaving <code>network_mode</code> unset is likewise not a claim. Only an <strong>explicit</strong> value
+that contradicts the cluster’s record is refused; silence defers to the record.
+Configs are not always hand-written and durable — the Forge modules regenerate
+<code>config.yaml</code> per step from a curated environment — so absence has to mean “no
+opinion”, not “single-nic, and I insist”.</p>
 <h3 id="bnkpreflight--the-reachability-gates-timers"><a class="header" href="#bnkpreflight--the-reachability-gates-timers"><code>bnk.preflight:</code> — the reachability gate’s timers</a></h3>
 <p>Before <code>bnk up</code> plans anything, it probes the mirror (and the F5 License Proxy, when one is
 configured) from <strong>every node, in every AZ</strong>. These two fields tune that gate. Neither is a
@@ -12171,6 +12411,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Worker Internet egress via a per-subnet public gateway → <code>cluster_public_gateway</code>. <code>false</code> = private/disconnected cluster (no egress; expert — see <a href="#air-gapped-install-mirroring-bnk-into-a-private-registry">Chapter 10a</a>). Settable from the environment with <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>; it is a tri-state, so <em>unset</em> inherits the terraform default rather than rendering <code>true</code>.</td></tr>
 <tr><td><code>cluster.min_worker_vcpu_count</code></td><td>integer</td><td><code>16</code></td><td>Worker-flavor auto-select floor (vCPUs) → <code>roks_min_worker_vcpu_count</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
 <tr><td><code>cluster.min_worker_memory_gb</code></td><td>integer</td><td><code>64</code></td><td>Worker-flavor auto-select floor (GB) → <code>roks_min_worker_memory_gb</code>. <code>0</code>/omitted keeps the HCL default.</td></tr>
+<tr><td><code>cluster.network_mode</code></td><td>string</td><td><code>single-nic</code></td><td>Worker attachment mode → <code>cluster_network_mode</code>. Create-time only and enforced; checked against the BNK line derived from <code>bnk.manifest_version</code>.</td></tr>
 <tr><td><code>cluster.vpc_cidr</code></td><td>string</td><td>(empty)</td><td>Address block for a new cluster VPC → <code>cluster_vpc_cidr</code>. Empty = IBM <code>auto</code>, which is identical for every VPC in the region; set a distinct block per cluster sharing a Transit Gateway. <code>/18</code> minimum.</td></tr>
 <tr><td><code>resources.transit_gateway.create</code></td><td>bool</td><td><code>true</code></td><td>Create a prefix-named TGW vs adopt an existing one. Since <code>v1.8.0</code>.</td></tr>
 <tr><td><code>resources.transit_gateway.existing</code></td><td>string</td><td>(empty)</td><td>Existing Transit Gateway to attach the cluster VPC to, by <strong>name or id</strong>, when <code>create: false</code>. <code>cluster up</code>/<code>register</code> connects it; <code>tgw connect</code> does it after the fact. See <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>.</td></tr>
@@ -12201,7 +12442,14 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace → <code>flo_utils_namespace</code>.</td></tr>
 <tr><td><code>bnk.gslb_datacenter_name</code></td><td>string</td><td>(empty)</td><td>Optional CNEInstance GSLB datacenter → <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
 <tr><td><code>bnk.network.zones[]</code></td><td>list</td><td>(install-guide defaults)</td><td>Per-AZ data-plane subnets (<code>ext_vlan_cidr</code>, <code>int_vlan_cidr</code>, <code>int_snat_cidr</code>, <code>int_vip_cidr</code>) + TMM self-IPs (<code>external_selfip</code>, <code>internal_selfip</code>) → <code>cneinstance_network_zones</code>. Supply all 3 zones or none. See <a href="#workspace-config-configyaml">Chapter 12 §<code>bnk.network</code></a>.</td></tr>
-<tr><td><code>bnk.network.vlan_prefixlen</code></td><td>int</td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>) → <code>cneinstance_vlan_prefixlen</code>. Match your VLAN CIDRs.</td></tr>
+<tr><td><code>bnk.gtm.url</code></td><td>string</td><td>(empty)</td><td>BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong> → <code>cneinstance_gtm_url</code>. Empty disables GTM. <code>gslb_datacenter_name</code> names the datacenter; without this it is a label pointing at nothing. Env: <code>ROKSBNKCTL_GTM_URL</code>.</td></tr>
+<tr><td><code>bnk.gtm.username</code></td><td>string</td><td>(empty)</td><td>GTM user → <code>cneinstance_gtm_username</code>. Env: <code>ROKSBNKCTL_GTM_USERNAME</code>.</td></tr>
+<tr><td><code>bnk.gtm.password_b64</code></td><td>string</td><td>(empty)</td><td>GTM password, base64 (obfuscation, not encryption) → rendered raw as <code>cneinstance_gtm_password</code>. <code>ROKSBNKCTL_GTM_PASSWORD</code> takes the raw value.</td></tr>
+<tr><td><code>bnk.trusted_profile.service_account</code></td><td>string</td><td>(derived)</td><td>Account allowed to assume the CNE controller’s Trusted Profile → <code>flo_trusted_profile_sa_name</code>. Empty derives what FLO actually creates: <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code>. The IAM trust rule is a <strong>matcher</strong>, not a pointer: IBM compares a pod’s service-account token against <code>crn</code>/<code>namespace</code>/<code>name</code> with <code>EQUALS</code>, so a name that does not match the account the CNE controller actually runs as means <strong>nothing can assume the profile, and nothing reports an error</strong>. Set this only if you can also make FLO name the account differently — roksbnkctl cannot, since FLO creates it when it reconciles the CNEInstance and that spec has no service-account field. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code>.</td></tr>
+<tr><td><code>bnk.trusted_profile.roles</code></td><td>list</td><td><code>[Viewer, Editor]</code></td><td>Roles for that profile, scoped to the cluster VPC → <code>flo_trusted_profile_roles</code>. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code>.</td></tr>
+<tr><td><code>bnk.network.vlan_prefixlen_external</code></td><td>int</td><td>(inherit)</td><td>Per-VLAN override of the mask → <code>cneinstance_vlan_prefixlen_external</code>. Unset inherits <code>vlan_prefixlen</code>. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code>.</td></tr>
+<tr><td><code>bnk.network.vlan_prefixlen_internal</code></td><td>int</td><td>(inherit)</td><td>Same, internal VLAN → <code>cneinstance_vlan_prefixlen_internal</code>. The two need not match. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code>.</td></tr>
+<tr><td><code>bnk.network.vlan_prefixlen</code></td><td>int</td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>) → <code>cneinstance_vlan_prefixlen</code>. Normally match your VLAN CIDRs — but it is <strong>independent of them and never derived from them</strong>, because a mask that deliberately disagrees with its subnet is a tool: it changes what TMM treats as directly connected, and static routes then steer the remainder to force a specific traffic pattern. Nothing validates the two against each other, so a <code>/23</code> subnet with this left at <code>24</code> silently yields <code>/24</code> self-IPs. <code>roksbnkctl init</code> asks for it <strong>after</strong> the zone CIDRs and suggests the mask they share when all of them agree, but that is a prompt default only. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN</code>.</td></tr>
 <tr><td><code>bnk.network.tmm_k8s_routes</code></td><td>string</td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM routes to (<code>TMM_K8S_ROUTES</code>) → <code>cneinstance_tmm_k8s_routes</code>. Your cluster’s pod subnet if non-default.</td></tr>
 <tr><td><code>bnk.preflight.reachability_retry_seconds</code></td><td>int</td><td><code>180</code></td><td>How long one target may keep failing in the pre-install reachability gate before the verdict is believed. <code>0</code> = one shot. Not a tfvar. Env: <code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code>.</td></tr>
 <tr><td><code>bnk.preflight.reachability_timeout_seconds</code></td><td>int</td><td><code>480</code></td><td>How long to wait for every node to report. Clamped above the retry budget. Not a tfvar. Env: <code>ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS</code>.</td></tr>
@@ -12209,6 +12457,10 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.cert_manager.version</code></td><td>string</td><td>(HCL default)</td><td>cert-manager chart version → <code>cert_manager_version</code>.</td></tr>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="#licensing-bnk-with-the-f5-license-proxy-flp">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
+<tr><td><code>bnk.flp.vsi.vpc</code></td><td>string</td><td>(empty)</td><td><strong>Adopt</strong> an existing VPC for the standalone proxy VSI. Mutually exclusive with <code>create_vpc</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.create_vpc</code></td><td>bool</td><td><code>false</code></td><td>Build the proxy its <strong>own</strong> VPC, address prefix and public gateway. The proxy is the one component needing egress to F5, which makes it a natural <em>first</em> deployment in an air-gapped estate — without this something else has to have created a VPC, in practice coupling licensing to a registry it is otherwise unrelated to.</td></tr>
+<tr><td><code>bnk.flp.vsi.vpc_name</code></td><td>string</td><td><code>flp-vsi-vpc</code></td><td>Name for the VPC created by <code>create_vpc</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.subnet_cidr</code></td><td>string</td><td><code>10.250.0.0/24</code></td><td>Address prefix for that VPC. <strong>Must not overlap</strong> anything the consuming clusters can already route to — a transit gateway cannot route to two VPCs with overlapping prefixes and silently blackholes one.</td></tr>
 <tr><td><code>bnk.flp.chart_version</code></td><td>string</td><td>(empty ⇒ from the BNK manifest)</td><td>Pin the <code>f5-license-proxy</code> chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts.</td></tr>
 <tr><td><code>bnk.flp.storage_class</code></td><td>string</td><td>(empty ⇒ HCL default)</td><td>Dynamic StorageClass for the FLP’s PVCs → <code>flp_storage_class</code>. Set it when the cluster/region exposes a different block-storage class. (helm mode)</td></tr>
 <tr><td><code>bnk.flp.mode</code></td><td>string</td><td>(empty ⇒ <code>helm</code>)</td><td><code>helm</code> | <code>vsi</code>. <code>vsi</code> deploys the proxy on a standalone VSI (podman pod, no k8s) instead of the helm chart; both terminate in the same endpoint + root CA handoff.</td></tr>
@@ -12267,6 +12519,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>cluster.name</code></td><td><code>init</code> prompts; programmatic loads error.</td></tr>
 <tr><td><code>cluster.openshift_version</code></td><td>Empty string passed to upstream HCL; the module picks the current default.</td></tr>
 <tr><td><code>cluster.workers_per_zone</code></td><td>Falls through to <code>1</code> (upstream HCL default).</td></tr>
+<tr><td><code>cluster.network_mode</code></td><td>The cluster is built and recorded as <code>single-nic</code> — identical to every cluster built before the setting existed.</td></tr>
 <tr><td><code>cluster.vpc_cidr</code></td><td><code>cluster_vpc_cidr</code> is omitted from the generated tfvars; the VPC keeps IBM’s <code>auto</code> address prefixes (<code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>).</td></tr>
 <tr><td><code>bnk.*</code></td><td>Each field is omitted from the generated <code>terraform.tfvars</code> and the upstream HCL default applies.</td></tr>
 <tr><td><code>test.throughput.*</code></td><td>Coded defaults (30s, 8 streams, <code>networkstatic/iperf3:latest</code>) apply.</td></tr>
@@ -12321,7 +12574,6 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway. Must reference an existing TGW when create_roks_transit_gateway = false and testing_create_tgw_jumphost = true.</td><td>no</td></tr>
-<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one. roksbnkctl sets this true in the second (bnk/testing) phase when cluster-outputs.json exists; the cluster phase leaves it false (create).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true) — sourced from cluster-outputs.json vpc_id.</td><td>no</td></tr>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
@@ -12349,11 +12601,18 @@ values. The resulting block looks like:</p>
 <tr><td><code>bigip_password</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP password for the CIS controller</td><td><strong>yes</strong></td></tr>
 <tr><td><code>bigip_url</code></td><td><code>string</code></td><td><code>"192.168.1.245"</code></td><td>BIG-IP URL for the CIS controller</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud Trusted Profile ID created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes service account name the CNE controller’s IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC.</td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles granted to the CNE controller’s Trusted Profile, scoped to the cluster’s OWN VPC (serviceName=is, vpcId=<cluster vpc="">).</cluster></td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)</td><td>no</td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_external</code></td><td><code>number</code></td><td><code>0</code></td><td>External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value.</td><td>no</td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_internal</code></td><td><code>number</code></td><td><code>0</code></td><td>Internal VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen. See the external variable for why the two can differ.</td><td>no</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen</code></td><td><code>number</code></td><td><code>24</code></td><td>TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_k8s_routes</code></td><td><code>string</code></td><td><code>"172.17.0.0/18"</code></td><td>Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet.</td><td>no</td></tr>
 <tr><td><code>license_mode</code></td><td><code>string</code></td><td><code>"connected"</code></td><td>License operation mode (connected, disconnected, or f5licenseproxy)</td><td>no</td></tr>
@@ -12409,6 +12668,13 @@ values. The resulting block looks like:</p>
 <tr><td><code>tgw_connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for this cluster’s connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don’t collide).</td><td>no</td></tr>
 <tr><td><code>helm_registry_config</code></td><td><code>string</code></td><td><code>""</code></td><td>Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR block the cluster VPC’s per-zone address prefixes are carved from (e.g. “10.241.0.0/16” → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18).</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_subnets</code></td><td><code>bool</code></td><td><code>false</code></td><td>Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC.</td><td>no</td></tr>
+<tr><td><code>existing_cluster_subnet_ids</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_create_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Build the F5 License Proxy its own VPC instead of placing it in an existing one.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_vpc_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_subnet_cidr</code></td><td><code>string</code></td><td><code>"10.250.0.0/24"</code></td><td>Address prefix for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
+<tr><td><code>cluster_network_mode</code></td><td><code>string</code></td><td><code>"single-nic"</code></td><td>How the cluster’s worker nodes are attached: single-nic (default) or multi-nic.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -12455,12 +12721,18 @@ values. The resulting block looks like:</p>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><code>"2.3.0-3.2598.3-0.0.170"</code></td><td>Version of f5-bigip-k8s-manifest chart - used by flo, cneinstance modules</td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>The CNE controller service account; must match what the flo module linked.</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM IAM Trusted Profile ID for provisioning VPC routes</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>mTLS certificate issuer name</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>The Multus Network Attachment Definitions for the CNEInstance TMM deployments</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)</td><td>no</td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_external</code></td><td><code>number</code></td><td><code>0</code></td><td>External VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen.</td><td>no</td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_internal</code></td><td><code>number</code></td><td><code>0</code></td><td>Internal VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen.</td><td>no</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen</code></td><td><code>number</code></td><td><code>24</code></td><td>TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_k8s_routes</code></td><td><code>string</code></td><td><code>"172.17.0.0/18"</code></td><td>Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet.</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch</td><td>no</td></tr>
@@ -12501,6 +12773,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Service account the CNE controller Trusted Profile is linked to.</td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC.</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Namespace for F5 utility components</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager - used by cert-manager, flo modules</td><td>no</td></tr>
@@ -12602,6 +12876,9 @@ values. The resulting block looks like:</p>
 <tr><td><code>far_service_account_b64</code></td><td><code>string</code></td><td><code>""</code></td><td>Base64 FAR service account (from bnk.far_auth_local_file), used when use_cos_bucket=false.</td><td>no</td></tr>
 <tr><td><code>f5_cne_subscription_jwt</code></td><td><code>string</code></td><td><code>""</code></td><td>Subscription JWT contents (from bnk.subscription_jwt_local_file), used when use_cos_bucket=false.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_ssh_key</code></td><td><code>string</code></td><td><code>""</code></td><td>Existing VPC SSH key name to attach to the FLP VSI (operator access). Empty = no key.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_create_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Build the proxy its own VPC, address prefix and public gateway instead of placing it in one that already exists. Default false keeps existing workspaces byte-identical.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_vpc_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for the VPC created when flp_vsi_create_vpc = true. Empty uses flp-vsi-vpc.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_subnet_cidr</code></td><td><code>string</code></td><td><code>"10.250.0.0/24"</code></td><td>Address prefix for the VPC created when flp_vsi_create_vpc = true. Must not overlap anything the consuming clusters can already route to.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -12704,12 +12981,14 @@ values. The resulting block looks like:</p>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_cos_instance_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cos-instance"</code></td><td>Name of the COS instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_transit_gateway_name</code></td><td><code>string</code></td><td><code>"tf-tgw"</code></td><td>Name of the Transit Gateway</td><td>no</td></tr>
-<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR the cluster VPC’s three per-zone address prefixes are carved from (<code>10.241.0.0/16</code> → <code>10.241.0.0/18</code>, <code>10.241.64.0/18</code>, <code>10.241.128.0/18</code>). Empty leaves IBM’s <code>auto</code> management, which gives every VPC in a region the SAME prefixes — so two clusters cannot share a Transit Gateway without overlapping. <code>/18</code> is the smallest usable block. Ignored when <code>use_existing_cluster_vpc = true</code>.</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Reuse an existing cluster VPC instead of creating one (forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the existing cluster VPC (used only when use_existing_cluster_vpc = true; forwarded to module.cluster).</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><em>required</em></td><td>Directory where ibm_container_cluster_config writes the admin kubeconfig. Must be writable; set explicitly to avoid the provider’s HOME-derived default, which resolves empty under the roksbnkctl runner.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the cluster phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl/kubectl (no interpreter, so cmd.exe execs it on Windows). roksbnkctl sets this via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR block the cluster VPC’s per-zone address prefixes are carved from (e.g. “10.241.0.0/16” → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18).</td><td>no</td></tr>
+<tr><td><code>use_existing_cluster_subnets</code></td><td><code>bool</code></td><td><code>false</code></td><td>Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC.</td><td>no</td></tr>
+<tr><td><code>existing_cluster_subnet_ids</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -12829,8 +13108,12 @@ The Kubernetes client-configuration file (clusters, contexts, credentials). Defa
 A Service type that provisions an external endpoint (a cloud LB on managed Kubernetes; an external IP on bare-metal CNI). Used by the throughput suite’s <code>north-south</code> mode and by BNK’s exposed VIPs.</p>
 <p><strong>Long-lived ops pod</strong>
 The k8s backend’s persistent execution context. Deployed by <code>roksbnkctl ops install</code>; subsequent <code>--backend k8s</code> dispatches <code>kubectl exec</code> into the same pod rather than starting a fresh Pod each call. Contrasted with the <em>one-shot Job pattern</em> used for iperf3 and DNS probes. See <a href="#the-in-cluster-ops-pod">Chapter 19</a>.</p>
+<p><strong>BNK line</strong> / <strong>release line</strong> — The <code>&lt;major&gt;.&lt;minor&gt;</code> of a BNK release, e.g. <code>2.3</code>. Not configured: <em>derived</em> from <code>bnk.manifest_version</code>. Selects the terraform overlay (<a href="#terraform-variables-terraformtfvars">Chapter 13</a>) and gates the support-matrix check. An unset <code>manifest_version</code> derives the line from the built-in default rather than failing, because that field has always been optional.</p>
+<p><strong>Network mode</strong> (<code>single-nic</code> | <code>multi-nic</code>) — How a cluster’s worker nodes are attached. Fixed when the cluster is created and never converted in place. <code>single-nic</code> is the default and describes every cluster built with this tool today; <code>multi-nic</code> needs BNK 2.4+ and IBM support that has not yet shipped.</p>
+<p><strong>Contract schema version</strong> — The <code>schema_version</code> in <code>cluster-outputs.json</code>, currently 2. Absent means 1. Declares the shape of the handoff record so a reader can tell what it is looking at.</p>
+<p><strong>Support matrix</strong> — <code>internal/config/support_matrix.yaml</code>: which BNK lines drive which network modes, and which contract versions each can read. Checked before planning. A known line with an unsupported mode is refused; a line the matrix has never heard of <em>warns and proceeds</em>, since that usually means the binary predates the release rather than that the pairing is wrong.</p>
 <p><strong>Manifest version</strong> (<code>f5_bigip_k8s_manifest_version</code>)
-The version pin on the f5-bigip-k8s-manifest Helm chart. Transitively pins both the FLO and CIS versions (both are extracted from the manifest chart). See <a href="#terraform-variables-terraformtfvars">Chapter 13</a>.</p>
+The version pin on the f5-bigip-k8s-manifest Helm chart. Transitively pins both the FLO and CIS versions (both are extracted from the manifest chart). See <a href="#terraform-variables-terraformtfvars">Chapter 13</a>. It also determines the derived <strong>BNK line</strong> above, so it selects the terraform overlay and gates the support-matrix check — a larger blast radius than the name suggests, and the reason there is no separate line field that could disagree with it.</p>
 <p><strong>mdBook</strong>
 <a href="https://rust-lang.github.io/mdBook/">rust-lang/mdBook</a> — the static-site generator the book is built with. Markdown source under <code>book/src/</code>, HTML output under <code>book/book/</code>. See <a href="#the-book-build">Chapter 31 §“The book build”</a>.</p>
 <p><strong>miekg/dns</strong>
@@ -13070,7 +13353,7 @@ git push origin v1.0.0
 <li>Attach the binaries, checksums (<code>checksums.txt</code>), and the rendered book PDF (if mdbook-pdf is configured) to the GitHub release.</li>
 <li>Generate release notes from the CHANGELOG and the commits since the previous tag.</li>
 </ol>
-<p>The release-gate criteria — what has to hold before tagging — are documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md">PLAN.md §“v1.0 (M4)”</a>. The most important: full E2E green for 3 consecutive nights on the release branch.</p>
+<p>The release-gate criteria — what has to hold before tagging — are documented in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md">PLAN.md §“v1.0 (M4)”</a>. The most important: full E2E green for 3 consecutive nights on <code>main</code>.</p>
 <h2 id="cross-references-23"><a class="header" href="#cross-references-23">Cross-references</a></h2>
 <ul>
 <li><a href="#installation">Chapter 4 — Installation</a> — for users who just want the binary, not the source.</li>
@@ -13166,6 +13449,36 @@ var toolPackages = map[string]toolPackage{
 </code></pre>
 <p>The bootstrap step runs <code>apt-get install -y &lt;packages&gt;</code> on the SSH target when the tool isn’t already on PATH. Non-Debian targets are out of scope for v1.0; the bootstrap fails clearly with a message pointing at the manual-install path.</p>
 <p>For each backend, the implementation work is small (one map entry). The doctor checks, e2e coverage, and docs are the bulk — same shape as adding a new backend, scaled to the smaller surface.</p>
+<h2 id="supporting-a-new-bnk-release"><a class="header" href="#supporting-a-new-bnk-release">Supporting a new BNK release</a></h2>
+<p>Two version axes vary independently here — the BNK release, and the IBM platform
+capability the cluster was built with. Adding a release means telling the tool
+about the new cell, not forking anything.</p>
+<p><strong>1. Add a row to <code>internal/config/support_matrix.yaml</code>.</strong></p>
+<pre><code class="language-yaml">  - bnk: "2.5"
+    contract: [1, 2]                       # schema versions this line can read
+    network_modes: [single-nic, multi-nic]
+    notes: &gt;-
+      What changed, and anything a reader needs to know before trusting the row.
+</code></pre>
+<p>The line itself is <em>derived</em> from <code>bnk.manifest_version</code> (<code>2.5.0-…</code> → <code>2.5</code>), so
+there is no new config field and nothing that can disagree with the manifest
+actually being installed.</p>
+<p><strong>2. Add <code>terraform/lines/2.5/</code> only if the HCL genuinely differs.</strong> It mirrors
+the base tree and is layered on top at extraction: same path replaces, new path
+is added, nothing is removed. A difference a <em>variable</em> can express belongs in
+the base as a variable — an overlay is a fork of a file, and two copies of a file
+drift. An empty <code>lines/</code> is the correct state whenever the base serves every
+supported release, which is the case today.</p>
+<p><strong>3. Add the CI coverage for the cell.</strong> From the matrix’s own header: <em>“Adding a
+cell means adding a CI plan for it. A cell with no coverage is a claim nobody has
+checked.”</em></p>
+<p><strong>4. Mark it provisional until it has actually run.</strong> A row written before the
+release ships is an expectation, not an observation. Say so in the row — the
+<code>2.4</code> row does — so that a plan-time pass isn’t mistaken for verification.</p>
+<p>Note what is <em>not</em> on this list: cutting a branch. That was the first answer and
+it was withdrawn. A branch per release forks the whole tool — CLI fixes, IBM
+module updates, docs, CI — to express a difference that lives in a handful of
+<code>.tf</code> files, and it makes every subsequent change pick a target branch.</p>
 <h2 id="adding-a-new-chapter-to-the-book"><a class="header" href="#adding-a-new-chapter-to-the-book">Adding a new chapter to the book</a></h2>
 <p>The book is mdBook with markdown source under <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/book/src"><code>book/src/</code></a>. Adding a chapter:</p>
 <ol>

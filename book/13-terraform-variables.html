@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -191,6 +191,22 @@
 ├── terraform.tfvars.example
 └── modules/
 </code></pre>
+<h3 id="the-extracted-tree-is-the-base-plus-a-per-release-overlay"><a class="header" href="#the-extracted-tree-is-the-base-plus-a-per-release-overlay">The extracted tree is the base plus a per-release overlay</a></h3>
+<p>Extraction writes the base tree above, then layers <code>terraform/lines/&lt;line&gt;/</code> on
+top of it, where <code>&lt;line&gt;</code> is the BNK release derived from <code>bnk.manifest_version</code>
+(<code>2.3.0-3.2598.3-0.0.170</code> → <code>2.3</code>). Same relative path replaces, new path is
+added, nothing is removed — so an overlay can only add to or replace the base,
+never quietly delete a resource it declares.</p>
+<p><strong>No supported release needs one today, so <code>lines/</code> ships empty and the extracted
+tree is byte-identical to the base.</strong> It is documented here anyway, because the
+consequence is not obvious and will not announce itself: the extracted tree is no
+longer a function of the binary alone, but of the binary <em>and the workspace’s
+manifest version</em>. If you are ever comparing your extracted <code>main.tf</code> against the
+repo’s and they differ, that is the first thing to check.</p>
+<p>Why this rather than a branch per BNK release — which was tried and withdrawn —
+is in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/lines/README.md"><code>terraform/lines/README.md</code></a>.
+The short version: a branch forks the whole tool to express a difference that
+lives in a handful of <code>.tf</code> files.</p>
 <p>That <code>terraform.tfvars.example</code> file is the canonical reference for what’s tunable — every variable with a sensible starter value, grouped by module (ROKS cluster, cert-manager, FLO, CNEInstance, License, testing). <code>terraform/variables.tf</code> (linked at the <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/terraform/variables.tf">GitHub canonical URL</a>) is the formal declaration with types, descriptions, and defaults.</p>
 <p>You don’t edit the example file in place. Copy or generate from it instead.</p>
 <h2 id="roksbnkctl-tfvars--bootstrap-a-starter"><a class="header" href="#roksbnkctl-tfvars--bootstrap-a-starter"><code>roksbnkctl tfvars</code> — bootstrap a starter</a></h2>
@@ -200,6 +216,7 @@
 <p>What gets pre-filled:</p>
 <ul>
 <li>Every field from <code>config.yaml</code> that maps to a tfvar (cluster name, region, workers, BNK fields, COS fields)</li>
+<li><code>cluster_network_mode</code> — rendered <strong>unconditionally</strong>, unlike the settings around it. Most are omitted when unset so the HCL default stands; this one decides how a cluster is <em>built</em>, and a value that means two different things depending on which side you read it from is worth avoiding. Unset renders <code>"single-nic"</code>, which is today’s behaviour exactly.</li>
 <li>The cluster’s identity from <code>cluster-outputs.json</code> if <code>cluster up</code> has already run</li>
 <li>A commented-out section for the variables you might want to tune next (jumphost profile, GSLB datacenter, license mode)</li>
 </ul>
@@ -228,6 +245,9 @@
 <tr><td><code>flo_namespace</code></td><td><code>f5-bnk</code></td><td>Where the F5 Lifecycle Operator runs.</td></tr>
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
+<tr><td><code>flo_trusted_profile_sa_name</code> / <code>flo_trusted_profile_roles</code></td><td>the CNE controller’s IBM Cloud identity — modelled as <code>bnk.trusted_profile.*</code></td><td></td></tr>
+<tr><td><code>cneinstance_gtm_url</code> / <code>_username</code> / <code>_password</code></td><td>the BIG-IP DNS the GSLB datacenter registers with — modelled as <code>bnk.gtm.*</code></td><td></td></tr>
+<tr><td><code>cneinstance_vlan_prefixlen_external</code> / <code>_internal</code></td><td>per-VLAN self-IP masks — modelled as <code>bnk.network.vlan_prefixlen_{external,internal}</code></td><td></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>[]</code> (install-guide defaults)</td><td>Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors <code>config.yaml</code>’s <code>bnk.network.zones</code>. Supply all three zones or none.</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen</code></td><td><code>24</code></td><td>TMM self-IP prefix length (F5SPKVlan <code>spec.prefixlen_v4</code>). <code>bnk.network.vlan_prefixlen</code>. Match your VLAN CIDRs.</td></tr>
@@ -283,7 +303,7 @@
 </div>
 <p>Because the prefix flows into all three, <code>roksbnkctl</code> enforces the <strong>strictest</strong> applicable rule on the prefix label itself (lowercase, start with a letter, <code>[a-z0-9-]</code>, no trailing hyphen) and the tightest <strong>length</strong> (35, from the cluster). An over-long prefix is rejected with an actionable message naming the offending resource, its computed length, its limit, and the maximum allowable prefix length — and <code>init</code> re-prompts (TTY) or hard-errors (non-TTY). There is <strong>no silent truncation or hashing</strong>.</p>
 <h3 id="namespaces-are-not-prefixed"><a class="header" href="#namespaces-are-not-prefixed">Namespaces are NOT prefixed</a></h3>
-<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — keep their conventional fixed values and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
+<p>Kubernetes namespaces — <code>cert_manager_namespace</code> (<code>cert-manager</code>), <code>flo_namespace</code> (<code>f5-bnk</code>), <code>flo_utils_namespace</code> (<code>f5-utils</code>) — default to their conventional values (and are settable via <code>bnk.flo_namespace</code> / <code>bnk.flo_utils_namespace</code> — including to the <strong>same</strong> value, for one namespace instead of two) and are <strong>never</strong> prefixed. They are cluster-internal: two workspaces only ever collide on namespaces if they target the <strong>same</strong> cluster, in which case a shared namespace is usually what you want (and a prefix would actively break the convention FLO and the BNK charts expect). Only <strong>account-scoped</strong> IBM Cloud infrastructure names — cluster, VPCs, TGW, COS, jumphosts — are prefixed, because those are what collide at the account level.</p>
 <h3 id="overriding-a-generated-name"><a class="header" href="#overriding-a-generated-name">Overriding a generated name</a></h3>
 <p>Every generated name is just a value in the rendered <code>terraform.tfvars</code>, so the normal <a href="#the-layering-rule">layering rule</a> overrides it. To pin a specific name (e.g. to adopt a VPC that doesn’t follow the prefix convention), set the matching variable in <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> or pass it via <code>--var-file</code>:</p>
 <pre><code class="language-bash"># Override just the Transit Gateway name for this workspace, permanently
@@ -366,7 +386,7 @@ $ roksbnkctl apply
 <tbody>
 <tr><td>Cluster identity, region, OpenShift version, worker count</td><td><code>config.yaml</code> (via <code>roksbnkctl init</code> or by hand)</td></tr>
 <tr><td>BNK chart version, CNEInstance size, FAR repo</td><td><code>config.yaml</code> (the <code>bnk:</code> block)</td></tr>
-<tr><td>A variable not modelled in <code>config.yaml</code> (e.g. <code>cneinstance_gslb_datacenter_name</code>, <code>bigip_password</code>)</td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
+<tr><td>A variable not modelled in <code>config.yaml</code></td><td><code>terraform.tfvars.user</code> (workspace-local, persistent)</td></tr>
 <tr><td>You have a complete <code>./terraform.tfvars</code> you want this workspace to always use</td><td>Copy it to <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> (sibling to <code>config.yaml</code>, mode <code>0600</code>) so bare <code>-w &lt;ws&gt;</code> commands Just Work for both phases. See <a href="./06-workspaces.html#raw-terraform-variable-overrides">Chapter 6 §“Raw terraform-variable overrides”</a>.</td></tr>
 <tr><td>A one-off override for a single run (perf test, capacity bump)</td><td><code>--var-file ./oneoff.tfvars</code> (CLI)</td></tr>
 <tr><td>A CI-pipeline variable bundle that’s checked into git</td><td><code>--var-file ./ci-overrides.tfvars</code> (CLI; the file lives in your CI repo, not the workspace)</td></tr>

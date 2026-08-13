@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -181,6 +181,14 @@
 <p><code>roksbnkctl test dns</code> is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the <em>answer</em> a name returns isn’t a single global truth but a function of <em>who’s asking from where</em>.</p>
 <p>This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you “the URL works”; throughput testing tells you “the path is fast”. Both assume the name resolved. When the GSLB is the thing under test, “the name resolved” is <em>itself</em> the question — and the answer changes depending on the network vantage of whoever’s asking.</p>
 <p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
+<blockquote>
+<p><strong>Pointing the deployment at a BIG-IP DNS.</strong> This chapter covers <em>testing</em> GSLB
+behaviour. The deployment side is two settings: <code>bnk.gslb_datacenter_name</code> names
+the datacenter, and <code>bnk.gtm.{url,username,password_b64}</code> is the BIG-IP DNS it
+registers <strong>with</strong>. Setting the name alone leaves a label pointing at nothing.
+See <a href="./28-configuration-reference.html">Chapter 28</a> — env equivalents are
+<code>ROKSBNKCTL_GTM_URL</code> / <code>_USERNAME</code> / <code>_PASSWORD</code> (raw password; stored base64).</p>
+</blockquote>
 <h2 id="three-vantages-one-comparison"><a class="header" href="#three-vantages-one-comparison">Three vantages, one comparison</a></h2>
 <p><code>--gslb-compare</code> is the flagship workflow: a single <code>roksbnkctl test dns</code> invocation fans out across <code>local</code>, <code>k8s</code>, and (optionally) <code>ssh:&lt;target&gt;</code> vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.</p>
 <pre class="mermaid">graph TB

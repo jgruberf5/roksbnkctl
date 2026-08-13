@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -290,7 +290,7 @@ subnets, naming them, rather than failing mid-destroy with <code>The VPC is in u
 teardown no longer errors even if the owner’s gateway is already gone.)</p>
 </blockquote>
 <h2 id="cluster-outputsjson--the-cluster-identity-record"><a class="header" href="#cluster-outputsjson--the-cluster-identity-record"><code>cluster-outputs.json</code> — the cluster identity record</a></h2>
-<p>When <code>roksbnkctl cluster up</code> apply succeeds, it reads the relevant Terraform outputs (cluster name, ID, region, RG, VPC, registry COS) and writes them to a workspace-scoped JSON file:</p>
+<p>When <code>roksbnkctl cluster up</code> apply succeeds, it writes a workspace-scoped JSON file describing the cluster. Most of it comes from Terraform outputs (cluster name, ID, region, RG, VPC, registry COS); the <strong>create-time settings</strong> — <code>network_mode</code>, and <code>vpc_cidr</code> when this tool created the VPC — come from the workspace config instead, because that is the only place they are knowable and the moment they become settled:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json
 </code></pre>
 <p>Sample contents:</p>
@@ -300,6 +300,9 @@ teardown no longer errors even if the owner’s gateway is already gone.)</p>
   "region": "us-south",
   "resource_group_id": "abc123...",
   "vpc_id": "r006-...",
+  "schema_version": 2,
+  "network_mode": "single-nic",
+  "vpc_cidr": "10.242.0.0/16",
   "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
   "registry_cos_name": "bnk-quickstart-cos-instance",
   "master_url": "https://c106.us-south.containers.cloud.ibm.com:31415",
@@ -309,6 +312,31 @@ teardown no longer errors even if the owner’s gateway is already gone.)</p>
 }
 </code></pre>
 <p>The <code>source</code> field discriminates between <code>cluster-up</code> (we created it) and <code>cluster-register</code> (we discovered an existing cluster — see <a href="./09-registering-existing-cluster.html">Chapter 9</a>). Subsequent commands read this file to learn the workspace’s cluster identity without hitting IBM APIs.</p>
+<h3 id="reading-this-file-from-your-own-tooling"><a class="header" href="#reading-this-file-from-your-own-tooling">Reading this file from your own tooling</a></h3>
+<p>The file is a <strong>versioned contract</strong>, and the rules for reading it matter more
+than the field list, because every rule exists to keep a file written by one
+version readable by another.</p>
+<ul>
+<li><strong><code>schema_version</code> absent means 1.</strong> Every record written before the field
+existed describes a real cluster and must stay readable; treating a missing
+value as <code>0</code> would invalidate all of them.</li>
+<li><strong><code>network_mode</code> absent means <code>single-nic</code>.</strong> That is what every cluster built
+before the field existed actually is.</li>
+<li><strong><code>vpc_cidr</code> absent means unknown, not “no block was set.”</strong> It is recorded
+only when <em>this tool created the VPC</em>; on the adopt path the setting never
+applied, so recording the configured value would record something that was
+never true.</li>
+<li><strong><code>node_interfaces</code> is declared but written by nothing today.</strong> Multi-NIC ROKS
+has not shipped, so no code path can populate it honestly yet. Empty means
+<em>unknown</em> — never “this cluster has no extra interfaces”. Both readings are
+true of every cluster that exists right now, which is exactly what makes the
+wrong one easy to adopt and expensive to unwind later.</li>
+<li><strong>Unknown fields are ignored, deliberately.</strong> New keys are only ever added, so
+an older reader keeps working against a newer file.</li>
+</ul>
+<p>For the create-time settings, this file — not <code>config.yaml</code> — is the authority.
+See <a href="./08a-three-phase-lifecycle.html#which-side-wins">Chapter 8a</a> for what happens
+when the two disagree.</p>
 <p><code>roksbnkctl cluster down</code> deletes the file as part of its post-destroy cleanup. <code>roksbnkctl cluster show</code> pretty-prints it for human readers:</p>
 <pre><code class="language-bash">roksbnkctl cluster show
 workspace:        default

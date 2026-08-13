@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -259,14 +259,46 @@ the jumphosts.</p>
 <code>cluster register</code> writes it for a pre-existing cluster). Both BNK and
 Testing read it to learn the cluster’s identity without re-specifying it:</p>
 <ul>
-<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster) and
-the VPC id.</li>
+<li><strong>BNK</strong> reads the cluster id/name (to attach to the existing cluster), the
+VPC id, and the cluster’s <strong>network mode</strong> and <strong>contract schema version</strong> —
+which it checks against the BNK release it is about to install, before it
+plans anything (see <a href="./28-configuration-reference.html#bnk-release-and-network-mode">Chapter 28</a>).</li>
 <li><strong>Testing</strong> reads the cluster VPC id (the jumphost attaches to it), the
 cluster id/name, and the <strong>transit gateway name</strong> (the Testing module
 looks the gateway up by name to bridge the client VPC to the cluster).</li>
 </ul>
 <p>The transit-gateway <em>name</em> is recorded alongside the id specifically so the
 Testing phase can run standalone against a registered cluster.</p>
+<h3 id="which-side-wins"><a class="header" href="#which-side-wins">Which side wins</a></h3>
+<p>For most settings <code>config.yaml</code> is the input and the record is just an echo of
+the result. For <strong>create-time</strong> settings the relationship inverts: the record
+describes what the cluster <em>is</em>, and the config is a request that has to agree
+with it. A cluster is never converted in place, so a contradiction is either a
+mistake or a request for a different cluster.</p>
+<p>That gives three cases, and the middle one is the one worth knowing:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>cluster.network_mode</code></th><th>vs the record</th><th>result</th></tr>
+</thead>
+<tbody>
+<tr><td>set, and matches</td><td>agrees</td><td>proceeds</td></tr>
+<tr><td><strong>unset</strong></td><td>cannot disagree</td><td><strong>defers to the record</strong></td></tr>
+<tr><td>set, and differs</td><td>contradicts</td><td><strong>refused</strong>, before planning</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Silence is not an assertion.</strong> An unset <code>network_mode</code> means the config has no
+opinion, not that it insists on <code>single-nic</code> — so it defers to whatever the
+cluster actually is. This matters because a <code>config.yaml</code> is not always
+hand-written and durable: the <a href="./24a-bnk-forge-registration.html">BNK Forge modules</a>
+regenerate one per step from a curated environment, so a mode set by the step
+that <em>created</em> the cluster is simply absent by the time the step that <em>installs
+BNK</em> runs. Reading that absence as a demand for <code>single-nic</code> would refuse a
+correct deployment at its second step, over a contradiction nobody expressed.</p>
+<p>The refusal in the third row is what stops terraform from planning a
+<strong>replacement</strong> of a running cluster — which it will do quite happily, rendered
+as output that reads like an update.</p>
 <h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
 <p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
 siblings depend on it), then launches <strong>BNK and Testing concurrently</strong>:</p>

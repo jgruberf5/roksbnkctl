@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -495,6 +495,25 @@ populated for clusters <code>roksbnkctl</code> didn’t provision.</li>
 <li><a href="./28-configuration-reference.html#bnkforge-block">Chapter 28 — Configuration reference</a>
 — the <code>bnkforge:</code> field schema.</li>
 </ul>
+<h2 id="two-behaviours-that-exist-because-of-how-forge-drives-this-tool"><a class="header" href="#two-behaviours-that-exist-because-of-how-forge-drives-this-tool">Two behaviours that exist because of how Forge drives this tool</a></h2>
+<p>The <a href="https://github.com/jgruberf5/roksbnkctl-bnk-forge">Forge modules</a> run one
+container per roksbnkctl phase, argv-only, each step re-running
+<code>init --override-from-env --non-interactive</code> from a <strong>curated environment</strong> over
+a deployment-scoped shared <code>/work</code>, against a <strong>digest-pinned</strong> runner image.
+Two of roksbnkctl’s checks are shaped by that, and both would otherwise break
+blueprints:</p>
+<p><strong>An unknown BNK line warns instead of refusing.</strong> <code>manifest_version</code> is a
+free-text input on the <code>bnk-install</code> module, the support matrix ships inside the
+binary, and the image is pinned by digest — so a user selecting a release newer
+than the pinned build would hit a hard refusal on a combination never known to be
+wrong, with no action available to them. It warns and proceeds instead.</p>
+<p><strong>An unset <code>network_mode</code> defers to the recorded cluster.</strong> Each step’s
+environment carries only what that step needs, so a mode set by <code>cluster-create</code>
+is simply absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
+absence as a demand for <code>single-nic</code> would refuse a correct multi-NIC deployment
+at its second module. Only an <em>explicit</em> contradiction is refused.</p>
+<p>The practical rule for blueprint authors: <strong>only the module that CREATES a
+cluster needs to know the network mode.</strong> Everything downstream reads the record.</p>
 
                     </main>
 

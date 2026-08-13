@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -264,6 +264,36 @@ var toolPackages = map[string]toolPackage{
 </code></pre>
 <p>The bootstrap step runs <code>apt-get install -y &lt;packages&gt;</code> on the SSH target when the tool isn’t already on PATH. Non-Debian targets are out of scope for v1.0; the bootstrap fails clearly with a message pointing at the manual-install path.</p>
 <p>For each backend, the implementation work is small (one map entry). The doctor checks, e2e coverage, and docs are the bulk — same shape as adding a new backend, scaled to the smaller surface.</p>
+<h2 id="supporting-a-new-bnk-release"><a class="header" href="#supporting-a-new-bnk-release">Supporting a new BNK release</a></h2>
+<p>Two version axes vary independently here — the BNK release, and the IBM platform
+capability the cluster was built with. Adding a release means telling the tool
+about the new cell, not forking anything.</p>
+<p><strong>1. Add a row to <code>internal/config/support_matrix.yaml</code>.</strong></p>
+<pre><code class="language-yaml">  - bnk: "2.5"
+    contract: [1, 2]                       # schema versions this line can read
+    network_modes: [single-nic, multi-nic]
+    notes: &gt;-
+      What changed, and anything a reader needs to know before trusting the row.
+</code></pre>
+<p>The line itself is <em>derived</em> from <code>bnk.manifest_version</code> (<code>2.5.0-…</code> → <code>2.5</code>), so
+there is no new config field and nothing that can disagree with the manifest
+actually being installed.</p>
+<p><strong>2. Add <code>terraform/lines/2.5/</code> only if the HCL genuinely differs.</strong> It mirrors
+the base tree and is layered on top at extraction: same path replaces, new path
+is added, nothing is removed. A difference a <em>variable</em> can express belongs in
+the base as a variable — an overlay is a fork of a file, and two copies of a file
+drift. An empty <code>lines/</code> is the correct state whenever the base serves every
+supported release, which is the case today.</p>
+<p><strong>3. Add the CI coverage for the cell.</strong> From the matrix’s own header: <em>“Adding a
+cell means adding a CI plan for it. A cell with no coverage is a claim nobody has
+checked.”</em></p>
+<p><strong>4. Mark it provisional until it has actually run.</strong> A row written before the
+release ships is an expectation, not an observation. Say so in the row — the
+<code>2.4</code> row does — so that a plan-time pass isn’t mistaken for verification.</p>
+<p>Note what is <em>not</em> on this list: cutting a branch. That was the first answer and
+it was withdrawn. A branch per release forks the whole tool — CLI fixes, IBM
+module updates, docs, CI — to express a difference that lives in a handful of
+<code>.tf</code> files, and it makes every subsequent change pick a target branch.</p>
 <h2 id="adding-a-new-chapter-to-the-book"><a class="header" href="#adding-a-new-chapter-to-the-book">Adding a new chapter to the book</a></h2>
 <p>The book is mdBook with markdown source under <a href="https://github.com/jgruberf5/roksbnkctl/tree/main/book/src"><code>book/src/</code></a>. Adding a chapter:</p>
 <ol>

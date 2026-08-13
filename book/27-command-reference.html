@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -371,26 +371,22 @@ provision takes ~30 min) before the trial apply.</p>
 <p>Configure + drive BNK Forge cluster registration</p>
 <p>Configure and drive registration of this workspace’s cluster with a
 co-located BNK Forge (v3) install — without hand-editing config.yaml.</p>
-<p>enable      turn on auto-registration on <code>cluster up</code> (writes config.yaml)
-disable     turn it back off (LOCAL only — does not unregister)
-status      show the effective config + readiness
-register    register this workspace’s cluster with BNK Forge right now
-unregister  remove this workspace’s cluster from its BNK Forge project</p>
+<p>enable    turn on auto-registration on <code>cluster up</code> (writes config.yaml)
+disable   turn it back off
+status    show the effective config + readiness
+register  register this workspace’s cluster with BNK Forge right now</p>
 <p>Registration uses BNK Forge v3’s REST API (it has no CLI). It is credential-
 backed: an IBM Cloud credential template is stored in Forge so it re-derives the
 kubeconfig on demand — nothing perishable is stored. The password is read from
 BNK_FORGE_PASSWORD or an interactive prompt (never persisted); the resulting
 session token is cached in the OS keychain.</p>
 <h3 id="roksbnkctl-bnkforge-disable"><a class="header" href="#roksbnkctl-bnkforge-disable"><code>roksbnkctl bnkforge disable</code></a></h3>
-<p>Turn off BNK Forge auto-registration (<strong>local only — does not unregister</strong>)</p>
-<pre><code>roksbnkctl bnkforge disable
-</code></pre>
-<p>Clears the workspace’s auto-register flag, so <code>cluster up</code> stops registering with
-BNK Forge.</p>
-<p>This is a <strong>local setting and never contacts the server</strong>. Despite reading like the
-inverse of <code>register</code>, it does not remove anything: a cluster already registered
-stays on Forge’s Kubernetes page. To remove it, use
-<a href="#roksbnkctl-bnkforge-unregister"><code>bnkforge unregister</code></a>.</p>
+<p>Turn off BNK Forge auto-registration (LOCAL only — does not unregister)</p>
+<p>Clears the workspace’s auto-register flag, so <code>cluster up</code> stops registering
+with BNK Forge.</p>
+<p>This is a LOCAL setting and never contacts the server. A cluster already
+registered stays on Forge’s Kubernetes page — to remove it, use
+<code>roksbnkctl bnkforge unregister</code>.</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-enable"><a class="header" href="#roksbnkctl-bnkforge-enable"><code>roksbnkctl bnkforge enable</code></a></h3>
 <p>Enable BNK Forge auto-registration on <code>cluster up</code> (writes config.yaml for you)</p>
@@ -431,35 +427,23 @@ stays on Forge’s Kubernetes page. To remove it, use
 </tbody>
 </table>
 </div>
-<p>Registering is <strong>non-destructive</strong>: a cluster already held by <em>this</em> project is
-updated in place, so its Forge cluster id and any scan history survive. A cluster
-held by <em>another</em> project is refused, naming the owner — <code>--force</code> moves it
-deliberately. The automatic post-<code>cluster up</code> hook never forces. See
-<a href="./24a-bnk-forge-registration.html#registration-is-non-destructive">Chapter 24a</a>.</p>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-status"><a class="header" href="#roksbnkctl-bnkforge-status"><code>roksbnkctl bnkforge status</code></a></h3>
+<p>Show this workspace’s BNK Forge registration config + readiness</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h3 id="roksbnkctl-bnkforge-unregister"><a class="header" href="#roksbnkctl-bnkforge-unregister"><code>roksbnkctl bnkforge unregister</code></a></h3>
 <p>Remove this workspace’s cluster from its BNK Forge project</p>
 <pre><code>roksbnkctl bnkforge unregister [flags]
 </code></pre>
-<p>Undoes what <code>bnkforge register</code> did. Without it a workspace can create a
-registration it has no way to remove: <code>bnkforge disable</code> only clears the local
-auto-register flag, so after a teardown the cluster stays on Forge’s Kubernetes
-page — inside a project that outlives everything it was created alongside,
-pointing at a cluster that may no longer have BNK on it, or may no longer exist.</p>
-<p><strong>Absence is success.</strong> A destroy path runs when things are already partly
-dismantled, and may well run twice, so every “it was not there” case reports and
-exits 0:</p>
-<ul>
-<li>no project of that name</li>
-<li>the project exists but holds no cluster of that name</li>
-<li>the cluster exists but the DELETE returns 404</li>
-</ul>
-<p>Only a genuine server failure surfaces as an error. It also <strong>never creates
-anything</strong> — unlike <code>register</code>, which ensures the project exists, a teardown asking
-<em>“is this still here?”</em> must not bring it into being.</p>
-<p>The cluster name comes from the workspace’s recorded cluster outputs, falling back
-to the workspace name; the project from <code>bnkforge.project</code>, falling back to the
-workspace name.</p>
+<p>Removes the cluster this workspace registered, so a teardown can undo what
+<code>bnkforge register</code> did.</p>
+<p>Without it a workspace can create a registration it has no way to remove:
+<code>bnkforge disable</code> only clears the local auto-register flag and never contacts
+the server, so the cluster stays on Forge’s Kubernetes page pointing at
+something that may no longer exist.</p>
+<p>Absence is success. No project, no cluster of that name, or a cluster already
+gone all report and exit 0, so this is safe to run from a destroy path that may
+run twice or run late.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -467,17 +451,14 @@ workspace name.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD)</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge base URL</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge username</td></tr>
-<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer <code>BNK_FORGE_PASSWORD</code>)</td></tr>
-<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
 </tbody>
 </table>
 </div>
-<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
-<h3 id="roksbnkctl-bnkforge-status"><a class="header" href="#roksbnkctl-bnkforge-status"><code>roksbnkctl bnkforge status</code></a></h3>
-<p>Show this workspace’s BNK Forge registration config + readiness</p>
 <p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
 <h2 id="roksbnkctl-cleanup"><a class="header" href="#roksbnkctl-cleanup"><code>roksbnkctl cleanup</code></a></h2>
 <p>Delete orphaned IBM Cloud resources left by a failed <code>down</code></p>
@@ -526,8 +507,11 @@ one cluster.</p>
 </code></pre>
 <p>Prints the cluster identity recorded at cluster up / register time
 (~/.roksbnkctl/<code>&lt;workspace&gt;</code>/cluster-outputs.json): cluster ID, endpoints, VPC,
-transit gateway, and registry COS. This is the RECORDED config; for live runtime
-state (node readiness) use <code>roksbnkctl cluster status</code>.</p>
+transit gateway, registry COS, and the create-time settings the cluster was
+built with (network mode, and the VPC address block when this tool created the
+VPC). This is the RECORDED config, and for the create-time settings it is
+AUTHORITATIVE — config.yaml describes what is wanted, this describes what
+exists. For live runtime state (node readiness) use <code>roksbnkctl cluster status</code>.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1558,7 +1542,6 @@ roksbnkctl registry bom        Build + print the bill-of-materials
 roksbnkctl registry list       List artifacts currently in the mirror
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
 roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
-roksbnkctl registry adopt      Record a mirror this workspace did not populate
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
 roksbnkctl registry prune      Remove mirrored artifacts no longer in the BOM
 roksbnkctl registry delete     Delete ALL replicated artifacts from the target</p>
@@ -1572,30 +1555,25 @@ any cluster exists.</p>
 <p>Record a mirror this workspace did not populate, so <code>bnk up</code> can use it</p>
 <pre><code>roksbnkctl registry adopt [flags]
 </code></pre>
-<p>Writes <code>registry-mirror.json</code> for a mirror that already exists.</p>
+<p>Writes registry-mirror.json for a mirror that already exists.</p>
 <p><code>bnk up</code> refuses to render against a mirror the workspace has no record of —
-otherwise BNK would be pointed at <code>far_repo_url</code>, which an air-gapped cluster
-cannot reach. Only <code>registry replicate</code> used to write that record, which meant a
+otherwise BNK would be pointed at far_repo_url, which an air-gapped cluster cannot
+reach. Until now only <code>registry replicate</code> wrote that record, which means a
 workspace could only use a mirror it had populated itself.</p>
-<p>That is the wrong constraint for how mirrors are actually used. A registry is
+<p>That is the wrong constraint for how mirrors are actually used. The registry is
 filled once, as a supply-chain step, and then many installs pull from it — often
-from a different workspace, host, or team. Those installs were forced to re-run
-<code>replicate</code> purely to re-derive a record, and <code>replicate</code> needs the FAR source
-reachable at install time. An air-gapped operator frequently does not have that,
-which is the whole point of having mirrored.</p>
-<p><code>adopt</code> derives the record from the configured registry target: the chart and image
-hosts, the repo namespace, the manifest version, and the mirror CA all come from the
-workspace config, so <strong>no source access is needed</strong>. It then asks the <em>mirror</em> what
-it holds under the configured prefix — a sanity check that catches a typo in
-<code>registry.generic_repo_prefix</code>, an empty registry, or a credential that cannot read.
-It does not pretend to prove the contents are correct or complete.</p>
-<p>Pass <code>--verify-contents</code> when the source <em>is</em> reachable and you want proof rather
-than assertion: it builds the BOM, digest-checks every artifact before recording,
-and the record then carries the full artifact inventory <strong>with digests</strong> — which is
-what lets a later <code>registry delete</code> drive from it.</p>
-<p>Adoption does <strong>not</strong> relax the out-of-band CA pinning: an unpinned capture is
-refused here exactly as it is for <code>replicate</code>, because the CA lands in every node’s
-trust store either way. See <a href="./28-configuration-reference.html"><code>registry.generic_ca_b64</code> / <code>generic_ca_sha256</code></a>.</p>
+from a different workspace, a different host, or a different team. Those installs
+were forced to re-run replicate purely to re-derive a record, which needs the FAR
+source reachable at install time. An air-gapped operator frequently does not have
+that, and it is the whole point of having mirrored in the first place.</p>
+<p>adopt derives the record from the configured registry target: the chart and image
+hosts, the repo namespace, the manifest version, and the mirror CA all come from
+the workspace config, so no source access is needed. It then asks the MIRROR what
+it holds under the configured prefix — a sanity check that catches a typo in the
+prefix or an empty registry, without pretending to prove the contents are correct.</p>
+<p>Pass –verify-contents when the source IS reachable and you want proof rather than
+assertion: it builds the BOM and digest-checks every artifact before recording,
+and the record then carries the full artifact inventory.</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>
@@ -1603,9 +1581,8 @@ trust store either way. See <a href="./28-configuration-reference.html"><code>re
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--verify-contents</code></td><td><code>bool</code></td><td><code>false</code></td><td>digest-check every BOM artifact before recording (needs the FAR source)</td></tr>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>record the mirror even when it holds nothing under the configured prefix</td></tr>
-<tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
+<tr><td><code>--verify-contents</code></td><td><code>bool</code></td><td><code>false</code></td><td>digest-check every BOM artifact before recording (needs the FAR source)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1727,11 +1704,11 @@ auth, or –source-sa-b64).</p>
 <tr><td><code>--concurrency</code></td><td><code>int</code></td><td><code>0</code></td><td>parallel copy workers (default: 4)</td></tr>
 <tr><td><code>--far-repo-url</code></td><td><code>string</code></td><td>—</td><td>FAR registry host (default: workspace bnk.far_repo_url, else repo.f5.com)</td></tr>
 <tr><td><code>--include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>force-include the non-F5 dependency artifacts (cert-manager, node-labeler)</td></tr>
+<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>adopt a self-signed mirror CA over an UNAUTHENTICATED connection (trust-on-first-use); prefer –registry-ca or –registry-ca-fingerprint</td></tr>
 <tr><td><code>--manifest-version</code></td><td><code>string</code></td><td>—</td><td>BNK manifest version (default: workspace bnk.manifest_version)</td></tr>
 <tr><td><code>--no-include-deps</code></td><td><code>bool</code></td><td><code>false</code></td><td>exclude the non-F5 dependency artifacts</td></tr>
-<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else <code>registry.generic_ca_b64</code>)</td></tr>
-<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>Expected SHA-256 of the mirror CA (<code>sha256:ab:cd…</code> or bare hex), authenticating a captured CA out of band</td></tr>
-<tr><td><code>--insecure-capture-ca</code></td><td><code>bool</code></td><td><code>false</code></td><td>Adopt a self-signed mirror CA over an <strong>unauthenticated</strong> connection (trust-on-first-use). Prefer <code>--registry-ca</code> or <code>--registry-ca-fingerprint</code></td></tr>
+<tr><td><code>--registry-ca</code></td><td><code>string</code></td><td>—</td><td>PEM CA the mirror serves TLS with, for air-gap node trust (preferred: the file you generated; else registry.generic_ca_b64)</td></tr>
+<tr><td><code>--registry-ca-fingerprint</code></td><td><code>string</code></td><td>—</td><td>expected SHA-256 of the mirror CA (“sha256:ab:cd…” or bare hex), authenticating a captured CA out of band</td></tr>
 <tr><td><code>--source-sa-b64</code></td><td><code>string</code></td><td>—</td><td>FAR _json_key_base64 service account (default: workspace registry.source_service_account_b64)</td></tr>
 <tr><td><code>--target</code></td><td><code>string</code></td><td>—</td><td>mirror target backend: icr|generic (default: workspace registry.target, else “icr”)</td></tr>
 </tbody>
@@ -1748,7 +1725,8 @@ first argument is either a backend KIND (sets registry.target) or a FIELD name
 (set with a following value):</p>
 <p>Kinds:  icr | generic
 Fields: icr_host  icr_namespace
-generic_host  generic_repo_prefix  generic_username  generic_password</p>
+generic_host  generic_repo_prefix  generic_username  generic_password
+generic_ca (a PEM file)  generic_ca_sha256</p>
 <p>Examples:
 roksbnkctl registry target                          # show current config
 roksbnkctl registry target icr                      # use IBM Container Registry
@@ -1757,7 +1735,8 @@ roksbnkctl registry target generic                  # use a generic OCI registry
 roksbnkctl registry target generic_host art.example.com
 roksbnkctl registry target generic_repo_prefix bnk
 roksbnkctl registry target generic_username ci-bot
-echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdin</p>
+echo “$TOKEN” | roksbnkctl registry target generic_password –password-stdin
+roksbnkctl registry target generic_ca /opt/harbor/certs/harbor.crt</p>
 <p><strong>Flags</strong></p>
 <div class="table-wrapper">
 <table>

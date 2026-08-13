@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -363,7 +363,53 @@ ibmcloud is vpc-address-prefixes &lt;vpc-id&gt;     # per VPC from that list
 <pre><code class="language-yaml">cluster:
   vpc_cidr: 10.242.0.0/16     # ROKSBNKCTL_CLUSTER_VPC_CIDR for CI
 </code></pre>
+<blockquote>
+<p><strong>Set it before <code>cluster up</code>, not after.</strong> Editing <code>vpc_cidr</code> in a workspace
+whose cluster already exists does not re-address anything — an existing VPC’s
+prefixes cannot be changed without replacing its subnets. It now says so:</p>
+<pre><code>! cluster.vpc_cidr is a CREATE-time setting and it has changed.
+  Cluster "x" was created from 10.242.0.0/16; this workspace now says 10.99.0.0/16.
+  The new value is ignored — ...
+  A future release will refuse this rather than ignore it; ...
+</code></pre>
+<p>The warning fires only on a real disagreement with the block the cluster was
+<strong>created from</strong>, so a workspace that set it once and left it alone stays
+silent. A workspace built by <code>cluster register</code> also stays silent, because the
+adopt path records no block to disagree with — see <a href="./09-registering-existing-cluster.html">Chapter 9</a>.</p>
+</blockquote>
 <p><strong>Prevention (v1.39.0+)</strong>: <code>cluster up</code> refuses before terraform creates anything when the VPC it is about to build would overlap one already on the gateway, and <code>tgw connect</code> refuses before attaching — each naming the other VPC and the colliding prefixes. See <a href="./09a-transit-gateway-sharing.html#first-give-each-cluster-vpc-its-own-address-block">Give each cluster VPC its own address block</a>.</p>
+<h3 id="symptom-cluster--was-created-as-a-single-nic-cluster-but-this-workspace-now-asks-for-multi-nic"><a class="header" href="#symptom-cluster--was-created-as-a-single-nic-cluster-but-this-workspace-now-asks-for-multi-nic">Symptom: <code>cluster ... was created as a single-nic cluster, but this workspace now asks for multi-nic</code></a></h3>
+<p><strong>Root cause</strong>: <code>cluster.network_mode</code> is a <strong>create-time</strong> setting and it changed
+after the cluster was built. There is no in-place conversion between modes.</p>
+<p><strong>Why it refuses rather than warns</strong>: terraform would happily plan this — as a
+<em>destroy and create</em> of the running cluster, rendered as ~60 lines that read like
+an update. The refusal happens before planning, so you never get the chance to
+approve it by mistake.</p>
+<p><strong>Fix</strong>: set <code>cluster.network_mode</code> back to what the cluster is, or build the
+other mode as a <strong>new cluster in a new workspace</strong>. What the cluster actually is
+comes from <code>cluster-outputs.json</code>, not from <code>config.yaml</code>.</p>
+<p>Note that <em>removing</em> the setting is not the same as changing it: an unset
+<code>network_mode</code> defers to the record and is never refused. See
+<a href="./08a-three-phase-lifecycle.html#which-side-wins">Chapter 8a §Which side wins</a>.</p>
+<h3 id="symptom-bnk-23-does-not-support-multi-nic-clusters-it-supports-single-nic"><a class="header" href="#symptom-bnk-23-does-not-support-multi-nic-clusters-it-supports-single-nic">Symptom: <code>BNK 2.3 does not support multi-nic clusters (it supports single-nic)</code></a></h3>
+<p><strong>Root cause</strong>: the BNK release — derived from <code>bnk.manifest_version</code> — cannot
+drive a cluster of that network mode. 2.3 does not express the multi-NIC network
+attachments or CNEInstance options.</p>
+<p><strong>Fix</strong>: use a <code>bnk.manifest_version</code> on a line that supports the mode (2.4+ for
+multi-nic), or a cluster built in a mode this line supports. The pairing is
+checked at plan time precisely so this is a message rather than a failed apply
+against real infrastructure.</p>
+<h3 id="symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix"><a class="header" href="#symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix">Symptom: <code>! unknown BNK release line: BNK 2.5 is not in this build's support matrix</code></a></h3>
+<p><strong>This is a warning, and the run continues.</strong> It is expected, not a defect.</p>
+<p><strong>Root cause</strong>: the support matrix ships <em>inside</em> the binary, so a release newer
+than your build is unknown to it. That is missing information, not a known
+incompatibility — refusing on it would make every build refuse every BNK release
+that shipped after it, which is unhelpful when the binary is pinned (the
+<a href="./24a-bnk-forge-registration.html">BNK Forge modules</a> pin the runner image by
+digest, so “use a newer build” is not an action available to whoever is choosing
+the release).</p>
+<p><strong>What it means</strong>: the combination is <em>unverified here</em>, not blessed. Upgrade
+<code>roksbnkctl</code> if you want it actually checked.</p>
 <h3 id="symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-"><a class="header" href="#symptom-down-fails-with-the-vpc-is-in-use-and-cannot-be-deleted-subnets-">Symptom: <code>down</code> fails with <code>The VPC is in use and cannot be deleted. Subnets [...]</code></a></h3>
 <p><strong>Root cause</strong>: this workspace <strong>created</strong> the VPC, and another workspace that <strong>adopted</strong> it still has a cluster (its subnets) inside. The VPC owner must be torn down <strong>last</strong> — deleting it first can’t remove a non-empty VPC, and also deletes the shared per-zone public gateways the other cluster still depends on.</p>
 <p><strong>Fix (v1.26.1+)</strong>: <code>down</code> refuses this up front, naming the foreign subnets. Tear down the workspace(s) sharing the VPC first, then re-run <code>down</code> on the owner. See the teardown-order note in <a href="./08-cluster-phase.html#reusing-an-existing-vpc-multiple-clusters-in-one-vpc">Reusing an existing VPC</a>.</p>

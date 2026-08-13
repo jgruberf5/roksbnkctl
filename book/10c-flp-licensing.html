@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -642,6 +642,15 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 </thead>
 <tbody>
 <tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code> (<code>""</code> | <code>helm</code> | <code>vsi</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code> — license via a proxy in <strong>another</strong> cluster</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code> (verbatim; already base64)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_CREATE_VPC</code></td><td><code>bnk.flp.vsi.create_vpc</code> — give the proxy its <strong>own</strong> VPC</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC_NAME</code></td><td><code>bnk.flp.vsi.vpc_name</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SUBNET_CIDR</code></td><td><code>bnk.flp.vsi.subnet_cidr</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code> — adopt an existing VPC (mutually exclusive with <code>_CREATE_VPC</code>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code> / <code>_PROFILE</code> / <code>_SSH_KEY</code> / <code>_BOOT_SIZE_GB</code> / <code>_REACH</code> / <code>_FLOATING_IP</code></td><td>the rest of <code>bnk.flp.vsi.*</code></td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS</code> / <code>_LICENSING_ALLOWED_CIDRS</code></td><td>the two per-plane security-group lists (comma-separated)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td></tr>
 </tbody>
 </table>

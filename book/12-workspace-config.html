@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -304,6 +304,8 @@ cos:             # optional COS supply-chain config
   public_gateway: true          # optional; false = private/disconnected cluster (no egress)
   min_worker_vcpu_count: 16     # optional; worker-flavor auto-select floor
   min_worker_memory_gb: 64      # optional; worker-flavor auto-select floor
+  vpc_cidr: 10.242.0.0/16       # optional; address block for a NEW cluster VPC
+  network_mode: single-nic      # optional; single-nic (default) | multi-nic
 </code></pre>
 <div class="table-wrapper">
 <table>
@@ -318,10 +320,13 @@ cos:             # optional COS supply-chain config
 <tr><td><code>public_gateway</code></td><td>bool</td><td><code>true</code></td><td>Attach a public gateway to each cluster subnet for worker Internet egress. <code>false</code> builds a <strong>private/disconnected</strong> cluster with no egress (no <code>ibm_is_public_gateway</code>, no subnet attachment). Sets <code>cluster_public_gateway</code>. <strong>Expert:</strong> a <code>false</code> cluster needs private connectivity you provide — a reachable mirror registry, VPEs / private service endpoints for IBM Cloud services, and FLP/<code>disconnected</code> licensing — see <a href="./10a-air-gapped-install.html">Chapter 10a §“A truly disconnected cluster”</a>. Governs worker egress only; the master keeps its public API endpoint.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td>int</td><td><code>16</code></td><td>Minimum vCPUs when the cluster module auto-selects the <code>bx2</code> worker flavor (smallest profile meeting both minimums). <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_vcpu_count</code>.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td>int</td><td><code>64</code></td><td>Minimum memory (GB) for the same auto-select. <code>0</code>/omitted ⇒ HCL default. Sets <code>roks_min_worker_memory_gb</code>.</td></tr>
+<tr><td><code>vpc_cidr</code></td><td>string</td><td>empty (IBM <code>auto</code>)</td><td>Address block a <strong>new</strong> cluster VPC’s three per-zone prefixes are carved from, so <code>/18</code> is the smallest usable value. Empty leaves IBM’s <code>auto</code>, which gives every VPC in a region the same prefixes — two such VPCs cannot share a Transit Gateway. Sets <code>cluster_vpc_cidr</code>. <strong>CREATE-time only</strong>; changing it later warns.</td></tr>
+<tr><td><code>existing_subnet_ids</code></td><td>list</td><td>(empty)</td><td>Place the cluster in subnets that <strong>already exist</strong>, one per zone, <strong>in zone order</strong> — each subnet’s zone is read from the subnet itself, so a reordered list places the cluster differently rather than failing. Requires <code>resources.cluster_vpc: {create: false, existing: &lt;vpc-id&gt;}</code>. Renders <code>use_existing_cluster_subnets</code> + <code>existing_cluster_subnet_ids</code>. Env: <code>ROKSBNKCTL_EXISTING_SUBNET_IDS</code> (comma-separated).</td></tr>
+<tr><td><code>network_mode</code></td><td>string</td><td><code>single-nic</code></td><td>How the worker nodes are attached. Omitted means <code>single-nic</code>, which is what every cluster built with this tool is — the field exists to <em>name</em> that, not to change it. <code>multi-nic</code> requires BNK 2.4+. Sets <code>cluster_network_mode</code>. <strong>CREATE-time only and enforced</strong>: an explicit value contradicting the built cluster is refused, because there is no in-place conversion. See <a href="./28-configuration-reference.html#bnk-release-and-network-mode">Chapter 28</a>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code>, <code>cluster_public_gateway</code> — see <a href="./13-terraform-variables.html">Chapter 13</a> and <a href="./29-terraform-variable-reference.html">Chapter 29</a> for the full mapping.</p>
+<p>The <code>cluster:</code> block translates to terraform variables <code>create_roks_cluster</code>, <code>openshift_cluster_name</code>, <code>roks_cluster_id_or_name</code>, <code>openshift_cluster_version</code>, <code>roks_workers_per_zone</code>, <code>cluster_public_gateway</code>, <code>cluster_vpc_cidr</code>, <code>cluster_network_mode</code> — see <a href="./13-terraform-variables.html">Chapter 13</a> and <a href="./29-terraform-variable-reference.html">Chapter 29</a> for the full mapping.</p>
 <p>When a <code>prefix</code> is set, <code>init</code> fills <code>cluster.name</code> with the prefix itself (the cluster name carries no suffix — see <a href="./13-terraform-variables.html#why-the-cluster-name-takes-no-suffix">Chapter 13</a>). Setting <code>cluster.create: false</code> adopts an existing cluster by name/ID via <code>cluster.name</code>, exactly as before — the cluster is <strong>not</strong> part of the <code>resources:</code> block below.</p>
 <h2 id="resources"><a class="header" href="#resources"><code>resources:</code></a></h2>
 <pre><code class="language-yaml">resources:
@@ -366,6 +371,8 @@ cos:             # optional COS supply-chain config
     version: v1.17.3
   network:                            # optional; data-plane subnets + TMM self-IPs
     vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
+    vlan_prefixlen_external: 23       #   optional; overrides the shared value
+    vlan_prefixlen_internal: 26       #   optional; the two VLANs need not match
     tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
     zones:                            #   one entry per AZ (3 total)
       - ext_vlan_cidr: 10.155.15.0/24
@@ -389,7 +396,12 @@ cos:             # optional COS supply-chain config
 <tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace. Sets <code>flo_namespace</code>.</td></tr>
 <tr><td><code>flo_utils_namespace</code></td><td>string</td><td><code>f5-utils</code></td><td>F5 utility-components namespace. Sets <code>flo_utils_namespace</code>.</td></tr>
-<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>Optional CNEInstance GSLB datacenter name. Sets <code>cneinstance_gslb_datacenter_name</code>.</td></tr>
+<tr><td><code>gslb_datacenter_name</code></td><td>string</td><td>empty</td><td>CNEInstance GSLB datacenter <strong>name</strong>. Sets <code>cneinstance_gslb_datacenter_name</code>. Names the datacenter; <code>gtm.*</code> is what it registers <strong>with</strong>.</td></tr>
+<tr><td><code>gtm.url</code></td><td>string</td><td>empty</td><td>BIG-IP DNS / GTM management URL. Empty disables GTM. Without it the datacenter name is a label pointing at nothing. Sets <code>cneinstance_gtm_url</code>. Env: <code>ROKSBNKCTL_GTM_URL</code>.</td></tr>
+<tr><td><code>gtm.username</code></td><td>string</td><td>empty</td><td>GTM user. Env: <code>ROKSBNKCTL_GTM_USERNAME</code>.</td></tr>
+<tr><td><code>gtm.password_b64</code></td><td>string</td><td>empty</td><td>GTM password, base64 (obfuscation, <strong>not</strong> encryption — like <code>ibmcloud.api_key_b64</code>). <code>ROKSBNKCTL_GTM_PASSWORD</code> takes the raw value.</td></tr>
+<tr><td><code>trusted_profile.service_account</code></td><td>string</td><td>(derived)</td><td>Account allowed to assume the CNE controller’s IBM Cloud Trusted Profile. Empty derives FLO’s own name, <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code>. The IAM trust rule is a <strong>matcher</strong>, not a pointer: IBM compares a pod’s service-account token against <code>crn</code>/<code>namespace</code>/<code>name</code> with <code>EQUALS</code>, so a name that does not match the account the CNE controller actually runs as means <strong>nothing can assume the profile, and nothing reports an error</strong>. Set this only if you can also make FLO name the account differently — roksbnkctl cannot, since FLO creates it when it reconciles the CNEInstance and that spec has no service-account field. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code>.</td></tr>
+<tr><td><code>trusted_profile.roles</code></td><td>list</td><td><code>[Viewer, Editor]</code></td><td>IAM roles for that profile, scoped to the cluster’s own VPC. Env: <code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code> (comma-separated).</td></tr>
 <tr><td><code>cert_manager.namespace</code></td><td>string</td><td><code>cert-manager</code></td><td>cert-manager namespace. Sets <code>cert_manager_namespace</code>. Install/skip stays on <code>resources.cert_manager.create</code>.</td></tr>
 <tr><td><code>cert_manager.version</code></td><td>string</td><td>HCL default</td><td>Pin the cert-manager chart version. Sets <code>cert_manager_version</code>.</td></tr>
 <tr><td><code>license_mode</code></td><td>enum</td><td><code>connected</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Sets <code>license_mode</code>.</td></tr>
@@ -412,12 +424,14 @@ cos:             # optional COS supply-chain config
 <tr><td><code>zones[].int_vip_cidr</code></td><td><code>10.135.15.0/24</code></td><td>Internal VIP CIDR.</td></tr>
 <tr><td><code>zones[].external_selfip</code></td><td><code>10.155.15.101</code></td><td>External TMM self-IP.</td></tr>
 <tr><td><code>zones[].internal_selfip</code></td><td><code>10.254.99.101</code></td><td>Internal TMM self-IP.</td></tr>
-<tr><td><code>vlan_prefixlen</code></td><td><code>24</code></td><td>Self-IP prefix length (<code>spec.prefixlen_v4</code> on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Match your VLAN CIDRs. Sets <code>cneinstance_vlan_prefixlen</code>.</td></tr>
+<tr><td><code>vlan_prefixlen</code></td><td><code>24</code></td><td>Self-IP prefix length (<code>spec.prefixlen_v4</code> on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Usually you want it to match your VLAN CIDRs — but it is <strong>independent of them and never derived from them</strong>, and nothing validates the two against each other. A deliberate disagreement, paired with static routes, is how a specific traffic pattern is forced. Sets <code>cneinstance_vlan_prefixlen</code>.</td></tr>
+<tr><td><code>vlan_prefixlen_external</code></td><td>(inherit)</td><td>Overrides <code>vlan_prefixlen</code> for the <strong>external</strong> VLAN only. Unset inherits. Sets <code>cneinstance_vlan_prefixlen_external</code>. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code>.</td></tr>
+<tr><td><code>vlan_prefixlen_internal</code></td><td>(inherit)</td><td>Same for the <strong>internal</strong> VLAN. Sets <code>cneinstance_vlan_prefixlen_internal</code>. Env: <code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code>.</td></tr>
 <tr><td><code>tmm_k8s_routes</code></td><td><code>172.17.0.0/18</code></td><td>Pod CIDR TMM installs a route toward (<code>TMM_K8S_ROUTES</code>) so it can reach backend pods. Set to your cluster’s pod subnet if it isn’t the ROKS default. Sets <code>cneinstance_tmm_k8s_routes</code>.</td></tr>
 </tbody>
 </table>
 </div>
-<p>Provide <strong>all three zones</strong> when you set <code>zones</code> — supplying zones replaces the defaults entirely (they render <code>cneinstance_network_zones</code>, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone <em>names</em> are derived from the region and aren’t configurable. <code>vlan_prefixlen</code> and <code>tmm_k8s_routes</code> are network-wide (shared across all zones). Unset either scalar to keep the terraform default.</p>
+<p>Provide <strong>all three zones</strong> when you set <code>zones</code> — supplying zones replaces the defaults entirely (they render <code>cneinstance_network_zones</code>, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone <em>names</em> are derived from the region and aren’t configurable. <code>vlan_prefixlen</code> and <code>tmm_k8s_routes</code> are network-wide (shared across all zones), though the mask can differ <strong>between the two VLANs</strong> via <code>vlan_prefixlen_external</code> / <code>vlan_prefixlen_internal</code> — TMM can front a <code>/23</code> externally while the internal side is a <code>/26</code>, which one shared scalar could not express. Unset either scalar to keep the terraform default.</p>
 <h2 id="test"><a class="header" href="#test"><code>test:</code></a></h2>
 <pre><code class="language-yaml">test:
   throughput:

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a0ae90d8.js";
+            window.path_to_searchindex_js = "searchindex-72775ffc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -270,8 +270,25 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_OPENSHIFT_VERSION</code></td><td><code>cluster.openshift_version</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_WORKERS_PER_ZONE</code></td><td><code>cluster.workers_per_zone</code></td><td>integer</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code></td><td><code>cluster.public_gateway</code></td><td>bool — <code>false</code> builds a <strong>disconnected</strong> cluster whose workers have no Internet egress. Unset inherits the terraform default (<code>true</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_TRUSTED_PROFILE_SA</code></td><td><code>bnk.trusted_profile.service_account</code></td><td>Kubernetes account allowed to assume the CNE controller’s IBM Cloud Trusted Profile. Must match the account the FLO chart creates.</td></tr>
+<tr><td><code>ROKSBNKCTL_TRUSTED_PROFILE_ROLES</code></td><td><code>bnk.trusted_profile.roles</code></td><td>IAM roles for that profile, scoped to the cluster’s own VPC. <strong>Comma-separated.</strong> An unparseable entry is dropped.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN</code></td><td><code>bnk.network.vlan_prefixlen</code></td><td>TMM self-IP mask. <strong>Independent of the zone CIDRs and never derived from them</strong> — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are <strong>silently ignored</strong> and the terraform default stands.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_external</code></td><td>Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range.</td></tr>
+<tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_internal</code></td><td>Same, internal VLAN. The two need not match.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_URL</code></td><td><code>bnk.gtm.url</code></td><td>BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong>. Without it, <code>gslb_datacenter_name</code> is a label pointing at nothing.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_USERNAME</code></td><td><code>bnk.gtm.username</code></td><td>GTM user.</td></tr>
+<tr><td><code>ROKSBNKCTL_GTM_PASSWORD</code></td><td><code>bnk.gtm.password_b64</code></td><td>GTM password — supplied <strong>raw</strong>, stored base64 (like <code>IBMCLOUD_API_KEY</code> and <code>ROKSBNKCTL_BIGIP_PASSWORD</code>).</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_B64</code></td><td><code>registry.generic_ca_b64</code></td><td>Mirror CA, <strong>verbatim</strong> — already base64, not re-encoded.</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_SHA256</code></td><td><code>registry.generic_ca_sha256</code></td><td>The out-of-band CA pin.</td></tr>
+<tr><td><code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code></td><td><code>bnk.preflight.reachability_retry_seconds</code></td><td>Per-target retry window before the verdict is believed.</td></tr>
+<tr><td><code>ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS</code></td><td><code>bnk.preflight.reachability_timeout_seconds</code></td><td>Total wait for every node to report.</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_NETWORK_MODE</code></td><td><code>cluster.network_mode</code></td><td>How the workers are attached: <code>single-nic</code> (default) or <code>multi-nic</code>. Create-time only. Exists for exactly this chapter’s case — a runner that never writes a <code>config.yaml</code> would otherwise have no way to ask for it.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code></td><td><code>cluster.vpc_cidr</code></td><td>CIDR (<code>/18</code> or larger) for a <strong>new</strong> cluster VPC’s per-zone address prefixes. Unset = IBM <code>auto</code>, which is the SAME block for every VPC in the region — set a distinct one per cluster when two share a Transit Gateway, or the gateway silently blackholes one. See <a href="./09a-transit-gateway-sharing.html#first-give-each-cluster-vpc-its-own-address-block">Chapter 9a</a>.</td></tr>
 <tr><td><code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code></td><td><code>resources.transit_gateway</code> (<code>create:false</code> + <code>existing</code>)</td><td>a Transit Gateway <strong>name or id</strong> — <code>cluster up</code>/<code>register</code> attaches the cluster VPC to it (see <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>)</td></tr>
+<tr><td><code>ROKSBNKCTL_EXISTING_SUBNET_IDS</code></td><td><code>cluster.existing_subnet_ids</code></td><td>Place the cluster in subnets that already exist. Comma-separated, <strong>in zone order</strong> — each subnet’s zone is read from the subnet, so a reordered list places the cluster differently. Requires <code>resources.cluster_vpc: {create: false, existing: &lt;vpc-id&gt;}</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_CREATE_VPC</code></td><td><code>bnk.flp.vsi.create_vpc</code></td><td>Give the FLP VSI its <strong>own</strong> VPC instead of placing it in one that exists. This is what lets the proxy be the first thing deployed in an air-gapped estate. Mutually exclusive with <code>ROKSBNKCTL_FLP_VSI_VPC</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC_NAME</code></td><td><code>bnk.flp.vsi.vpc_name</code></td><td>Name for that VPC. Empty → <code>flp-vsi-vpc</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_SUBNET_CIDR</code></td><td><code>bnk.flp.vsi.subnet_cidr</code></td><td>Its address prefix. Must not overlap anything the consuming clusters can already route to — a transit gateway silently blackholes one of two overlapping VPCs.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLUSTER_VPC_ID</code></td><td><code>resources.cluster_vpc</code> (<code>create:false</code> + <code>existing</code>)</td><td>verbatim — adopt an existing cluster VPC by <strong>ID</strong></td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_VPC_NAME</code></td><td><code>resources.testing_client_vpc_name</code></td><td>verbatim (names the client VPC to create)</td></tr>
 <tr><td><code>ROKSBNKCTL_TGW_JUMPHOST_CREATE</code></td><td><code>resources.tgw_jumphost.create</code></td><td>bool — the optional testing jumphost. Defaults <strong>off</strong>, as the interview does.</td></tr>
