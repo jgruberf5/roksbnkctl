@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 )
 
 // `roksbnkctl bnk ...` is the BNK-trial-phase command group: lifecycle
@@ -111,6 +112,48 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 	return runTrialUp(cmd, nil)
 }
 
+// bnkTargetClusterGone reports whether the cluster this workspace targets is
+// definitively absent, and its recorded name.
+//
+// Conservative by construction: it answers true ONLY for an explicit
+// ErrClusterNotFound. No recorded cluster, an unreadable record, a client that
+// will not build, or any other lookup error all answer false, so the destroy
+// proceeds exactly as it did before. The cost of a false negative is the status
+// quo; the cost of a false positive is a skipped uninstall.
+func bnkTargetClusterGone(cmd *cobra.Command, cctx *config.Context) (bool, string) {
+	out, err := config.ReadClusterOutputs(cctx.WorkspaceName)
+	if err != nil || out == nil || out.ClusterID == "" {
+		return false, ""
+	}
+	_, ic, err := openIBMClient()
+	if err != nil {
+		return false, ""
+	}
+	_, lookupErr := ic.GetCluster(cmd.Context(), out.ClusterID)
+	return clusterGoneFromLookup(out, lookupErr)
+}
+
+// clusterGoneFromLookup is the decision, split out from the I/O so it can be
+// tested directly rather than re-implemented in a test — which would pass no
+// matter what the production path did.
+//
+// True ONLY for an explicit ErrClusterNotFound. Every other error, including a
+// timeout or a refused connection, means "cannot tell", and cannot-tell must
+// behave exactly as before: proceed with the destroy.
+func clusterGoneFromLookup(out *config.ClusterOutputs, lookupErr error) (bool, string) {
+	if out == nil || out.ClusterID == "" || lookupErr == nil {
+		return false, ""
+	}
+	if !errors.Is(lookupErr, ibm.ErrClusterNotFound) {
+		return false, ""
+	}
+	name := out.ClusterName
+	if name == "" {
+		name = out.ClusterID
+	}
+	return true, name
+}
+
 // runBnkDown destroys the BNK trial against the trial state dir,
 // leaving the cluster phase in place. Dispatch per PRD 06 §"Dispatch
 // table":
@@ -140,6 +183,27 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "✓ No BNK trial state to destroy in this workspace — nothing to do.")
 		return nil
 	}
+	// A cluster that no longer exists cannot be uninstalled from, and there is no
+	// state that could be left behind on it — so this is the same category as "no
+	// trial state above": report it and exit 0 (#79).
+	//
+	// Reached when a cluster is deleted out from under a workspace that still
+	// holds BNK state for it — one BNK Forge project destroying a cluster another
+	// had adopted, in the reported case. Forge tears down in reverse dependency
+	// order, so a non-zero exit here blocks `cluster-registry` behind it and the
+	// project cannot reach zero. That is exactly when teardown most needs to work.
+	//
+	// KEYED ON AN EXPLICIT PROVIDER NOT-FOUND, never on a connection failure. A
+	// transient outage must still fail, or a network blip would silently skip a
+	// real uninstall and leave BNK running on a cluster the operator believes is
+	// clean. ErrClusterNotFound is a 404 from the container service; a timeout,
+	// an auth failure or a DNS error is none of those and falls through to the
+	// normal destroy.
+	if gone, name := bnkTargetClusterGone(cmd, cctx); gone {
+		fmt.Fprintf(os.Stderr, "✓ Cluster %q no longer exists — nothing for `bnk down` to uninstall.\n", name)
+		return nil
+	}
+
 	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
 	// live in the BNK namespace (f5-bnk). Destroying BNK deletes that namespace,
 	// and those CRs' finalizers — which only the (now-removed) CNE controller
