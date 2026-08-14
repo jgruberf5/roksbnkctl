@@ -58,11 +58,11 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4.37.5
+      - uses: github/codeql-action/init@v4.37.6
         with:
           languages: go
-      - uses: github/codeql-action/autobuild@v4.37.5
-      - uses: github/codeql-action/analyze@v4.37.5
+      - uses: github/codeql-action/autobuild@v4.37.6
+      - uses: github/codeql-action/analyze@v4.37.6
         with:
           category: "/language:go"
 
@@ -82,12 +82,12 @@ jobs:
       - name: Trivy fs (deps + secrets)
         run: trivy fs . --scanners vuln,secret --format sarif --output trivy-fs.sarif --exit-code 0 --skip-dirs book/book
       - name: Upload IaC SARIF
-        uses: github/codeql-action/upload-sarif@v4.37.5
+        uses: github/codeql-action/upload-sarif@v4.37.6
         with:
           sarif_file: trivy-iac.sarif
           category: trivy-iac
       - name: Upload fs SARIF
-        uses: github/codeql-action/upload-sarif@v4.37.5
+        uses: github/codeql-action/upload-sarif@v4.37.6
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
