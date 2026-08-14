@@ -118,6 +118,25 @@ type K8sBackend struct {
 	client kubernetes.Interface
 	config *rest.Config
 	initFn func() (kubernetes.Interface, *rest.Config, error)
+
+	// jobNamespace overrides K8sTestNamespace for the one-shot Job path.
+	// Empty — always, in production — means the constant.
+	//
+	// It exists so the integration test can run in a namespace of its own and
+	// delete it afterwards. Sharing one fixed namespace across runs meant state
+	// from an earlier run changed the result of a later one: the suite would
+	// pass on a fresh kind cluster and fail on a reused one, which is the
+	// documented debug loop (scripts/integration-test.sh reuses by design, and
+	// KEEP_KIND=1 encourages it). See #73.
+	jobNamespace string
+}
+
+// jobNS is the namespace the one-shot Job path uses.
+func (b *K8sBackend) jobNS() string {
+	if b.jobNamespace != "" {
+		return b.jobNamespace
+	}
+	return K8sTestNamespace
 }
 
 // Name implements Backend.
@@ -416,13 +435,13 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      filesSecretName,
-				Namespace: K8sTestNamespace,
+				Namespace: b.jobNS(),
 				Labels:    map[string]string{"roksbnkctl.io/job": jobName},
 			},
 			Type: corev1.SecretTypeOpaque,
 			Data: opts.Files,
 		}
-		if _, err := cs.CoreV1().Secrets(K8sTestNamespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		if _, err := cs.CoreV1().Secrets(b.jobNS()).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
 			return k8sExitFailedToStart, fmt.Errorf("creating files secret: %w", err)
 		}
 		filesSecretCreated = true
@@ -450,12 +469,12 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 		argsArgv = argv[1:]
 	}
 
-	job := buildJobSpecWithArgs(jobName, image, cmdArgv, argsArgv, opts, filesSecretCreated, filesSecretName)
+	job := buildJobSpecWithArgs(b.jobNS(), jobName, image, cmdArgv, argsArgv, opts, filesSecretCreated, filesSecretName)
 
-	created, err := cs.BatchV1().Jobs(K8sTestNamespace).Create(ctx, job, metav1.CreateOptions{})
+	created, err := cs.BatchV1().Jobs(b.jobNS()).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		if filesSecretCreated {
-			_ = cs.CoreV1().Secrets(K8sTestNamespace).Delete(context.Background(), filesSecretName, metav1.DeleteOptions{})
+			_ = cs.CoreV1().Secrets(b.jobNS()).Delete(context.Background(), filesSecretName, metav1.DeleteOptions{})
 		}
 		return k8sExitFailedToStart, fmt.Errorf("creating job: %w", err)
 	}
@@ -463,7 +482,7 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 	// Owner-ref the files Secret to the Job so it auto-deletes on Job
 	// cleanup. Done after Create so we have the Job's UID.
 	if filesSecretCreated {
-		_ = setSecretOwnerRef(ctx, cs, filesSecretName, created)
+		_ = setSecretOwnerRef(ctx, b.jobNS(), cs, filesSecretName, created)
 	}
 
 	// Cleanup goroutine: ctx cancel → delete Job + Secret. Job's
@@ -475,9 +494,9 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			pp := metav1.DeletePropagationForeground
-			_ = cs.BatchV1().Jobs(K8sTestNamespace).Delete(cleanCtx, jobName, metav1.DeleteOptions{PropagationPolicy: &pp})
+			_ = cs.BatchV1().Jobs(b.jobNS()).Delete(cleanCtx, jobName, metav1.DeleteOptions{PropagationPolicy: &pp})
 			if filesSecretCreated {
-				_ = cs.CoreV1().Secrets(K8sTestNamespace).Delete(cleanCtx, filesSecretName, metav1.DeleteOptions{})
+				_ = cs.CoreV1().Secrets(b.jobNS()).Delete(cleanCtx, filesSecretName, metav1.DeleteOptions{})
 			}
 		case <-cancelDone:
 		}
@@ -485,7 +504,7 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 	defer close(cancelDone)
 
 	// Wait for the Job's pod to be Running.
-	pod, err := waitForJobPodRunning(ctx, cs, jobName, k8sJobReadyTimeout)
+	pod, err := waitForJobPodRunning(ctx, b.jobNS(), cs, jobName, k8sJobReadyTimeout)
 	if err != nil {
 		return k8sExitStartedThenFailed, fmt.Errorf("waiting for job pod: %w", err)
 	}
@@ -500,7 +519,7 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 				_ = stdoutClose()
 			}
 		}()
-		stream, lerr := cs.CoreV1().Pods(K8sTestNamespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+		stream, lerr := cs.CoreV1().Pods(b.jobNS()).GetLogs(pod.Name, &corev1.PodLogOptions{
 			Follow: true,
 		}).Stream(ctx)
 		if lerr != nil {
@@ -511,7 +530,7 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 	}()
 
 	// Wait for Job completion.
-	rc, werr := waitForJobCompletion(ctx, cs, jobName)
+	rc, werr := waitForJobCompletion(ctx, cs, b.jobNS(), jobName)
 	<-streamDone
 	if werr != nil {
 		return k8sExitStartedThenFailed, werr
@@ -536,8 +555,8 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 // ENTRYPOINT picks the binary; cmd is argv[1:]). The Sprint 5 shim
 // `buildJobSpecWithArgs` adds an explicit args slice for tools like
 // `roksbnkctl` that need to bypass the image's ENTRYPOINT.
-func buildJobSpec(jobName, image string, cmd []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
-	return buildJobSpecWithArgs(jobName, image, cmd, nil, opts, hasFilesSecret, filesSecretName)
+func buildJobSpec(ns string, jobName, image string, cmd []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
+	return buildJobSpecWithArgs(ns, jobName, image, cmd, nil, opts, hasFilesSecret, filesSecretName)
 }
 
 // buildJobSpecWithArgs is buildJobSpec extended for the entrypoint-
@@ -551,7 +570,7 @@ func buildJobSpec(jobName, image string, cmd []string, opts RunOpts, hasFilesSec
 // `cmd=["/usr/local/bin/roksbnkctl"]` + `args=["test","dns",...]` so
 // the tools image's `ibmcloud` ENTRYPOINT doesn't override the binary
 // the dns probe wants to run. PRD 03 §"DNS probe" §"K8s shape".
-func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
+func buildJobSpecWithArgs(ns string, jobName, image string, cmd, args []string, opts RunOpts, hasFilesSecret bool, filesSecretName string) *batchv1.Job {
 	envVars := buildJobEnv(opts)
 	var volumes []corev1.Volume
 	var mounts []corev1.VolumeMount
@@ -582,7 +601,7 @@ func buildJobSpecWithArgs(jobName, image string, cmd, args []string, opts RunOpt
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: K8sTestNamespace,
+			Namespace: ns,
 			Labels:    map[string]string{"roksbnkctl.io/managed": "true", "app": jobName},
 		},
 		Spec: batchv1.JobSpec{
@@ -686,11 +705,11 @@ func splitKV(kv string) (string, string, bool) {
 
 // waitForJobPodRunning polls until the Job has a pod in Running phase.
 // Returns the pod (so the caller can stream logs).
-func waitForJobPodRunning(ctx context.Context, cs kubernetes.Interface, jobName string, timeout time.Duration) (*corev1.Pod, error) {
+func waitForJobPodRunning(ctx context.Context, ns string, cs kubernetes.Interface, jobName string, timeout time.Duration) (*corev1.Pod, error) {
 	deadline := time.Now().Add(timeout)
 	pollInt := 1 * time.Second
 	for {
-		pods, err := cs.CoreV1().Pods(K8sTestNamespace).List(ctx, metav1.ListOptions{
+		pods, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 			LabelSelector: "app=" + jobName,
 		})
 		if err == nil {
@@ -732,10 +751,10 @@ func waitForJobPodRunning(ctx context.Context, cs kubernetes.Interface, jobName 
 // waitForJobCompletion polls the Job until Complete or Failed. Returns
 // the wrapped container's exit code (0 on success; the actual code on
 // failure).
-func waitForJobCompletion(ctx context.Context, cs kubernetes.Interface, jobName string) (int, error) {
+func waitForJobCompletion(ctx context.Context, cs kubernetes.Interface, ns, jobName string) (int, error) {
 	pollInt := 1 * time.Second
 	for {
-		j, err := cs.BatchV1().Jobs(K8sTestNamespace).Get(ctx, jobName, metav1.GetOptions{})
+		j, err := cs.BatchV1().Jobs(ns).Get(ctx, jobName, metav1.GetOptions{})
 		if err == nil {
 			for _, cond := range j.Status.Conditions {
 				if cond.Status != corev1.ConditionTrue {
@@ -747,7 +766,7 @@ func waitForJobCompletion(ctx context.Context, cs kubernetes.Interface, jobName 
 				case batchv1.JobFailed:
 					// Inspect the latest pod's container terminated state for
 					// the wrapped tool's exit code.
-					rc := jobFailureExitCode(ctx, cs, jobName)
+					rc := jobFailureExitCode(ctx, ns, cs, jobName)
 					return rc, nil
 				}
 			}
@@ -763,8 +782,8 @@ func waitForJobCompletion(ctx context.Context, cs kubernetes.Interface, jobName 
 // jobFailureExitCode pulls the most recent pod's tool-container
 // terminated.exitCode. Returns 1 when the data isn't available — the
 // caller treats any non-zero as failure.
-func jobFailureExitCode(ctx context.Context, cs kubernetes.Interface, jobName string) int {
-	pods, err := cs.CoreV1().Pods(K8sTestNamespace).List(ctx, metav1.ListOptions{
+func jobFailureExitCode(ctx context.Context, ns string, cs kubernetes.Interface, jobName string) int {
+	pods, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + jobName,
 	})
 	if err != nil || len(pods.Items) == 0 {
@@ -783,9 +802,9 @@ func jobFailureExitCode(ctx context.Context, cs kubernetes.Interface, jobName st
 // setSecretOwnerRef stamps the Job as the owner of the per-Job files
 // Secret so kube garbage-collection cleans it up when the Job is
 // deleted (TTL or explicit). Best-effort — failures don't break the run.
-func setSecretOwnerRef(ctx context.Context, cs kubernetes.Interface, name string, owner *batchv1.Job) error {
+func setSecretOwnerRef(ctx context.Context, ns string, cs kubernetes.Interface, name string, owner *batchv1.Job) error {
 	patch := []byte(fmt.Sprintf(`{"metadata":{"ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":%q,"uid":%q,"controller":true,"blockOwnerDeletion":true}]}}`, owner.Name, owner.UID))
-	_, err := cs.CoreV1().Secrets(K8sTestNamespace).Patch(ctx, name, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
+	_, err := cs.CoreV1().Secrets(ns).Patch(ctx, name, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
 	return err
 }
 

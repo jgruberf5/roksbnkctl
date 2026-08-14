@@ -225,7 +225,7 @@ func TestCredAudit_K8s_NoLeakInJobSpec(t *testing.T) {
 	// We use the same buildJobSpec helper the K8sBackend uses internally.
 	// This checks the spec at construction time without needing a fake
 	// clientset round-trip.
-	job := buildJobSpec("roksbnkctl-ibmcloud-audit", "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev", argv, opts, false, "")
+	job := buildJobSpec(K8sTestNamespace, "roksbnkctl-ibmcloud-audit", "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev", argv, opts, false, "")
 
 	// 1. argv (container Command) — never the secret.
 	for _, a := range job.Spec.Template.Spec.Containers[0].Command {
@@ -303,7 +303,7 @@ func TestCredAudit_K8s_FilesSecretCarriesKubeconfigOnly(t *testing.T) {
 			"kubeconfig": []byte("apiVersion: v1\nkind: Config\nclusters: []\n"),
 		},
 	}
-	job := buildJobSpec("roksbnkctl-iperf3-files-audit", "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:dev", []string{"iperf3", "-c", "server"}, opts, true, "roksbnkctl-iperf3-files-audit-files")
+	job := buildJobSpec(K8sTestNamespace, "roksbnkctl-iperf3-files-audit", "ghcr.io/jgruberf5/roksbnkctl-tools-iperf3:dev", []string{"iperf3", "-c", "server"}, opts, true, "roksbnkctl-iperf3-files-audit-files")
 
 	// The files secret reference is the only place a kubeconfig lives.
 	// Assert that the volume's secret reference name doesn't contain the
@@ -385,7 +385,7 @@ func TestCredAudit_K8s_NoLeakInProcessEnvAfterRun(t *testing.T) {
 	before := envSnapshot()
 
 	opts := RunOpts{Credentials: &Credentials{IBMCloudAPIKey: secret}}
-	_ = buildJobSpec("audit-job", "alpine:3", []string{"true"}, opts, false, "")
+	_ = buildJobSpec(K8sTestNamespace, "audit-job", "alpine:3", []string{"true"}, opts, false, "")
 
 	after := envSnapshot()
 	for k, v := range after {
