@@ -226,7 +226,11 @@ ok "preflight: kubectl + argo present, runner $RUNNER_IMAGE"
 # bucket is account-suffixed (bnk-artifacts-<account>).
 declare -A WF_REQUIRES=(
   [far-mirror]="ROKSBNKCTL_COS_BUCKET ROKSBNKCTL_GENERIC_HOST ROKSBNKCTL_GENERIC_PASSWORD"
-  [flp-vsi]="ROKSBNKCTL_COS_BUCKET ROKSBNKCTL_FLP_VSI_VPC ROKSBNKCTL_FLP_VSI_ZONE ROKSBNKCTL_FLP_VSI_SSH_KEY"
+  # FLP_VSI_VPC is deliberately NOT here: the proxy can adopt a VPC or build its
+  # own (#60), and requiring the adopt variable would forbid the create path
+  # outright. The either/or is checked in check_flp_vsi_network below, which can
+  # say which of the two is missing — a flat "required" list cannot.
+  [flp-vsi]="ROKSBNKCTL_COS_BUCKET ROKSBNKCTL_FLP_VSI_ZONE ROKSBNKCTL_FLP_VSI_SSH_KEY"
   [new-cluster]="ROKSBNKCTL_COS_BUCKET"
   # The gateway is REQUIRED here: a disconnected cluster must share one with the
   # mirror it pulls from, or it is isolated from the only thing it can install from.
@@ -234,9 +238,38 @@ declare -A WF_REQUIRES=(
   [existing-cluster]="ROKSBNKCTL_COS_BUCKET ROKSBNKCTL_CLUSTER_NAME"
   [existing-disconnected]="ROKSBNKCTL_COS_BUCKET ROKSBNKCTL_CLUSTER_NAME ROKSBNKCTL_GENERIC_HOST ROKSBNKCTL_GENERIC_PASSWORD"
 )
+# The FLP VSI needs a network, one of two ways, and they are mutually exclusive:
+#
+#   adopt   ROKSBNKCTL_FLP_VSI_VPC=<vpc id>
+#   create  ROKSBNKCTL_FLP_VSI_CREATE_VPC=true  (+ optional name / subnet cidr)
+#
+# Checked BEFORE submission for the same reason everything else here is: the
+# alternative is discovering it deep into a run that has already built things.
+# roksbnkctl refuses both-at-once itself, but its refusal arrives inside a
+# container in Argo, where the operator has to go looking for it.
+check_flp_vsi_network(){
+  local adopt="${ROKSBNKCTL_FLP_VSI_VPC:-}" create="${ROKSBNKCTL_FLP_VSI_CREATE_VPC:-}"
+  case "$create" in true|TRUE|1|yes) create=1 ;; *) create=0 ;; esac
+  if [[ -n "$adopt" && "$create" == "1" ]]; then
+    { echo; echo "${R}${B}Refusing: ROKSBNKCTL_FLP_VSI_VPC and ROKSBNKCTL_FLP_VSI_CREATE_VPC are mutually exclusive.${N}"
+      echo "  Adopt an existing VPC, or build one — not both."; echo; } >&2
+    exit 2
+  fi
+  if [[ -z "$adopt" && "$create" != "1" ]]; then
+    { echo; echo "${R}${B}Refusing: the FLP VSI has no network.${N}"
+      echo "  Either adopt one:   ROKSBNKCTL_FLP_VSI_VPC=<vpc-id>"
+      echo "  or build its own:   ROKSBNKCTL_FLP_VSI_CREATE_VPC=true"
+      echo "                      ROKSBNKCTL_FLP_VSI_SUBNET_CIDR=10.250.0.0/24   # optional"
+      echo "                      ROKSBNKCTL_FLP_VSI_VPC_NAME=flp-vsi-vpc        # optional"
+      echo; } >&2
+    exit 2
+  fi
+}
+
 check_required(){
   local wf missing=() v
   for wf in "$@"; do
+    [[ "$wf" == "flp-vsi" ]] && check_flp_vsi_network
     for v in ${WF_REQUIRES[$wf]:-}; do
       [[ -n "${!v:-}" ]] || missing+=("$v (needed by $wf)")
     done
