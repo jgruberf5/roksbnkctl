@@ -11,6 +11,34 @@ Each workflow's step sequence mirrors the corresponding module in
 (`roksbnkctl/*/bnkforge.artifact.json`), so what runs here is what runs in a Forge
 deployment.
 
+
+## Bring-your-own network
+
+Two settings families that the blueprints exercise, both **optional** — omit them and the demo behaves as it always has.
+
+**The FLP's own VPC.** The proxy can adopt a VPC or build one; they are mutually exclusive and the demo refuses both-or-neither *before* submitting, rather than letting it surface inside a container in Argo.
+
+```bash
+ROKSBNKCTL_FLP_VSI_VPC=r014-…              # adopt
+# ── or ──
+ROKSBNKCTL_FLP_VSI_CREATE_VPC=true         # build its own
+ROKSBNKCTL_FLP_VSI_VPC_NAME=flp-vsi-vpc    # optional
+ROKSBNKCTL_FLP_VSI_SUBNET_CIDR=10.250.0.0/24
+```
+
+Creating is what lets the proxy be the **first** thing deployed in an estate, instead of needing something else to have made a VPC already.
+
+**Cluster subnets that already exist.**
+
+```bash
+ROKSBNKCTL_CLUSTER_VPC_ID=r014-…
+ROKSBNKCTL_EXISTING_SUBNET_IDS=0717-a,0717-b,0717-c   # one per zone, IN ZONE ORDER
+```
+
+Zone order is load-bearing: each subnet's zone is read from the subnet itself, so a reordered list places the cluster differently rather than failing. The VPC id is required — a subnet cannot be adopted independently of its VPC.
+
+> **Why these needed adding at all.** `bnk-env` is built from the keys declared in `.env.example`, not from whatever happens to be exported — so a variable missing from that file never reaches the workflows no matter what you set. The workflows themselves use `envFrom` on the whole ConfigMap, so nothing in `workflows/` had to change. This is the same shape as [forge #7/#8](https://github.com/jgruberf5/roksbnkctl-bnk-forge/issues/7): a field with a config surface and no route through the environment is unreachable from an automated deployment.
+
 ## The six workflows
 
 | # | Workflow | Blueprint | What it does |
