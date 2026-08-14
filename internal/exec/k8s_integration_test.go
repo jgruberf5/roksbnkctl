@@ -22,6 +22,7 @@ package exec
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -76,21 +77,74 @@ func k8sIntegrationClient(t *testing.T) (kubernetes.Interface, *rest.Config) {
 	return cs, cfg
 }
 
-// ensureTestNamespace creates the roksbnkctl-test namespace if missing
+// (namespace helpers below)
 // (mirrors what `roksbnkctl ops install` does). Tests that exercise the
 // Job path need this to exist before runAsJob is invoked.
-func ensureTestNamespace(t *testing.T, cs kubernetes.Interface) {
+// ensureOpsNamespace creates K8sOpsNamespace if missing.
+//
+// The ops-pod path CANNOT be hermetic the way the Job path is: the long-lived
+// ops pod is a singleton by design — `roksbnkctl ops install` puts it in a fixed
+// namespace and `doctor` looks for it there — so the namespace is part of the
+// contract rather than an implementation detail. The test compensates by owning
+// and deleting the POD it creates, which is the state that actually leaks.
+func ensureOpsNamespace(t *testing.T, cs kubernetes.Interface) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	for _, ns := range []string{K8sOpsNamespace, K8sTestNamespace} {
-		_, err := cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
-		if err == nil {
-			continue
-		}
-		nsObj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
-		_, _ = cs.CoreV1().Namespaces().Create(ctx, nsObj, metav1.CreateOptions{})
+	if _, err := cs.CoreV1().Namespaces().Get(ctx, K8sOpsNamespace, metav1.GetOptions{}); err == nil {
+		return
 	}
+	_, _ = cs.CoreV1().Namespaces().Create(ctx,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: K8sOpsNamespace}}, metav1.CreateOptions{})
+}
+
+// hermeticNamespace creates a namespace unique to THIS test run and deletes it
+// afterwards, returning its name.
+//
+// The suite used to share two fixed namespaces (K8sOpsNamespace,
+// K8sTestNamespace), creating them if absent and reusing them if present — so
+// nothing was ever cleaned up and one run's leftovers changed the next run's
+// result. The visible symptom was that the suite passed on a fresh kind cluster
+// and failed on a reused one with `mkdir /home/runner/.bluemix: permission
+// denied`, three layers from the cause (#73).
+//
+// That mattered more than an ordinary flake because reuse is the DOCUMENTED
+// path: scripts/integration-test.sh reuses an existing cluster by design and
+// KEEP_KIND=1 exists to encourage it, so the debug loop was the one that broke.
+// And this runs as step 5 of `make release`, where a failure unrelated to the
+// code teaches whoever is cutting the release to reach for
+// SKIP_INTEGRATION_TEST=1.
+//
+// Named from the test name plus a nanosecond stamp so parallel runs, and reruns
+// against a cluster whose previous namespace is still terminating, cannot
+// collide.
+func hermeticNamespace(t *testing.T, cs kubernetes.Interface) string {
+	t.Helper()
+	safe := strings.ToLower(strings.NewReplacer("/", "-", "_", "-").Replace(t.Name()))
+	if len(safe) > 40 {
+		safe = safe[:40]
+	}
+	ns := fmt.Sprintf("rbk-it-%s-%d", safe, time.Now().UnixNano()%1e9)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := cs.CoreV1().Namespaces().Create(ctx,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("creating hermetic namespace %s: %v", ns, err)
+	}
+
+	t.Cleanup(func() {
+		// Background context: t's deadline may already have expired, and a
+		// namespace that outlives the run is the very thing this exists to
+		// prevent. Best-effort — a failed delete must not fail a passing test,
+		// but it is reported so it does not vanish silently.
+		delCtx, delCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer delCancel()
+		if err := cs.CoreV1().Namespaces().Delete(delCtx, ns, metav1.DeleteOptions{}); err != nil {
+			t.Logf("WARNING: could not delete hermetic namespace %s: %v — a later run on this cluster may be affected", ns, err)
+		}
+	})
+	return ns
 }
 
 // TestIntegration_K8sBackend_JobMode_Echo runs a no-op probe via the
@@ -110,12 +164,13 @@ func ensureTestNamespace(t *testing.T, cs kubernetes.Interface) {
 // `Copyright IBM Corp. <year>` — both stable across releases.
 func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 	cs, cfg := k8sIntegrationClient(t)
-	ensureTestNamespace(t, cs)
+	ns := hermeticNamespace(t, cs)
 
 	b := &K8sBackend{
-		client: cs,
-		config: cfg,
-		initFn: func() (kubernetes.Interface, *rest.Config, error) { return cs, cfg, nil },
+		client:       cs,
+		config:       cfg,
+		jobNamespace: ns,
+		initFn:       func() (kubernetes.Interface, *rest.Config, error) { return cs, cfg, nil },
 	}
 
 	var stdout, stderr strings.Builder
@@ -160,7 +215,7 @@ func TestIntegration_K8sBackend_JobMode_Echo(t *testing.T) {
 // equivalent labels).
 func TestIntegration_K8sBackend_OpsPodExec(t *testing.T) {
 	cs, cfg := k8sIntegrationClient(t)
-	ensureTestNamespace(t, cs)
+	ensureOpsNamespace(t, cs)
 
 	// Ensure an ops pod is present. We provision a minimal busybox pod
 	// labelled the same way `roksbnkctl ops install` would so the

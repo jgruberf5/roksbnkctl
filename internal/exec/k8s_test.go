@@ -179,7 +179,7 @@ func TestBuildJobSpec_DefaultShape(t *testing.T) {
 	resolveK8s(t)
 
 	opts := RunOpts{}
-	job := buildJobSpec("roksbnkctl-test-abcdef", "busybox:latest", []string{"echo", "hello"}, opts, false, "")
+	job := buildJobSpec(K8sTestNamespace, "roksbnkctl-test-abcdef", "busybox:latest", []string{"echo", "hello"}, opts, false, "")
 
 	if job.Namespace != K8sTestNamespace {
 		t.Errorf("Namespace: got %q, want %q", job.Namespace, K8sTestNamespace)
@@ -233,7 +233,7 @@ func TestBuildJobSpec_FilesProjectedSecret(t *testing.T) {
 			"kubeconfig": []byte("apiVersion: v1\nkind: Config\n"),
 		},
 	}
-	job := buildJobSpec("roksbnkctl-iperf3-xxxxxx", "busybox:latest", []string{"true"}, opts, true, "roksbnkctl-iperf3-xxxxxx-files")
+	job := buildJobSpec(K8sTestNamespace, "roksbnkctl-iperf3-xxxxxx", "busybox:latest", []string{"true"}, opts, true, "roksbnkctl-iperf3-xxxxxx-files")
 	pod := job.Spec.Template.Spec
 
 	// Volumes: one named "files" referencing the per-Job secret.
@@ -280,7 +280,7 @@ func TestBuildJobSpec_CredsViaEnv(t *testing.T) {
 		Credentials: &Credentials{IBMCloudAPIKey: secret},
 	}
 	argv := []string{"ibmcloud", "iam", "oauth-tokens"}
-	job := buildJobSpec("roksbnkctl-ibmcloud-xxxxxx", "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev", argv, opts, false, "")
+	job := buildJobSpec(K8sTestNamespace, "roksbnkctl-ibmcloud-xxxxxx", "ghcr.io/jgruberf5/roksbnkctl-tools-ibmcloud:dev", argv, opts, false, "")
 
 	c := job.Spec.Template.Spec.Containers[0]
 	for _, a := range c.Command {
