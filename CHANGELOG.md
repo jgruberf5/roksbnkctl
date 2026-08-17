@@ -4,6 +4,32 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.45.0 — 2026-08-17
+
+Closes the reachability gaps in v1.44.0's own features, and promotes the shared-namespace install from *permitted* to *verified*.
+
+### Added
+
+- **`ROKSBNKCTL_FLO_NAMESPACE` / `ROKSBNKCTL_FLO_UTILS_NAMESPACE`.** v1.44.0 made a single shared namespace possible ([#66](https://github.com/jgruberf5/roksbnkctl/issues/66)) but left it unreachable from any environment-driven runner — `init --non-interactive` builds `config.yaml` from the environment alone, and every BNK Forge module configures the tool that way. Set both to the same value for one namespace instead of two.
+
+### Fixed
+
+- **A standalone FLP VSI can now build its own VPC** ([#76](https://github.com/jgruberf5/roksbnkctl/issues/76)). `create_vpc` and the cluster-less gate could not both be satisfied: the gate keyed on `vsi.vpc`, which is mutually exclusive with `create_vpc`. The proxy is the component that needs egress to F5, which makes it the natural *first* deployment in an air-gapped estate — and that was exactly the case it could not serve.
+
+  The fix has a second half worth knowing: `use_existing_cluster_vpc = false` does not mean "do not adopt", it means **create**. The cluster VPC resource is gated on that flag alone — not on `create_cluster`, not on `cluster_absent` — and the module carries no `count`, so it instantiates in the FLP phase's root too. It is now gated on `cluster_absent` as well, or every standalone run would have left a stray `<prefix>-cluster-vpc` behind and broken the next `cluster up` on a duplicate name.
+
+- **The weekly security sweep no longer fails on documentation.** `gitleaks` is a gated check, and the Monday full-history scan produced 46 `generic-api-key` findings — every one a false positive, most of them one base64 placeholder (`encoded-api-key-value`) carried into the built book by mdBook's search indexer. A blocking gate that fails every week on docs is one people learn to mute. Four exact strings are allowlisted; the rule is not disabled and no path is excluded, so the generated book stays scanned for anything else.
+
+- **`TestIntegration_K8sBackend_JobMode_Echo` no longer depends on cluster state** ([#73](https://github.com/jgruberf5/roksbnkctl/issues/73)). It shared two fixed namespaces and never cleaned up, so it passed on a fresh kind cluster and failed on a reused one — and reuse is the documented debug loop.
+
+### Verified
+
+- **One namespace instead of two, end to end.** Both `bnk.flo_namespace` and `bnk.flo_utils_namespace` set to `f5-bnk`: 30 pods in that namespace, no second namespace created, across a fresh install *and* a re-install onto an existing cluster over an existing Transit Gateway and VPC. The uncertainty was never in this repo — FLO is handed `sharedComponentNamespace` equal to its own namespace, and it tolerates it. The `NOT verified against FLO` caveat is discharged.
+
+### Known gaps
+
+[#79](https://github.com/jgruberf5/roksbnkctl/issues/79) (`bnk down` against a deleted cluster) remains open. The obvious fix — exit 0 and skip — was implemented, found to deadlock teardown and orphan three account-level IAM objects, and reverted. The finding is recorded on the issue.
+
 ## v1.44.0 — 2026-08-13
 
 Surfaces settings that existed only in embedded HCL, closes the environment-override gaps that made the v1.43.0 bring-your-own-network work unusable from BNK Forge, and adds the connection half of GSLB. **Additive**: absence of every new setting reproduces the previous behaviour exactly.
