@@ -632,7 +632,7 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `bnk.flp.chart_version` | string | (empty ⇒ from the BNK manifest) | Pin the `f5-license-proxy` chart version. Normally unset — the version is read from the BNK manifest, like the FLO and CIS charts. |
 | `bnk.flp.storage_class` | string | (empty ⇒ HCL default) | Dynamic StorageClass for the FLP's PVCs → `flp_storage_class`. Set it when the cluster/region exposes a different block-storage class. (helm mode) |
 | `bnk.flp.mode` | string | (empty ⇒ `helm`) | `helm` \| `vsi`. `vsi` deploys the proxy on a standalone VSI (podman pod, no k8s) instead of the helm chart; both terminate in the same endpoint + root CA handoff. |
-| `bnk.flp.vsi.vpc` | string | (empty ⇒ the cluster VPC) | Existing VPC id to deploy the standalone FLP VSI into **without any cluster** — a licensing appliance in a services VPC. Empty ⇒ joins the workspace's cluster VPC (requires a cluster). See [Chapter 10c §"Standalone"](./10c-flp-licensing.md). |
+| `bnk.flp.vsi.vpc` | string | (empty ⇒ the cluster VPC) | Existing VPC id to deploy the standalone FLP VSI into **without any cluster** — a licensing appliance in a services VPC. Empty ⇒ joins the workspace's cluster VPC (requires a cluster) — unless `create_vpc` is set, which builds the proxy its own and needs no cluster. See [Chapter 10c §"Standalone"](./10c-flp-licensing.md). |
 | `bnk.flp.vsi.profile` | string | `bx2-4x16` | VSI instance profile (≥ 4 vCPU / 8 GB) → `flp_vsi_profile`. |
 | `bnk.flp.vsi.zone` | string | (empty ⇒ `<region>-1`) | Zone for the FLP VSI → `flp_vsi_zone`. |
 | `bnk.flp.vsi.boot_size_gb` | integer | `100` | Boot volume size (≥ 80) → `flp_vsi_boot_size_gb`. |

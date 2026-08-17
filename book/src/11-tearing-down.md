@@ -12,12 +12,6 @@
 `roksbnkctl down`, `roksbnkctl bnk down`, and `roksbnkctl cluster down` are the three destroy verbs — the inverses of [`up`](./10-deploying-bnk-trials.md), [`bnk up`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group), and [`cluster up`](./08-cluster-phase.md) respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you'll hit if you ask for the wrong one, what survives a destroy, the `--auto` flag for non-interactive runs, and the workspace-cleanup story.
 
 
-> **`bnk down` when the cluster is already gone.** A cluster deleted out from
-> under a workspace that still holds BNK state leaves nothing to uninstall, so
-> `bnk down` reports it and exits 0 — the same category as "no trial state".
-> This keys on an explicit provider **not-found**, never on a connection
-> failure: a timeout or a refused connection still fails, so a network blip
-> cannot silently skip a real uninstall.
 
 ## The phase-aware decision tree
 

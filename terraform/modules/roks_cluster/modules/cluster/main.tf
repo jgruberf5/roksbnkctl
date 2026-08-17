@@ -33,7 +33,10 @@ locals {
   # Empty keeps "auto" — today's behaviour, and no plan diff for an existing
   # workspace, because moving a live subnet's CIDR would replace it (and with it the
   # cluster).
-  manual_prefixes = var.cluster_vpc_cidr != "" && !var.use_existing_cluster_vpc
+  # cluster_absent too: these prefixes live inside ibm_is_vpc.cluster_vpc, which
+  # is now count = 0 in that case. Without this they would be planned against a
+  # VPC that is never created (#76).
+  manual_prefixes = var.cluster_vpc_cidr != "" && !var.use_existing_cluster_vpc && !var.cluster_absent
 
   # Created or adopted — everything downstream uses these two, never the resources.
   cluster_subnet_ids = var.use_existing_cluster_subnets ? var.existing_cluster_subnet_ids : [
@@ -73,13 +76,16 @@ locals {
   ))[0]}_openshift"
 
   # VPC references (either created or existing)
+  # try(), because the created-VPC branch can now be count = 0 (cluster_absent).
+  # Indexing [0] unguarded throws "Invalid index" at plan time the moment that
+  # happens — and on the standalone FLP path nothing consumes these anyway.
   cluster_vpc_id = var.use_existing_cluster_vpc ? (
     var.existing_cluster_vpc_id != "" ? var.existing_cluster_vpc_id : data.ibm_is_vpc.existing_cluster_vpc[0].id
-  ) : ibm_is_vpc.cluster_vpc[0].id
+  ) : try(ibm_is_vpc.cluster_vpc[0].id, "")
 
-  cluster_vpc_crn = var.use_existing_cluster_vpc ? data.ibm_is_vpc.existing_cluster_vpc[0].crn : ibm_is_vpc.cluster_vpc[0].crn
+  cluster_vpc_crn = var.use_existing_cluster_vpc ? data.ibm_is_vpc.existing_cluster_vpc[0].crn : try(ibm_is_vpc.cluster_vpc[0].crn, "")
 
-  cluster_vpc_default_sg = var.use_existing_cluster_vpc ? data.ibm_is_vpc.existing_cluster_vpc[0].default_security_group : ibm_is_vpc.cluster_vpc[0].default_security_group
+  cluster_vpc_default_sg = var.use_existing_cluster_vpc ? data.ibm_is_vpc.existing_cluster_vpc[0].default_security_group : try(ibm_is_vpc.cluster_vpc[0].default_security_group, "")
 
   # Dynamically select worker flavor with minimum vCPUs and RAM
   # Use bx2 series (balanced) as it's most widely available across all regions
@@ -132,7 +138,16 @@ data "ibm_is_vpc" "existing_cluster_vpc" {
 
 # Create Cluster VPC (only if not using existing)
 resource "ibm_is_vpc" "cluster_vpc" {
-  count          = var.use_existing_cluster_vpc ? 0 : 1
+  # cluster_absent as well as use_existing_cluster_vpc.
+  #
+  # use_existing_cluster_vpc = false means CREATE, not "do not adopt" — this is
+  # the only resource in the module gated on that flag alone, and the module has
+  # no count, so it instantiates in every phase's root including the FLP phase.
+  # A standalone FLP VSI building its own VPC (#76) sets cluster_absent, and
+  # without this gate it would also create a stray <prefix>-cluster-vpc plus its
+  # three address prefixes: quota consumed, nothing using them, and the next
+  # `cluster up` in the same workspace failing on a duplicate VPC name.
+  count          = var.use_existing_cluster_vpc || var.cluster_absent ? 0 : 1
   name           = var.cluster_vpc_name
   resource_group = data.ibm_resource_group.resource_group.id
   tags           = ["terraform", "cluster"]

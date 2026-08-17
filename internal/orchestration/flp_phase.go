@@ -93,7 +93,7 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	if co == nil || co.VPCID == "" {
 		return nil, fmt.Errorf(
 			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. "+
-				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and bnk.flp.vsi.vpc: <existing-vpc-id>",
+				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and EITHER bnk.flp.vsi.vpc: <existing-vpc-id> to adopt a VPC, OR bnk.flp.vsi.create_vpc: true to build one",
 			workspace)
 	}
 	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
@@ -112,7 +112,7 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 }
 
 // standaloneFLPVSI reports whether the workspace deploys the FLP as a standalone
-// VSI into a named VPC with NO cluster (bnk.flp.mode: vsi + bnk.flp.vsi.vpc set).
+// VSI with NO cluster (bnk.flp.mode: vsi + either bnk.flp.vsi.vpc (adopt an existing VPC) or bnk.flp.vsi.create_vpc (build one)).
 func standaloneFLPVSI(ws *config.Workspace) bool { return StandaloneFLPVSI(ws) }
 
 // StandaloneFLPVSI is the exported form so the CLI layer can waive its

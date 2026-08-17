@@ -40,7 +40,7 @@ import (
 //	ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST → bnk.flp.vsi.status_registry_host
 //	ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64 → bnk.flp.vsi.status_registry_ca_b64 (verbatim; already base64)
 //
-// StandaloneFLPVSI() keys on mode==vsi AND a non-empty vsi.vpc, so those two are
+// StandaloneFLPVSI() keys on mode==vsi AND a network — either bnk.flp.vsi.vpc (adopt an existing VPC) or bnk.flp.vsi.create_vpc (build one) — so those are
 // what turn a cluster-less appliance on; the rest are refinements.
 func overrideFLPFromEnv(ws *Workspace) []string {
 	var applied []string
@@ -67,11 +67,9 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 		// blueprint, which until now it was not — the field existed only in a
 		// config.yaml the Forge modules never write.
 		//
-		// NOTE: create_vpc does not yet let the FLP be deployed with no cluster
-		// at all. StandaloneFLPVSI still requires bnk.flp.vsi.vpc, so the
-		// no-cluster path refuses and points at a field that is mutually
-		// exclusive with this one. Pre-existing gap from #60; this override does
-		// not close it, and the comment should not imply otherwise.
+		// create_vpc now opens the cluster-less path on its own (#76):
+		// StandaloneFLPVSI accepts either vsi.vpc or vsi.create_vpc, and the
+		// FLP-phase override no longer forces a VPC adopt when there is no id.
 		{"ROKSBNKCTL_FLP_VSI_VPC_NAME", "bnk.flp.vsi.vpc_name", func(c *BNKFLPVSICfg, v string) { c.VPCName = v }},
 		{"ROKSBNKCTL_FLP_VSI_SUBNET_CIDR", "bnk.flp.vsi.subnet_cidr", func(c *BNKFLPVSICfg, v string) { c.SubnetCIDR = v }},
 		{"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "bnk.flp.vsi.status_image", func(c *BNKFLPVSICfg, v string) { c.StatusImage = v }},
