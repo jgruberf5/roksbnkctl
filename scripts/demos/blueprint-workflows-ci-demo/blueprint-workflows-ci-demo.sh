@@ -39,7 +39,11 @@ RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_
 source "$HERE/../lib/demo-format.sh"
 
 # The four values that must never reach the ConfigMap, the Argo UI or a log.
-SECRET_KEYS=(IBMCLOUD_API_KEY ROKSBNKCTL_GENERIC_PASSWORD ROKSBNKCTL_BIGIP_PASSWORD BNK_FORGE_PASSWORD)
+# Anything credential-grade goes to the Secret, never the ConfigMap. The
+# ConfigMap is deliberately rendered into the Argo UI and printed by this script
+# — that visibility is its purpose — so a credential landing there is exposed by
+# design, not by accident.
+SECRET_KEYS=(IBMCLOUD_API_KEY ROKSBNKCTL_GENERIC_PASSWORD ROKSBNKCTL_BIGIP_PASSWORD BNK_FORGE_PASSWORD ROKSBNKCTL_GTM_PASSWORD)
 
 # Every workflow, in dependency order: the mirror and the proxy must exist before
 # anything disconnected can use them.
