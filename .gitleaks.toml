@@ -1,0 +1,50 @@
+# gitleaks configuration.
+#
+# WHY THIS FILE EXISTS. The weekly scheduled sweep scans the FULL history with
+# fetch-depth: 0 — including the gh-pages branch, where the built book lives —
+# and gitleaks' `generic-api-key` heuristic fires 46 times on it. Every one is a
+# false positive. gitleaks is a GATED check: it fails the build. A blocking
+# security gate that fails every Monday on documentation is one people learn to
+# mute, and a muted gate is worse than no gate, because the next finding is real
+# and nobody reads the run.
+#
+# WHAT IS DELIBERATELY *NOT* DONE HERE. The `generic-api-key` rule is not
+# disabled, and no path is blanket-excluded — not even the generated book. Each
+# entry below allowlists ONE exact string that was inspected and found benign.
+# gitleaks matches these against the SECRET it extracted, not the surrounding
+# line, so a real credential appearing in any of these files still trips: the
+# extracted secret would be the credential, which matches none of these.
+#
+# ADDING TO THIS FILE. Verify the finding by reading the file first, then record
+# what it actually is. An allowlist entry without a reason is how a genuine
+# finding gets suppressed by the next person in a hurry.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Verified false positives — each inspected at the source, not inferred from the report."
+regexes = [
+  # An environment-variable NAME, in a list of names a test clears before each
+  # sub-case. internal/config/envoverride_test.go — no value present.
+  '''ROKSBNKCTL_API_KEY_B64''',
+
+  # A sentinel value on RunOpts.Env used to select the long-lived ops-pod exec
+  # path instead of the Job path. internal/exec/k8s.go — a routing flag whose
+  # entire content is shown here; there is nothing secret about it.
+  '''ROKSBNKCTL_K8S_LONG_LIVED=1''',
+
+  # A test fixture asserting that a secret value never reaches the k8s argv.
+  # internal/exec/k8s_test.go — the string names itself.
+  '''test-key-NEVER-IN-K8S-ARGV''',
+
+  # base64("encoded-api-key-value") — the placeholder in the credentials-resolver
+  # chapter demonstrating that api_key_b64 is obfuscation, not encryption.
+  # Decode it and you get the words "encoded-api-key-value".
+  #
+  # This one string is also the sole reason the built book trips: it is carried
+  # into book/*.html and every book/searchindex-*.js on gh-pages by mdBook's
+  # search indexer. Allowlisting the string rather than those paths keeps the
+  # generated book scanned for anything else.
+  '''ZW5jb2RlZC1hcGkta2V5LXZhbHVl''',
+]

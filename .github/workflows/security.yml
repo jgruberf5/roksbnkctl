@@ -48,6 +48,10 @@ jobs:
       - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Explicit rather than relying on auto-discovery: a config that is
+          # silently not picked up leaves this job red while looking fixed, and
+          # the failure mode is indistinguishable from a real finding.
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   # ── SARIF: GitHub-native Go SAST → code scanning alerts ──
   codeql:
