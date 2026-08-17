@@ -58,6 +58,8 @@ import (
 //	ROKSBNKCTL_GTM_USERNAME         → bnk.gtm.username
 //	ROKSBNKCTL_GTM_PASSWORD         → bnk.gtm.password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
+//	ROKSBNKCTL_FLO_NAMESPACE        → bnk.flo_namespace (set both to one value for a
+//	ROKSBNKCTL_FLO_UTILS_NAMESPACE  → bnk.flo_utils_namespace   single shared namespace)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
 //	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
@@ -201,6 +203,24 @@ func OverrideFromEnv(ws *Workspace) []string {
 			ws.Cluster.ExistingSubnetIDs = ids
 			applied = append(applied, "cluster.existing_subnet_ids (ROKSBNKCTL_EXISTING_SUBNET_IDS)")
 		}
+	}
+
+	// The FLO namespaces. Both are settable together to ONE value, which
+	// collapses the two namespaces into one — verified working against BNK 2.3,
+	// where FLO tolerates sharedComponentNamespace equalling its own namespace
+	// (#66).
+	//
+	// Without these the capability shipped in v1.44.0 was unreachable from any
+	// env-driven runner: `init --non-interactive` builds config.yaml from the
+	// environment alone, so a field with no override cannot be set, and every
+	// BNK Forge module configures the tool exactly that way. Same gap as #64.
+	if v := envValue("ROKSBNKCTL_FLO_NAMESPACE"); v != "" {
+		ws.BNK.FLONamespace = v
+		applied = append(applied, "bnk.flo_namespace (ROKSBNKCTL_FLO_NAMESPACE)")
+	}
+	if v := envValue("ROKSBNKCTL_FLO_UTILS_NAMESPACE"); v != "" {
+		ws.BNK.FLOUtilsNamespace = v
+		applied = append(applied, "bnk.flo_utils_namespace (ROKSBNKCTL_FLO_UTILS_NAMESPACE)")
 	}
 
 	// GTM / BIG-IP DNS connection for GSLB (#51). Same shape as the CIS BIG-IP

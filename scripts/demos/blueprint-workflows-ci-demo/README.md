@@ -12,6 +12,24 @@ Each workflow's step sequence mirrors the corresponding module in
 deployment.
 
 
+
+## One namespace instead of two
+
+BNK installs into `f5-bnk` and `f5-utils` by default. Set both to the same value
+and it installs into one — fewer RBAC surfaces, one NetworkPolicy target, one
+thing to grant a team.
+
+```bash
+ROKSBNKCTL_FLO_NAMESPACE=f5-bnk
+ROKSBNKCTL_FLO_UTILS_NAMESPACE=f5-bnk
+```
+
+Verified end to end against BNK 2.3: 30 pods in `f5-bnk`, no `f5-utils`
+namespace created, across both a fresh install and a re-install onto an existing
+cluster. What was uncertain was FLO's tolerance — it is handed
+`sharedComponentNamespace` equal to its own namespace — and that is now tested
+rather than assumed.
+
 ## Bring-your-own network
 
 Two settings families that the blueprints exercise, both **optional** — omit them and the demo behaves as it always has.

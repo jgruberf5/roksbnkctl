@@ -529,6 +529,12 @@ locals {
 # exactly one namespace and kubernetes_namespace_v1.flo owns it — which is why
 # the far/mirror secrets below are guarded the same way and in the same
 # direction.
+#
+# VERIFIED against BNK 2.3, not merely permitted: a full install with both
+# namespaces set to f5-bnk produced 30 pods in that namespace and no second
+# namespace, on a fresh cluster and on a re-install onto an existing one. The
+# open question was FLO's own tolerance — it is handed sharedComponentNamespace
+# equal to its main namespace — and it tolerates it.
 resource "kubernetes_namespace_v1" "f5_utils" {
   count = local.use_kubectl && var.utils_namespace != var.flo_namespace ? 1 : 0
   metadata {

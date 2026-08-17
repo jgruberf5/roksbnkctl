@@ -192,7 +192,7 @@ bnk:
   far_repo_url: repo.f5.com
   manifest_version: 2.3.0-3.2598.3-0.0.170
   flo_namespace: f5-bnk               # optional; FLO namespace
-  flo_utils_namespace: f5-utils       # optional; utilities namespace
+  flo_utils_namespace: f5-utils       # optional; = flo_namespace ⇒ ONE namespace
   gslb_datacenter_name: ""            # optional; CNEInstance GSLB datacenter
   cert_manager:                       # optional; cert-manager coordinates
     namespace: cert-manager

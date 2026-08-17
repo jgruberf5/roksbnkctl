@@ -133,6 +133,8 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_GENERIC_USERNAME` | `registry.generic_username` | verbatim |
 | `ROKSBNKCTL_GENERIC_PASSWORD` | `registry.generic_password_b64` | raw, base64-encoded |
 | `ROKSBNKCTL_LICENSE_MODE` | `bnk.license_mode` | `connected` \| `disconnected` \| `f5licenseproxy` (see [Chapter 10c](./10c-flp-licensing.md)) |
+| `ROKSBNKCTL_FLO_NAMESPACE` | `bnk.flo_namespace` | Namespace FLO installs into. Default `f5-bnk`. |
+| `ROKSBNKCTL_FLO_UTILS_NAMESPACE` | `bnk.flo_utils_namespace` | Namespace for the F5 utility components. Default `f5-utils`. **Set both to the same value for one shared namespace** — verified against BNK 2.3. |
 | `ROKSBNKCTL_FLP_NAMESPACE` | `bnk.flp.namespace` | verbatim (FLP mode only) |
 | `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` | verbatim — license against a proxy in **another** cluster |
 | `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` | **verbatim; already base64** — re-encoding it hands the CWC a corrupt CA |
