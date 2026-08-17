@@ -26,6 +26,12 @@ Closes the reachability gaps in v1.44.0's own features, and promotes the shared-
 
 - **One namespace instead of two, end to end.** Both `bnk.flo_namespace` and `bnk.flo_utils_namespace` set to `f5-bnk`: 30 pods in that namespace, no second namespace created, across a fresh install *and* a re-install onto an existing cluster over an existing Transit Gateway and VPC. The uncertainty was never in this repo — FLO is handed `sharedComponentNamespace` equal to its own namespace, and it tolerates it. The `NOT verified against FLO` caveat is discharged.
 
+### Demos
+
+- **Nine settings could not reach an Argo workflow.** `blueprint-workflows-ci-demo` builds its `bnk-env` ConfigMap from the keys declared in `.env.example`, so that file is an allowlist and anything missing from it is ignored however it is exported. `cluster.network_mode`, the Trusted Profile pair, the three VLAN masks and the GTM trio are now reachable.
+
+  `ROKSBNKCTL_GTM_PASSWORD` also had to be routed to the Secret: adding it to the allowlist alone would have written a GTM password into the ConfigMap, which that demo renders into the Argo UI deliberately. Two tests now fail if a supported override is neither allowlisted nor recorded as deliberately excluded with a reason, and if a credential is missing from `SECRET_KEYS`.
+
 ### Known gaps
 
 [#79](https://github.com/jgruberf5/roksbnkctl/issues/79) (`bnk down` against a deleted cluster) remains open. The obvious fix — exit 0 and skip — was implemented, found to deadlock teardown and orphan three account-level IAM objects, and reverted. The finding is recorded on the issue.
