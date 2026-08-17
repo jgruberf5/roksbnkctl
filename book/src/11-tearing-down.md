@@ -11,6 +11,8 @@
 
 `roksbnkctl down`, `roksbnkctl bnk down`, and `roksbnkctl cluster down` are the three destroy verbs — the inverses of [`up`](./10-deploying-bnk-trials.md), [`bnk up`](./10-deploying-bnk-trials.md#the-bnk-up--bnk-down-command-group), and [`cluster up`](./08-cluster-phase.md) respectively. This chapter covers what each one removes, the ordering constraint between them, the refusal messages you'll hit if you ask for the wrong one, what survives a destroy, the `--auto` flag for non-interactive runs, and the workspace-cleanup story.
 
+
+
 ## The phase-aware decision tree
 
 Which verb do you want? The shape of your workspace and your intent both matter. Start here:

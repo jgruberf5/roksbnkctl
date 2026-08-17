@@ -137,7 +137,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` | verbatim — license against a proxy in **another** cluster |
 | `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` | **verbatim; already base64** — re-encoding it hands the CWC a corrupt CA |
 | `ROKSBNKCTL_FLP_MODE` | `bnk.flp.mode` | `helm` (default) \| `vsi` — how the FLP phase deploys the proxy |
-| `ROKSBNKCTL_FLP_VSI_VPC` | `bnk.flp.vsi.vpc` | an **existing VPC id**. With `_MODE=vsi` this is what arms the **standalone, cluster-less** appliance |
+| `ROKSBNKCTL_FLP_VSI_VPC` | `bnk.flp.vsi.vpc` | an **existing VPC id**. With `_MODE=vsi` this arms the **standalone, cluster-less** appliance — as does `_CREATE_VPC=true`, which builds one instead. Mutually exclusive. |
 | `ROKSBNKCTL_FLP_VSI_ZONE` | `bnk.flp.vsi.zone` | e.g. `us-south-1`; blank → the region's first zone |
 | `ROKSBNKCTL_FLP_VSI_PROFILE` | `bnk.flp.vsi.profile` | VSI instance profile; blank → `bx2-4x16` (the FLP's 4 vCPU / 8 GB floor) |
 | `ROKSBNKCTL_FLP_VSI_SSH_KEY` | `bnk.flp.vsi.ssh_key` | name of an existing IBM Cloud VPC SSH key |
@@ -162,8 +162,10 @@ The FLP-VSI block reproduces, from environment variables alone, the standalone
 licensing appliance the [disconnected-cluster walkthrough](./appendix-a-disconnected-roks-cluster.md)
 builds from a hand-written `config.yaml` — for an **argv-only** runner (a CI
 container, BNK Forge's container engine) that has no shell to write a YAML file
-with. `bnk.flp.mode: vsi` **plus** a non-empty `bnk.flp.vsi.vpc` is the pair that
-selects the cluster-less path; either alone leaves the cluster-required behaviour.
+with. `bnk.flp.mode: vsi` **plus a network** selects the cluster-less path — either
+`bnk.flp.vsi.vpc` (adopt an existing VPC) or `bnk.flp.vsi.create_vpc: true` (build
+one). The two are mutually exclusive; the mode alone leaves the cluster-required
+behaviour.
 
 The supply-chain block matters because the COS fallbacks were **renamed in
 v1.22.0** (`bnk-orchestration` → `bnk-supply-chain`, `bnk-schematics-resources` →

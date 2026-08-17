@@ -110,14 +110,14 @@ func runFLPUp(cmd *cobra.Command, _ []string) error {
 	// alone refused to install the FLP onto an adopted cluster, which is the
 	// main reason to run the FLP phase in the first place. Same fallback the
 	// composite `up` uses (orchestration/lifecycle.go).
-	// A standalone FLP VSI (bnk.flp.mode: vsi + bnk.flp.vsi.vpc) deploys the proxy
+	// A standalone FLP VSI (bnk.flp.mode: vsi + either bnk.flp.vsi.vpc (adopt an existing VPC) or bnk.flp.vsi.create_vpc (build one)) deploys the proxy
 	// as an appliance into a named VPC with NO cluster, so the cluster-required
 	// precondition does not apply — the orchestration layer takes the standalone
 	// branch (writeAndInitFLPPhase → standaloneFLPVSI).
 	if !orchestration.StandaloneFLPVSI(cctx.Workspace) && !pres.Cluster {
 		co, cerr := config.ReadClusterOutputs(cctx.WorkspaceName)
 		if cerr != nil || co == nil || co.ClusterID == "" {
-			return errors.New("no cluster found — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and bnk.flp.vsi.vpc: <existing-vpc-id>")
+			return errors.New("no cluster found — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and EITHER bnk.flp.vsi.vpc: <existing-vpc-id> to adopt a VPC, OR bnk.flp.vsi.create_vpc: true to build one (they are mutually exclusive)")
 		}
 	}
 

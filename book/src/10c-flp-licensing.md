@@ -470,7 +470,7 @@ bnk:
 ### Standalone — a licensing appliance in another VPC (no cluster)
 
 By default the FLP VSI joins the cluster's own VPC (from `cluster-outputs.json`), so
-`flp up` requires a cluster. Set **`bnk.flp.vsi.vpc`** to an existing VPC id and `flp up`
+`flp up` requires a cluster. Give the proxy a network of its own — set **`bnk.flp.vsi.vpc`** to an existing VPC id, or **`bnk.flp.vsi.create_vpc: true`** to build one (mutually exclusive) — and `flp up`
 deploys the proxy into **that** VPC with **no cluster at all** — a standalone licensing
 appliance:
 

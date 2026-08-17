@@ -68,12 +68,18 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	// target the VPC directly. The override renders roks_cluster_id_or_name = "" (an
 	// empty synthetic identity), so the cluster-adopt lookup is gated off.
 	if standaloneFLPVSI(ws) {
+		// Empty on the create path: there is no VPC id yet because terraform is
+		// about to make one. writeFLPPhaseOverrideAt keys on that emptiness.
 		vpcID := ws.BNK.FLP.VSI.VPC
 		overridePath, werr := writeFLPPhaseOverride(tfws, &config.ClusterOutputs{VPCID: vpcID}, true, true)
 		if werr != nil {
 			return nil, werr
 		}
-		fmt.Fprintf(w, "→ FLP-phase (standalone VSI): deploying the F5 License Proxy into VPC %s — no cluster.\n", vpcID)
+		if vpcID == "" {
+			fmt.Fprintf(w, "→ FLP-phase (standalone VSI): building the proxy its OWN VPC — no cluster.\n")
+		} else {
+			fmt.Fprintf(w, "→ FLP-phase (standalone VSI): deploying the F5 License Proxy into VPC %s — no cluster.\n", vpcID)
+		}
 		fmt.Fprintln(w, "→ terraform init")
 		if err := tfws.Init(ctx); err != nil {
 			return nil, err
@@ -87,7 +93,7 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 	if co == nil || co.VPCID == "" {
 		return nil, fmt.Errorf(
 			"the FLP phase installs into an existing cluster, but no cluster-outputs.json was found for workspace %q — run `roksbnkctl cluster up` (or `roksbnkctl cluster register` for an existing cluster) first, then `roksbnkctl flp up`. "+
-				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and bnk.flp.vsi.vpc: <existing-vpc-id>",
+				"For a STANDALONE FLP VSI with no cluster, set bnk.flp.mode: vsi and EITHER bnk.flp.vsi.vpc: <existing-vpc-id> to adopt a VPC, OR bnk.flp.vsi.create_vpc: true to build one",
 			workspace)
 	}
 	vsiMode := ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi"
@@ -106,14 +112,27 @@ func writeAndInitFLPPhase(ctx context.Context, tfws *tf.Workspace, ws *config.Wo
 }
 
 // standaloneFLPVSI reports whether the workspace deploys the FLP as a standalone
-// VSI into a named VPC with NO cluster (bnk.flp.mode: vsi + bnk.flp.vsi.vpc set).
+// VSI with NO cluster (bnk.flp.mode: vsi + either bnk.flp.vsi.vpc (adopt an existing VPC) or bnk.flp.vsi.create_vpc (build one)).
 func standaloneFLPVSI(ws *config.Workspace) bool { return StandaloneFLPVSI(ws) }
 
 // StandaloneFLPVSI is the exported form so the CLI layer can waive its
 // cluster-required precondition for a standalone FLP VSI deployment.
+//
+// EITHER way of giving the proxy a network opens the gate: adopting one
+// (vsi.vpc) or building one (vsi.create_vpc). They are mutually exclusive and
+// renderTFVars rejects both, so this cannot be satisfied twice over.
+//
+// It used to key on vsi.vpc alone, which made create_vpc unusable for the case
+// it was added for (#60, #76): the proxy is the component that needs egress to
+// F5, so it is the natural FIRST deployment in an air-gapped estate — and there
+// was no configuration that both opted into creating a VPC and opened this gate.
+// create_vpc alone left the gate closed and `flp up` failed with "no cluster
+// found"; adding vsi.vpc to open it tripped the mutual exclusion.
 func StandaloneFLPVSI(ws *config.Workspace) bool {
-	return ws.BNK.FLP != nil && ws.BNK.FLP.Mode == "vsi" &&
-		ws.BNK.FLP.VSI != nil && ws.BNK.FLP.VSI.VPC != ""
+	if ws.BNK.FLP == nil || ws.BNK.FLP.Mode != "vsi" || ws.BNK.FLP.VSI == nil {
+		return false
+	}
+	return ws.BNK.FLP.VSI.VPC != "" || ws.BNK.FLP.VSI.CreateVPC
 }
 
 // RunFLPUp = plan + confirm + apply against state-flp/, then persist
