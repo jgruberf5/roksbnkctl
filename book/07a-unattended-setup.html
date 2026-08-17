@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-72775ffc.js";
+            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -305,11 +305,13 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_GENERIC_USERNAME</code></td><td><code>registry.generic_username</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_PASSWORD</code></td><td><code>registry.generic_password_b64</code></td><td>raw, base64-encoded</td></tr>
 <tr><td><code>ROKSBNKCTL_LICENSE_MODE</code></td><td><code>bnk.license_mode</code></td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code> (see <a href="./10c-flp-licensing.html">Chapter 10c</a>)</td></tr>
+<tr><td><code>ROKSBNKCTL_FLO_NAMESPACE</code></td><td><code>bnk.flo_namespace</code></td><td>Namespace FLO installs into. Default <code>f5-bnk</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_FLO_UTILS_NAMESPACE</code></td><td><code>bnk.flo_utils_namespace</code></td><td>Namespace for the F5 utility components. Default <code>f5-utils</code>. <strong>Set both to the same value for one shared namespace</strong> — verified against BNK 2.3.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code></td><td><code>helm</code> (default) | <code>vsi</code> — how the FLP phase deploys the proxy</td></tr>
-<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this is what arms the <strong>standalone, cluster-less</strong> appliance</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this arms the <strong>standalone, cluster-less</strong> appliance — as does <code>_CREATE_VPC=true</code>, which builds one instead. Mutually exclusive.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code></td><td><code>bnk.flp.vsi.zone</code></td><td>e.g. <code>us-south-1</code>; blank → the region’s first zone</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_SSH_KEY</code></td><td><code>bnk.flp.vsi.ssh_key</code></td><td>name of an existing IBM Cloud VPC SSH key</td></tr>
@@ -336,8 +338,10 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 licensing appliance the <a href="./appendix-a-disconnected-roks-cluster.html">disconnected-cluster walkthrough</a>
 builds from a hand-written <code>config.yaml</code> — for an <strong>argv-only</strong> runner (a CI
 container, BNK Forge’s container engine) that has no shell to write a YAML file
-with. <code>bnk.flp.mode: vsi</code> <strong>plus</strong> a non-empty <code>bnk.flp.vsi.vpc</code> is the pair that
-selects the cluster-less path; either alone leaves the cluster-required behaviour.</p>
+with. <code>bnk.flp.mode: vsi</code> <strong>plus a network</strong> selects the cluster-less path — either
+<code>bnk.flp.vsi.vpc</code> (adopt an existing VPC) or <code>bnk.flp.vsi.create_vpc: true</code> (build
+one). The two are mutually exclusive; the mode alone leaves the cluster-required
+behaviour.</p>
 <p>The supply-chain block matters because the COS fallbacks were <strong>renamed in
 v1.22.0</strong> (<code>bnk-orchestration</code> → <code>bnk-supply-chain</code>, <code>bnk-schematics-resources</code> →
 <code>bnk-artifacts</code>, <code>trial.jwt</code> → <code>subscription.jwt</code>). Before these variables existed
