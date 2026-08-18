@@ -288,7 +288,8 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway). | no |
 | `flp_vsi_allowed_cidrs` | `list(string)` | `[]` | DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply. | no |
 | `existing_cluster_vpc_id` | `string` | `""` | The cluster VPC id (from cluster-outputs.json) the FLP VSI joins so the CWC reaches it directly. | no |
-| `flp_image_registry` | `string` | `"repo.f5.com/images"` | FAR image host prefix, e.g. repo.f5.com/images. | no |
+| `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository host for the FLP chart pulls. Same value as the root far_repo_url. | no |
+| `flp_image_registry` | `string` | `""` | FAR image host prefix. Empty (the default) derives `<far_repo_url>`/images, so the image host follows the chart host instead of pinning repo.f5.com independently. | no |
 | `f5_bigip_k8s_manifest_version` | `string` | _required_ | BNK manifest version — the f5-license-proxy chart/image tag is resolved from it (like the helm path) when flp_chart_version is empty. | no |
 | `flp_chart_version` | `string` | `""` | Pin the f5-license-proxy chart/image tag. Empty → resolved from the BNK manifest. | no |
 | `flp_vault_image_tag` | `string` | `"2.0.0"` | Tag for the vault image. | no |

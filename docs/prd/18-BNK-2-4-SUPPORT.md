@@ -413,6 +413,11 @@ Sized so each step is independently reviewable and each lands green.
   tool, so the operator is the right place to reject a bad one.
 - The workspace `gateway:` block turned out to be **entirely undocumented** in the
   book. All nine fields are now in `28-configuration-reference.md`.
+- `modules/flp_vsi` now takes `far_repo_url` instead of spelling `repo.f5.com` as
+  a literal in its two chart pulls, and derives its image host from it (§7.7).
+  A third instance of the §3.2 bug class — a default baked in as a constant —
+  found by checking whether an EA FAR host needed code at all. It does not, but
+  only once this path honours the setting the others already did.
 
 **Step 1 — the selector**
 - `bnk_line` tfvar rendered from `config.BNKLine(ws)`; threaded to
@@ -457,9 +462,9 @@ Sized so each step is independently reviewable and each lands green.
 
 **Step 7 — verification**
 - One `2.3.*` e2e (the regression gate: nothing changed).
-- One `2.4.*` e2e end to end, on OCP 4.19, against the EA registry
-  (`devrepo.f5.com`) — which requires FAR credentials for the EA repo we do not
-  currently have.
+- One `2.4.*` e2e end to end, on OCP 4.19, against the EA FAR
+  (`bnk.far_repo_url: devrepo.f5.com`) — a config change only; the host reverts
+  to the `repo.f5.com` default at GA with nothing to unwind (§7.7).
 - Only after that run: flip the support-matrix 2.4 row from PROVISIONAL, and add
   the CI plan the matrix comment says every cell must have.
 
@@ -490,9 +495,20 @@ Each of these changes the design, not just a value:
 5. **`deploymentSize: "Tiny"`** — new size, or an EA-only value? Affects whether
    `Small` remains a sane default for 2.4.
 6. **Is multi-NIC in 2.4 at all?** This guide says no. §3.1 assumes no.
-7. **EA registry access** — `devrepo.f5.com` is not `repo.f5.com`. The FAR auth
-   tarball we hold may not authenticate against it, which blocks Step 7 entirely
-   and is worth resolving early.
+7. ~~**EA registry access**~~ — **resolved, not a blocker.** `devrepo.f5.com` is
+   simply how a *non-production* FAR is spelled; it becomes `repo.f5.com` when
+   2.4 ships. The host is already a variable end to end (`bnk.far_repo_url` →
+   `far_repo_url`), so pointing at an EA repo is a config change, not a code
+   change, and nothing has to be unwound at GA.
+
+   Checking that claim found the one place it was **not** true:
+   `modules/flp_vsi` spelled FAR as the literal `repo.f5.com` in both chart
+   pulls and defaulted its image host to `repo.f5.com/images`, with no variable
+   for either — so `bnk.far_repo_url` reached `flo`, `cne_instance` and `flp` but
+   silently missed the standalone VSI path. Same bug class as §3.2, and fixed
+   alongside it in Step 0: `far_repo_url` is now a module input, and the image
+   host derives from it so charts and images cannot be pointed at different
+   registries.
 
 ---
 
