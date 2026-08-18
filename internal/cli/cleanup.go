@@ -136,11 +136,17 @@ func runCleanup(cmd *cobra.Command, _ []string) error {
 	if failures > 0 {
 		// "Re-run" is the right advice ONLY for a delete that can still
 		// converge on its own. A refusal cannot: nothing in the loop will ever
-		// remove a connection to a network outside the sweep, so telling the
-		// operator to re-run would send them round a loop that fails
-		// identically every time (#85).
+		// remove a connection to a network outside the sweep, so an unqualified
+		// "re-run" would send the operator round a loop that fails identically
+		// every time (#85).
+		//
+		// "as-is" carries weight. An identical re-run cannot help, but a WIDER
+		// one can: a VPC that looks foreign is often one this sweep simply did
+		// not scan, and --all-regions brings it into scope. Saying re-running
+		// never helps would contradict the per-resource message, which offers
+		// exactly that.
 		if refusals > 0 {
-			return fmt.Errorf("%d of %d resource(s) failed to delete; %d refused because a Transit Gateway is still attached to networks outside this sweep — re-running will NOT clear those, detach them (or delete those networks) first", failures, len(orphans), refusals)
+			return fmt.Errorf("%d of %d resource(s) failed to delete; %d refused because a Transit Gateway is still attached to networks outside this sweep — re-running as-is will NOT clear those. If those networks are yours, widen the sweep (--all-regions); otherwise detach them, or delete them, first", failures, len(orphans), refusals)
 		}
 		return fmt.Errorf("%d of %d resource(s) failed to delete — re-run `roksbnkctl cleanup` (some may be waiting on an async delete)", failures, len(orphans))
 	}

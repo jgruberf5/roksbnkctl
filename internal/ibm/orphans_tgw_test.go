@@ -32,9 +32,9 @@ func TestPartitionConnections_OwnVPCIsDetachable(t *testing.T) {
 	conns := []TGWConnection{
 		{ID: "c1", Name: "conn-swept", NetworkType: "vpc", NetworkID: sweptVPCCRN, Status: "attached"},
 	}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
-	if len(ours) != 1 || len(foreign) != 0 {
-		t.Fatalf("ours=%d foreign=%d — a VPC in the sweep is ours to detach", len(ours), len(foreign))
+	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 1 || len(settling) != 0 || len(foreign) != 0 {
+		t.Fatalf("detach=%d settling=%d foreign=%d — a VPC in the sweep is ours to detach", len(detach), len(settling), len(foreign))
 	}
 }
 
@@ -45,9 +45,9 @@ func TestPartitionConnections_ForeignVPCIsRefused(t *testing.T) {
 		{ID: "c1", Name: "conn-swept", NetworkType: "vpc", NetworkID: sweptVPCCRN, Status: "attached"},
 		{ID: "c2", Name: "conn-shared", NetworkType: "vpc", NetworkID: foreignVPCCRN, Status: "attached"},
 	}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
-	if len(ours) != 1 || len(foreign) != 1 {
-		t.Fatalf("ours=%d foreign=%d — a VPC outside the sweep must not be detachable", len(ours), len(foreign))
+	detach, _, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 1 || len(foreign) != 1 {
+		t.Fatalf("detach=%d foreign=%d — a VPC outside the sweep must not be detachable", len(detach), len(foreign))
 	}
 	if foreign[0].ID != "c2" {
 		t.Errorf("wrong connection held back: %s", foreign[0].ID)
@@ -62,22 +62,32 @@ func TestPartitionConnections_NonVPCIsAlwaysForeign(t *testing.T) {
 		{ID: "c2", Name: "gre", NetworkType: "gre_tunnel", Status: "attached"},
 		{ID: "c3", Name: "classic", NetworkType: "classic", Status: "attached"},
 	}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
-	if len(ours) != 0 || len(foreign) != 3 {
-		t.Fatalf("ours=%d foreign=%d — no non-VPC attachment is ever in scope", len(ours), len(foreign))
+	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 0 || len(settling) != 0 || len(foreign) != 3 {
+		t.Fatalf("detach=%d settling=%d foreign=%d — no non-VPC attachment is ever in scope", len(detach), len(settling), len(foreign))
 	}
 }
 
-// A connection already on its way out is ours: the wait covers it, and calling
-// it foreign would refuse a gateway that is seconds from being deletable —
-// re-introducing #85 for the exact case a re-run DOES fix.
-func TestPartitionConnections_DeletingCountsAsOurs(t *testing.T) {
+// A connection already on its way out must neither refuse the gateway nor be
+// deleted a second time. It gets its own bucket: waited for, never touched.
+//
+// Refusing would re-introduce #85 for the one case a re-run genuinely fixes.
+// Re-deleting is the subtler hazard — authedDELETE forgives only 404, so a
+// non-404 rejection of a redundant DELETE would abort the whole gateway delete
+// for a connection that was about to disappear on its own.
+func TestPartitionConnections_DeletingIsWaitedForNotRedeleted(t *testing.T) {
 	conns := []TGWConnection{
 		{ID: "c1", Name: "going", NetworkType: "vpc", NetworkID: foreignVPCCRN, Status: "deleting"},
 	}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
-	if len(ours) != 1 || len(foreign) != 0 {
-		t.Fatalf("ours=%d foreign=%d — a connection already deleting must not refuse the gateway", len(ours), len(foreign))
+	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 0 {
+		t.Errorf("detach=%d — a connection already deleting must not be deleted again", len(detach))
+	}
+	if len(settling) != 1 {
+		t.Errorf("settling=%d — it still has to be waited for", len(settling))
+	}
+	if len(foreign) != 0 {
+		t.Errorf("foreign=%d — a connection already deleting must not refuse the gateway", len(foreign))
 	}
 }
 
@@ -87,9 +97,9 @@ func TestPartitionConnections_CRNMatchIsCaseInsensitive(t *testing.T) {
 	conns := []TGWConnection{
 		{ID: "c1", NetworkType: "VPC", NetworkID: strings.ToUpper(sweptVPCCRN), Status: "attached"},
 	}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
-	if len(ours) != 1 || len(foreign) != 0 {
-		t.Fatalf("ours=%d foreign=%d — CRN comparison must be case-insensitive", len(ours), len(foreign))
+	detach, _, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 1 || len(foreign) != 0 {
+		t.Fatalf("detach=%d foreign=%d — CRN comparison must be case-insensitive", len(detach), len(foreign))
 	}
 }
 
@@ -98,9 +108,9 @@ func TestPartitionConnections_CRNMatchIsCaseInsensitive(t *testing.T) {
 func TestPartitionConnections_VPCWithoutCRNAuthorisesNothing(t *testing.T) {
 	sweep := []OrphanResource{{Kind: "vpc", ID: "r014-swept", Name: "f5orph-vpc"}}
 	conns := []TGWConnection{{ID: "c1", NetworkType: "vpc", NetworkID: sweptVPCCRN, Status: "attached"}}
-	ours, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweep))
-	if len(ours) != 0 || len(foreign) != 1 {
-		t.Fatalf("ours=%d foreign=%d — a CRN-less VPC must not authorise a detach", len(ours), len(foreign))
+	detach, _, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweep))
+	if len(detach) != 0 || len(foreign) != 1 {
+		t.Fatalf("detach=%d foreign=%d — a CRN-less VPC must not authorise a detach", len(detach), len(foreign))
 	}
 }
 

@@ -176,7 +176,11 @@ Which connections it may detach is a deliberate limit, not an oversight:
 - A connection to a **VPC this same sweep is deleting** is yours; `cleanup` removes it.
 - **Anything else** — a VPC under a different prefix, another account's network, a Direct Link or GRE attachment — belongs to someone else. `cleanup` **refuses the gateway** and names what is attached, rather than quietly disconnecting a shared gateway's other tenants.
 
-A refusal is not a transient, and re-running will not clear it. Detach the connection yourself (`ibmcloud tg connection-delete <gateway-id> <connection-id>`) or delete the network it points at, then sweep again. This matters most for the shared-gateway topology in [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md), where one gateway deliberately outlives the clusters attached to it.
+Connections already in `deleting` — someone else's detach, or a cascade from a cluster delete this same sweep kicked off — are a third case: waited for, never deleted again. Re-issuing a `DELETE` against one is rejected, and that rejection would abort a gateway delete that was seconds from succeeding.
+
+A refusal is not a transient, and an identical re-run will not clear it. **Check the region first**: `cleanup` scans only the workspace's cluster and client regions by default, so the commonest reason a VPC looks foreign is that it is yours and simply was not scanned. Re-run with `--all-regions` (or `--region <name>`) and it comes into scope. If the network really is someone else's, detach it yourself (`ibmcloud tg connection-delete <gateway-id> <connection-id>`) or delete it, then sweep again.
+
+This matters most for the shared-gateway topology in [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md), where one gateway deliberately outlives the clusters attached to it.
 
 ### Which regions it scans
 

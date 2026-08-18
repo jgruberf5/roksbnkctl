@@ -165,3 +165,120 @@ func TestDeleteTransitGateway_NoConnections(t *testing.T) {
 		}
 	}
 }
+
+// Regression for a bug introduced by the #85 fix itself and caught in review.
+//
+// Surfacing connection-delete errors (right) combined with re-deleting a
+// connection already in `deleting` (wrong) made a self-healing case fatal: IBM
+// rejects the redundant DELETE, authedDELETE forgives only 404, and the whole
+// gateway delete aborts — for a connection that was about to vanish anyway.
+// The old fire-and-forget code discarded that error, so this would have been a
+// REGRESSION shipped inside a fix.
+func TestDeleteTransitGateway_DoesNotRedeleteASettlingConnection(t *testing.T) {
+	prev := tgwConnectionPollInterval
+	tgwConnectionPollInterval = time.Millisecond
+	defer func() { tgwConnectionPollInterval = prev }()
+
+	f := &tgwFake{
+		remaining: 2,
+		connsJSON: `{"connections":[{"id":"c1","name":"already-going","network_type":"vpc","network_id":"` + sweptVPCCRN + `","status":"deleting"}]}`,
+	}
+	// Reject any DELETE aimed at a connection the way IBM rejects a redundant
+	// one: a 409, which is NOT forgiven.
+	base := f.roundTrip
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/connections/") {
+			return jsonResp(409, `{"errors":[{"code":"conflict","message":"connection is already being deleted"}]}`), nil
+		}
+		return base(r)
+	})
+
+	if err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweepWithVPC(sweptVPCCRN))); err != nil {
+		t.Fatalf("a connection already deleting must be waited for, not deleted again: %v", err)
+	}
+	for _, call := range f.sequence() {
+		if strings.HasPrefix(call, "DELETE") && strings.Contains(call, "/connections/") {
+			t.Fatalf("issued a redundant connection DELETE: %v", f.sequence())
+		}
+	}
+}
+
+// A gateway with nothing attached must not be polled at all — the wait exists
+// to cover an async detach, and there was none.
+func TestDeleteTransitGateway_NoConnectionsSkipsTheWait(t *testing.T) {
+	f := &tgwFake{remaining: 0}
+	c := newTestClient(f.roundTrip)
+	if err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", nil); err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	gets := 0
+	for _, call := range f.sequence() {
+		if strings.HasPrefix(call, "GET") {
+			gets++
+		}
+	}
+	if gets != 1 {
+		t.Errorf("expected the single initial listing and no polling, got %v", f.sequence())
+	}
+}
+
+// cleanup scans only the workspace's cluster and client regions by default, so
+// the likeliest reason a VPC looks foreign is that it IS yours and simply was
+// not scanned. Without this hint the operator is told to go detach their own
+// network by hand.
+func TestForeignRefusalSuggestsWideningTheRegionSweep(t *testing.T) {
+	f := &tgwFake{
+		remaining: 99,
+		connsJSON: `{"connections":[{"id":"c2","name":"conn-shared","network_type":"vpc","network_id":"` + foreignVPCCRN + `","status":"attached"}]}`,
+	}
+	c := newTestClient(f.roundTrip)
+	err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	for _, want := range []string{"--all-regions", "--region", "ibmcloud tg connection-delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal should mention %q; got: %v", want, err)
+		}
+	}
+}
+
+// DeleteOrphan is documented idempotent. A gateway already gone — a re-run, or
+// a concurrent sweep — makes the connection listing fail; that must still
+// resolve to success via the delete's own 404, not surface as an error. The
+// code this replaced got this right by swallowing the listing error, so
+// tightening the error handling could have quietly regressed it.
+func TestDeleteTransitGateway_AlreadyGoneIsSuccess(t *testing.T) {
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		return jsonResp(404, `{"errors":[{"code":"not_found","message":"gateway not found"}]}`), nil
+	})
+	if err := c.deleteTransitGateway(context.Background(), "gw-gone", "f5orph-tgw", nil); err != nil {
+		t.Fatalf("an already-deleted gateway must be a no-op, got %v", err)
+	}
+}
+
+// But an unreadable listing must not become a silent success when the gateway
+// is genuinely still there and still attached: both failures get reported.
+func TestDeleteTransitGateway_UnreadableListingAndFailedDeleteReportsBoth(t *testing.T) {
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		if r.Method == http.MethodGet {
+			return jsonResp(503, `{"errors":[{"code":"service_unavailable"}]}`), nil
+		}
+		return jsonResp(412, `{"errors":[{"code":"precondition_failed","message":"Before you can delete this gateway, you must delete all attached connections."}]}`), nil
+	})
+	err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", nil)
+	if err == nil {
+		t.Fatal("a gateway that could not be listed OR deleted must not report success")
+	}
+	for _, want := range []string{"could not list connections", "503", "412"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should surface %q; got: %v", want, err)
+		}
+	}
+}

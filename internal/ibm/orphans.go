@@ -318,18 +318,36 @@ var (
 // to disconnect it. Those refuse, naming what is attached, rather than silently
 // detaching a shared gateway's other tenants.
 func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, sweptVPCs map[string]bool) error {
+	gatewayURL := fmt.Sprintf("%s/v1/transit_gateways/%s?version=%s", transitGatewayHost, id, vpcAPIVersion)
+
 	conns, err := c.ListTGWConnections(ctx, id)
 	if err != nil {
-		return fmt.Errorf("listing connections for transit gateway %s: %w", displayTGW(name, id), err)
+		// DeleteOrphan is documented idempotent, and the commonest reason this
+		// listing fails is that the gateway is already gone — a re-run, or a
+		// concurrent sweep. Returning here would break that contract (the code
+		// this replaced swallowed the error and let the DELETE's own 404 report
+		// success). So still attempt the delete: 404 succeeds, and a gateway
+		// that genuinely still has connections comes back as IBM's own 412
+		// rather than a guess made here. Only if BOTH fail is the listing error
+		// worth reporting, and then it explains why we could not be smarter.
+		if derr := c.authedDELETE(ctx, gatewayURL); derr != nil {
+			return fmt.Errorf("could not list connections for transit gateway %s (%v), and deleting it failed: %w", displayTGW(name, id), err, derr)
+		}
+		return nil
 	}
 
-	ours, foreign := partitionTGWConnections(conns, sweptVPCs)
+	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCs)
 	if len(foreign) > 0 {
-		return fmt.Errorf("%w: %s is still attached to %s — cleanup detaches only VPCs it is also deleting, so removing these is your call: `ibmcloud tg connection-delete %s <connection-id>`, or delete those networks, then sweep again",
+		// The region hint is not filler. cleanup scans only the workspace's
+		// cluster and client regions by default, so the likeliest reason a VPC
+		// looks foreign is that it IS yours and simply was not scanned — and
+		// without this the operator is told to go detach their own network by
+		// hand.
+		return fmt.Errorf("%w: %s is still attached to %s — cleanup detaches only VPCs it is also deleting, so removing these is your call. If a listed VPC is yours, it may just be in a region this sweep did not scan: re-run with --all-regions (or --region <name>). Otherwise detach it with `ibmcloud tg connection-delete %s <connection-id>`, or delete those networks, then sweep again",
 			ErrForeignTGWConnection, displayTGW(name, id), describeTGWConnections(foreign), id)
 	}
 
-	for _, conn := range ours {
+	for _, conn := range detach {
 		delURL := fmt.Sprintf("%s/v1/transit_gateways/%s/connections/%s?version=%s", transitGatewayHost, id, conn.ID, vpcAPIVersion)
 		if err := c.authedDELETE(ctx, delURL); err != nil {
 			// Surfaced, not swallowed: the old code discarded this and let the
@@ -338,31 +356,46 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 		}
 	}
 
-	if err := c.waitTGWConnectionsCleared(ctx, id); err != nil {
-		return err
+	// Wait only when something actually has to clear — what we just detached,
+	// or what was already on its way out. A gateway that listed nothing is
+	// deletable now, and polling it once more to be told so is a wasted round
+	// trip on the common re-run path.
+	if len(detach) > 0 || len(settling) > 0 {
+		if err := c.waitTGWConnectionsCleared(ctx, id); err != nil {
+			return err
+		}
 	}
 
-	url := fmt.Sprintf("%s/v1/transit_gateways/%s?version=%s", transitGatewayHost, id, vpcAPIVersion)
-	return c.authedDELETE(ctx, url)
+	return c.authedDELETE(ctx, gatewayURL)
 }
 
-// partitionTGWConnections splits a gateway's connections into the ones this
-// sweep may remove (VPC attachments whose VPC it is also deleting) and the ones
-// it may not. A connection already `deleting` counts as ours — it is on its way
-// out regardless, and the wait below covers it; treating it as foreign would
-// refuse a gateway that is seconds from being deletable.
-func partitionTGWConnections(conns []TGWConnection, sweptVPCs map[string]bool) (ours, foreign []TGWConnection) {
+// partitionTGWConnections sorts a gateway's connections into three buckets.
+//
+//   - detach   — a VPC attachment whose VPC this sweep is also deleting. Ours to
+//     remove, and the only bucket a DELETE is issued for.
+//   - settling — already `deleting`. On its way out with or without us, so it
+//     blocks the gateway but must NOT be deleted again. Issuing a second DELETE
+//     risks a non-404 rejection, and authedDELETE forgives only 404 — that error
+//     would abort the whole gateway delete for a connection that was about to
+//     disappear on its own. Waiting is both correct and free.
+//   - foreign  — everything else. Refused, never touched.
+//
+// `settling` is checked first and deliberately does not consider ownership: a
+// connection on its way out cannot be saved by refusing, and treating it as
+// foreign would refuse a gateway seconds from being deletable — re-introducing
+// #85 for the one case a re-run genuinely does fix.
+func partitionTGWConnections(conns []TGWConnection, sweptVPCs map[string]bool) (detach, settling, foreign []TGWConnection) {
 	for _, conn := range conns {
 		switch {
 		case strings.EqualFold(conn.Status, "deleting"):
-			ours = append(ours, conn)
+			settling = append(settling, conn)
 		case strings.EqualFold(conn.NetworkType, "vpc") && sweptVPCs[strings.ToLower(conn.NetworkID)]:
-			ours = append(ours, conn)
+			detach = append(detach, conn)
 		default:
 			foreign = append(foreign, conn)
 		}
 	}
-	return ours, foreign
+	return detach, settling, foreign
 }
 
 // waitTGWConnectionsCleared blocks until the gateway lists no connections, or
