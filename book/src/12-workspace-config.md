@@ -216,7 +216,7 @@ bnk:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `cneinstance_size` | enum | upstream HCL default (`Small`) | `Small` \| `Medium` \| `Large`. Sets `cneinstance_deployment_size`. |
+| `cneinstance_size` | enum | upstream HCL default (`Small`) | `Tiny` \| `Small` \| `Medium` \| `Large`. Sets `cneinstance_deployment_size`. `Tiny` is what the BNK 2.4 install guide uses. Passed through unvalidated — a size a given manifest does not define is rejected by the operator, not by this tool. |
 | `far_repo_url` | string | upstream HCL default (`repo.f5.com`) | The FAR Docker/Helm repo. Override only for staging/internal repos. |
 | `manifest_version` | string | upstream HCL default | Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL's pin. |
 | `flo_namespace` | string | `f5-bnk` | F5 Lifecycle Operator namespace. Sets `flo_namespace`. |

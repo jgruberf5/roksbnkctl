@@ -148,7 +148,7 @@ bnk:
 
 | Field | Type | Default | Allowed | Notes |
 |---|---|---|---|---|
-| `cneinstance_size` | string | `Small` | `Small` \| `Medium` \| `Large` | Sizing for the deployed CNE Instance. Renders into the upstream HCL `cneinstance_deployment_size` variable. |
+| `cneinstance_size` | string | `Small` | `Tiny` \| `Small` \| `Medium` \| `Large` | Sizing for the deployed CNE Instance → `cneinstance_deployment_size`. `Tiny` is what the BNK 2.4 install guide uses. The value is passed through **unvalidated**: which sizes exist is a property of the manifest, not of this tool, so an unknown one is rejected by the operator rather than at plan time. |
 | `far_repo_url` | string | `repo.f5.com` | URL of a Docker-compatible image registry | The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror. |
 | `manifest_version` | string | `2.3.0-3.2598.3-0.0.170` | a published `f5-bigip-k8s-manifest` chart version | Pins the FLO + CIS versions transitively (both are extracted from the manifest chart). |
 | `flo_namespace` | string | `f5-bnk` | RFC 1123 namespace label | Namespace the F5 Lifecycle Operator installs into (`flo_namespace`). Set for multi-tenant clusters or to avoid a namespace collision. |
@@ -183,15 +183,23 @@ Not every pairing exists:
 | BNK line | `single-nic` | `multi-nic` |
 |---|---|---|
 | 2.3 | **yes** | **no** — 2.3 does not express the multi-NIC network attachments or CNEInstance options |
-| 2.4 | **yes** | **yes** — provisional; see the note below |
+| 2.4 | **yes** | **no** — on the evidence available; see the note below |
+
+**No shipped BNK line expresses multi-NIC yet.** The 2.4 row originally claimed
+it, on the expectation that 2.4 would add it. The BNK 2.4 EA install guide does
+not: it is single-NIC throughout — one NetworkAttachmentDefinition, one
+`external-vlan` network, no second data-plane interface anywhere. The claim was
+withdrawn rather than left standing, because a cell that passes on an
+expectation is worse than no cell: it lets the plan-time check approve a
+deployment nobody has grounds for.
 
 A 2.4 install still drives a single-NIC cluster, including one created before
-multi-NIC existed. That is what lets an existing deployment move to 2.4 without
-touching its cluster. What does not exist is a conversion: a cluster is built in
-one mode and stays in it.
+the network-mode field existed. That is what lets an existing deployment move to
+2.4 without touching its cluster. What does not exist is a conversion: a cluster
+is built in one mode and stays in it.
 
-The 2.4 row is **provisional**: it was written before 2.4 shipped and has never
-been run against it. Every value in it is an expectation, not an observation.
+The 2.4 row remains **provisional** in its other values — the contract range was
+written before 2.4 shipped and has never been run against it.
 
 `roksbnkctl` checks the pairing before it plans and refuses an unsupported one
 there, rather than letting it fail against real infrastructure. The matrix is

@@ -103,7 +103,7 @@ The k8s backend's persistent execution context. Deployed by `roksbnkctl ops inst
 
 **BNK line** / **release line** — The `<major>.<minor>` of a BNK release, e.g. `2.3`. Not configured: *derived* from `bnk.manifest_version`. Selects the terraform overlay ([Chapter 13](./13-terraform-variables.md)) and gates the support-matrix check. An unset `manifest_version` derives the line from the built-in default rather than failing, because that field has always been optional.
 
-**Network mode** (`single-nic` | `multi-nic`) — How a cluster's worker nodes are attached. Fixed when the cluster is created and never converted in place. `single-nic` is the default and describes every cluster built with this tool today; `multi-nic` needs BNK 2.4+ and IBM support that has not yet shipped.
+**Network mode** (`single-nic` | `multi-nic`) — How a cluster's worker nodes are attached. Fixed when the cluster is created and never converted in place. `single-nic` is the default and describes every cluster built with this tool today. `multi-nic` needs both IBM support that has not shipped and a BNK line that expresses it — and no shipped line does: 2.4 was expected to and, on the evidence of its EA install guide, does not.
 
 **Contract schema version** — The `schema_version` in `cluster-outputs.json`, currently 2. Absent means 1. Declares the shape of the handoff record so a reader can tell what it is looking at.
 

@@ -4,6 +4,44 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.46.0 — 2026-08-18
+
+Three bugs that failed **silently** — no error, no failed apply, just a thing that quietly did not work — plus the evaluation of BNK 2.4 against every phase of the tool.
+
+### Added
+
+- **`gateway.class_name` / `gateway.controller_name`** (and `ROKSBNKCTL_GATEWAY_CLASS_NAME` / `ROKSBNKCTL_GATEWAY_CONTROLLER_NAME`). `GatewayClass` is cluster-scoped, so two BNK installs sharing a cluster cannot share the name — which a CI matrix has to set per job, not per committed `config.yaml`. Leave `controller_name` empty: it derives the only value the CNE controller answers to.
+
+- **`Tiny` is a valid `bnk.cneinstance_size`** — what the BNK 2.4 install guide uses. Deliberately still unvalidated: which sizes exist is a property of the manifest, not of this tool, so an unknown one is rejected by the operator rather than at plan time.
+
+- **[PRD 18](docs/prd/18-BNK-2-4-SUPPORT.md) — BNK 2.4 support.** The full evaluation of the 2.4 EA install guide against `cluster`, `flp`, `bnk`, `testing` and `gateway`, and the plan for making `bnk.manifest_version: 2.4.*` select it. The headline finding: 2.4 does not extend the data-plane configuration model, it **replaces** it — the `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs and the per-zone `F5SPKStaticRoute`s collapse into one `Infra` CR; `F5BnkGateway` + `F5SPKSnatpool` become `GatewaySettings`; `F5SPKEgress` becomes `EgressGateway`. Addressing inverts with it: 2.3 states self-IPs and VIP ranges, 2.4 states pools and the controller allocates. Nothing beyond the corrections below is implemented.
+
+### Fixed
+
+- **`cleanup` could not delete a Transit Gateway** ([#85](https://github.com/jgruberf5/roksbnkctl/issues/85)). It already deleted the connections first; what it did not do was **wait**. IBM detaches asynchronously, so the gateway `DELETE` fired while the connections were still `deleting` and came back `412 Precondition Failed`. A re-run then appeared to fix it — but only because the connections had finished clearing in the meantime, which made an ordinary race look like the async transient the "re-run `cleanup`" advice covers. It is not: a gateway attached to something the sweep never touches fails that way forever.
+
+  Which connections may be detached is now a decision rather than an accident. A connection to a VPC this same sweep is deleting is yours. **Anything else — a VPC under another prefix, a Direct Link, a GRE tunnel — is refused, naming what is attached**, rather than silently disconnecting a shared gateway's other tenants. That topology is the norm, not the exception: the disconnected blueprints adopt one gateway across a mirror, a proxy and several clusters. A refusal is reported differently from a failure, because re-running cannot clear it — though **widening** the sweep can, and the message says so: the commonest reason a VPC looks foreign is that it is yours and simply was not scanned.
+
+- **A non-default `bnk.flo_namespace` produced a `GatewayClass` no controller accepts.** `gateway_controller_name` defaulted to the literal `f5.com/f5-bnk-f5-cne-controller` — the default namespace baked in as a constant — while the CNEInstance it must match is named `<flo_namespace>-f5-cne-controller`. The `GatewayClass` was never `Accepted`, the `Gateway` never programmed, and `terraform apply` reported success. It is now derived, and because the failure is invisible the fix ships with two ways to see it: the resolved `controllerName` is a terraform output, and `gateway status` probes the `GatewayClass` `Accepted` condition next to the name that produced it. That probe works on deployments built before this release, without re-applying anything.
+
+- **The standalone FLP VSI ignored `bnk.far_repo_url`.** It spelled FAR as the literal `repo.f5.com` in both chart pulls and defaulted its image host to `repo.f5.com/images`, with no variable for either. The setting reached `flo`, `cne_instance` and `flp` and silently missed the VSI path, which would keep pulling from production FAR and fail on a chart that was never published there. The image host now derives from the chart host, so the two cannot be aimed at different registries.
+
+- **The support matrix claimed BNK 2.4 does multi-NIC. It does not** — on the evidence of its EA install guide, which is single-NIC throughout: one NetworkAttachmentDefinition, one `external-vlan` network, no second data-plane interface anywhere. The row was written as an *expectation* before 2.4 shipped, and a cell that passes on an expectation is worse than no cell: it let the plan-time check approve a deployment nobody had grounds for. Withdrawn until a release shows otherwise, with the tests inverted so restoring it costs a deliberate act rather than a quiet edit to a data file.
+
+- **Every error printed twice**, once as cobra's `Error:` and once as `roksbnkctl:`. `SilenceErrors` was set on the `tfx` subcommands individually but never on the root, so it held only for the handful that remembered.
+
+- **The OpenShift gateway-API admission sweep now covers `validatingwebhookconfigurations`** as well as the policy and its binding. Which of the three the ingress operator uses to express the same block is a function of the cluster's OCP version — 4.19 uses a webhook configuration where 4.18 uses a policy — so sweeping all three is the only version-independent answer.
+
+### Docs
+
+- **The workspace `gateway:` block was never documented.** Not just the new fields — all nine. Found while documenting the two additions above.
+- [Chapter 11](https://jgruberf5.github.io/roksbnkctl/book/11-tearing-down.html) gains *How the Transit Gateway is handled*: the 412, the detach policy, and why a refusal is not a re-run case.
+- The support-matrix table, its troubleshooting entry and the glossary all said 2.4 brings multi-NIC. Corrected in step with the matrix itself.
+
+### Note on the exit code in [#85](https://github.com/jgruberf5/roksbnkctl/issues/85)
+
+A partial-failure sweep **does** exit 1 — verified across five error paths. The reported `exit: 0` did not reproduce and is most likely a pipeline in the calling wrapper taking the last command's status (`cmd | head` returns `head`'s). Use `${PIPESTATUS[0]}` or `set -o pipefail`.
+
 ## v1.45.0 — 2026-08-17
 
 Closes the reachability gaps in v1.44.0's own features, and promotes the shared-namespace install from *permitted* to *verified*.

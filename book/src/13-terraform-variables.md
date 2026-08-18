@@ -78,7 +78,7 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `openshift_cluster_version` | `"4.20"` | OpenShift minor. Quote it — YAML/HCL parses `4.20` as float otherwise. |
 | `cneinstance_deployment_size` | `Small` | `Small`/`Medium`/`Large`. CNEInstance sizing. |
 | `f5_bigip_k8s_manifest_version` | upstream pin | Pin a specific BNK manifest chart version. |
-| `far_repo_url` | `repo.f5.com` | FAR Docker/Helm registry. Override only for staging. |
+| `far_repo_url` | `repo.f5.com` | FAR Docker/Helm registry. Override for a non-production FAR (an EA repo) or a staging mirror. Reaches **every** consumer including the standalone FLP VSI, whose chart pulls used to spell the host as a literal and silently ignored this. |
 | `flo_namespace` | `f5-bnk` | Where the F5 Lifecycle Operator runs. |
 | `testing_create_tgw_jumphost` | `true` | Create the testing jumphost in a client VPC over Transit Gateway. |
 | `testing_ssh_key_name` | `""` (must set) | Existing IBM Cloud SSH key name for jumphost provisioning. |

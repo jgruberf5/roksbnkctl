@@ -357,10 +357,12 @@ Note that *removing* the setting is not the same as changing it: an unset
 drive a cluster of that network mode. 2.3 does not express the multi-NIC network
 attachments or CNEInstance options.
 
-**Fix**: use a `bnk.manifest_version` on a line that supports the mode (2.4+ for
-multi-nic), or a cluster built in a mode this line supports. The pairing is
-checked at plan time precisely so this is a message rather than a failed apply
-against real infrastructure.
+**Fix**: use a cluster built in a mode this line supports. **There is currently
+no line to move to for `multi-nic`** — 2.4 was expected to add it and, on the
+evidence of its EA install guide, does not, so its row was corrected to
+single-nic. See [Chapter 28](./28-configuration-reference.md#bnk-release-and-network-mode).
+The pairing is checked at plan time precisely so this is a message rather than a
+failed apply against real infrastructure.
 
 ### Symptom: `! unknown BNK release line: BNK 2.5 is not in this build's support matrix`
 
