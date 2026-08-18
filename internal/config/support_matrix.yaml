@@ -21,16 +21,22 @@ lines:
 
   # PROVISIONAL — written before 2.4 shipped, and never run against it.
   #
-  # Every value in this row is an EXPECTATION, not an observation: that 2.4 reads
-  # both contract versions, and that it expresses multi-NIC. It exists so the
-  # machinery has something to select when 2.4 arrives, not because the pairing
-  # has been verified. Confirm each field against the real release before
-  # treating a plan-time pass on this row as meaningful.
+  # This row originally claimed multi-NIC on the expectation that 2.4 would add
+  # it. The BNK 2.4 EA install guide does not: it is single-NIC throughout — one
+  # NetworkAttachmentDefinition (ens3-ipvlan-l2, master ens3), one `external-vlan`
+  # network in the Infra CR, and no second data-plane interface anywhere. The
+  # claim is withdrawn until a guide or a run produces the evidence, because a
+  # cell that passes on an expectation is worse than no cell: it lets
+  # `guardSupportedCombination` approve a multi-NIC 2.4 plan nobody has grounds
+  # for. See docs/prd/18-BNK-2-4-SUPPORT.md §3.1.
+  #
+  # The contract range is still an expectation, not an observation. Confirm it
+  # against the real release before treating a plan-time pass here as meaningful.
   - bnk: "2.4"
     contract: [1, 2]
-    network_modes: [single-nic, multi-nic]
+    network_modes: [single-nic]
     notes: >-
-      PROVISIONAL, not yet verified against a released 2.4. Expected to add
-      multi-NIC while still driving single-NIC clusters, including ones created
-      before multi-NIC existed, so an existing deployment can move to 2.4 without
-      touching its cluster.
+      PROVISIONAL, not yet verified against a released 2.4. Single-NIC only — the
+      2.4 EA install guide shows no multi-NIC path. Expected to keep driving
+      single-NIC clusters, including ones created before multi-NIC existed, so an
+      existing deployment can move to 2.4 without touching its cluster.

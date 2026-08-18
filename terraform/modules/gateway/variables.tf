@@ -111,9 +111,20 @@ variable "gateway_class_name" {
 }
 
 variable "gateway_controller_name" {
-  description = "GatewayClass controllerName (the BNK CNE controller)"
+  description = <<-EOT
+    GatewayClass controllerName. Empty (the default) DERIVES it from
+    flo_namespace as "f5.com/<flo_namespace>-f5-cne-controller", which is the
+    only value the CNE controller answers to — it must equal the CNEInstance's
+    own name (modules/cne_instance/.../main.tf builds that as
+    "<flo_namespace>-f5-cne-controller"). This used to be the literal
+    "f5.com/f5-bnk-f5-cne-controller", i.e. the DEFAULT namespace baked in as a
+    constant, so any workspace with a non-default bnk.flo_namespace got a
+    GatewayClass no controller ever accepted and a Gateway that never
+    programmed. Set explicitly only to point at a controller this module did not
+    deploy.
+  EOT
   type        = string
-  default     = "f5.com/f5-bnk-f5-cne-controller"
+  default     = ""
 }
 
 variable "gateway_bnkgateway_name" {

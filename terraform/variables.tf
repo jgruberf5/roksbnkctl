@@ -410,7 +410,7 @@ variable "cneinstance_network_attachments" {
 # ============================================================
 
 variable "cneinstance_deployment_size" {
-  description = "Deployment size for CNEInstance (Small, Medium, Large)"
+  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here."
   type        = string
   default     = "Small"
 }
@@ -676,6 +676,18 @@ variable "gateway_app_namespace" {
   description = "Application namespace the Gateway + HTTPRoute serve (created by the gateway module)"
   type        = string
   default     = "f5-app"
+}
+
+variable "gateway_class_name" {
+  description = "GatewayClass name. Set it to run more than one BNK GatewayClass in a cluster — GatewayClass is cluster-scoped, so two installs sharing the name collide."
+  type        = string
+  default     = "gateway-class"
+}
+
+variable "gateway_controller_name" {
+  description = "GatewayClass controllerName. Empty → derived as f5.com/<flo_namespace>-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds)."
+  type        = string
+  default     = ""
 }
 
 variable "gateway_backend_service" {

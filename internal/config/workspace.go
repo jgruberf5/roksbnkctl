@@ -739,7 +739,20 @@ type StateS3Cfg struct {
 }
 
 type GatewayCfg struct {
-	AppNamespace       string   `yaml:"app_namespace,omitempty"`
+	AppNamespace string `yaml:"app_namespace,omitempty"`
+
+	// ClassName is the GatewayClass name. Empty → the terraform default
+	// ("gateway-class"). GatewayClass is CLUSTER-scoped, so two BNK installs in
+	// one cluster must not share it; that is what this exists for.
+	ClassName string `yaml:"class_name,omitempty"`
+	// ControllerName is the GatewayClass controllerName. Empty → terraform
+	// DERIVES it as "f5.com/<flo_namespace>-f5-cne-controller", which is the
+	// value the CNE controller answers to. Leave it empty unless you are
+	// pointing the GatewayClass at a controller this deployment did not install
+	// — a wrong value fails silently (GatewayClass never Accepted, Gateway never
+	// programmed, apply succeeds).
+	ControllerName string `yaml:"controller_name,omitempty"`
+
 	BackendService     string   `yaml:"backend_service,omitempty"`
 	BackendPort        int      `yaml:"backend_port,omitempty"`
 	EgressMode         string   `yaml:"egress_mode,omitempty"` // snatpool | automap | both

@@ -83,8 +83,8 @@ func TestCheckSupported(t *testing.T) {
 	if err := CheckSupported("2.3", NetworkModeSingleNIC, 1); err != nil {
 		t.Errorf("2.3 + single-nic + schema 1 must be supported: %v", err)
 	}
-	if err := CheckSupported("2.4", NetworkModeMultiNIC, 2); err != nil {
-		t.Errorf("2.4 + multi-nic + schema 2 must be supported: %v", err)
+	if err := CheckSupported("2.4", NetworkModeSingleNIC, 2); err != nil {
+		t.Errorf("2.4 + single-nic + schema 2 must be supported: %v", err)
 	}
 	// 2.4 must still drive clusters built before multi-NIC existed, or adopting
 	// 2.4 would force everyone to rebuild.
@@ -93,6 +93,16 @@ func TestCheckSupported(t *testing.T) {
 	}
 	if err := CheckSupported("2.3", NetworkModeMultiNIC, 2); err == nil {
 		t.Error("2.3 does not express multi-nic and must refuse it")
+	}
+	// Neither does 2.4, on the evidence we have: the 2.4 EA install guide is
+	// single-NIC throughout. The row claimed multi-NIC on an expectation, which
+	// made this pairing pass with nothing behind it. Withdrawn until a release
+	// shows otherwise — and this assertion is what will fail when it does, which
+	// is the reminder to re-check the row rather than just flip it.
+	if err := CheckSupported("2.4", NetworkModeMultiNIC, 2); err == nil {
+		t.Error("no shipped BNK line expresses multi-nic yet; 2.4 must refuse it too")
+	} else if errors.Is(err, ErrUnknownLine) {
+		t.Error("2.4 is a known line — refusing multi-nic must not read as an unknown line")
 	}
 	// An unknown line is reported through a SENTINEL, because callers must be
 	// able to tell "I have no information about this release" from "this pairing

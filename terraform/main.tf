@@ -283,7 +283,11 @@ module "gateway" {
   cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
   kubeconfig_dir            = "${var.kubeconfig_dir}/gateway"
 
-  app_namespace                = var.gateway_app_namespace
+  app_namespace = var.gateway_app_namespace
+  # Empty gateway_controller_name is the DERIVE sentinel, resolved inside the
+  # module against flo_namespace — passing it straight through is deliberate.
+  gateway_class_name           = var.gateway_class_name
+  gateway_controller_name      = var.gateway_controller_name
   gateway_backend_service      = var.gateway_backend_service
   gateway_backend_port         = var.gateway_backend_port
   gateway_egress_mode          = var.gateway_egress_mode

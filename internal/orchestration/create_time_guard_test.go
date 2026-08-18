@@ -165,10 +165,25 @@ func TestSupportedCombinationGuard(t *testing.T) {
 		t.Error("2.3 driving a multi-nic cluster must be refused")
 	}
 
-	// 2.4 can, and must also still drive a legacy single-nic cluster.
+	// Nor can 2.4, on the evidence we have — the 2.4 EA install guide is
+	// single-NIC throughout (docs/prd/18-BNK-2-4-SUPPORT.md §3.1). The matrix row
+	// used to claim multi-NIC on an expectation, so this guard approved a plan
+	// nothing backed.
 	cctx.Workspace.BNK.ManifestVersion = "2.4.0-1.2.3-0.0.1"
-	if err := guardSupportedCombination(cctx, &bytes.Buffer{}); err != nil {
-		t.Errorf("2.4 + multi-nic must be supported: %v", err)
+	if err := guardSupportedCombination(cctx, &bytes.Buffer{}); err == nil {
+		t.Error("no shipped BNK line expresses multi-nic; 2.4 driving one must be refused")
+	}
+
+	// 2.4 must still drive a single-nic cluster, including one created before
+	// multi-NIC existed — otherwise adopting 2.4 would force a rebuild.
+	single := stageGuardWS(t, config.NetworkModeSingleNIC, &config.ClusterOutputs{
+		ClusterName: "s", ClusterID: "s1",
+		SchemaVersion: config.ContractSchemaVersion,
+		NetworkMode:   config.NetworkModeSingleNIC,
+	})
+	single.Workspace.BNK.ManifestVersion = "2.4.0-1.2.3-0.0.1"
+	if err := guardSupportedCombination(single, &bytes.Buffer{}); err != nil {
+		t.Errorf("2.4 + single-nic must be supported: %v", err)
 	}
 
 	legacy := stageGuardWS(t, "", &config.ClusterOutputs{ClusterName: "old", ClusterID: "o1"})

@@ -58,7 +58,7 @@ Source: `terraform/variables.tf`
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=<cluster vpc>). | no |
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
-| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
+| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here. | no |
 | `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
 | `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
 | `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
@@ -90,6 +90,8 @@ Source: `terraform/variables.tf`
 | `flp_chart_version` | `string` | `""` | Pin for the f5-license-proxy chart version (empty → registry latest). | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs (FLP phase). Default = ROKS VPC block. | no |
 | `gateway_app_namespace` | `string` | `"f5-app"` | Application namespace the Gateway + HTTPRoute serve (created by the gateway module) | no |
+| `gateway_class_name` | `string` | `"gateway-class"` | GatewayClass name. Set it to run more than one BNK GatewayClass in a cluster — GatewayClass is cluster-scoped, so two installs sharing the name collide. | no |
+| `gateway_controller_name` | `string` | `""` | GatewayClass controllerName. Empty → derived as f5.com/`<flo_namespace>`-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds). | no |
 | `gateway_backend_service` | `string` | `"nginx-service"` | HTTPRoute backend Service name in the app namespace | no |
 | `gateway_backend_port` | `number` | `80` | HTTPRoute backend Service port | no |
 | `gateway_egress_mode` | `string` | `"snatpool"` | Egress SNAT strategy: snatpool (default), automap, or both | no |
@@ -169,7 +171,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_trusted_profile_sa_name` | `string` | `""` | The CNE controller service account; must match what the flo module linked. | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM IAM Trusted Profile ID for provisioning VPC routes | no |
 | `flo_cluster_issuer_name` | `string` | `""` | mTLS certificate issuer name | no |
-| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Small, Medium, Large) | no |
+| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses. | no |
 | `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
 | `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
 | `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
@@ -331,7 +333,7 @@ Source: `terraform/modules/gateway/variables.tf`
 | `app_namespace` | `string` | `"f5-app"` | Application namespace the Gateway + HTTPRoute serve (created by this module) | no |
 | `cneinstance_network_zones` | `list(object({` | `[ { ext_vlan_cidr   = "10.155.15.0/24" int_vlan_cidr   = "10.254.99.0/24" int_snat_cidr   = "10.10.11.0/24" int_vip_cidr    = "10.135.15.0/24" external_selfip = "10.155.15.101" internal_selfip = "10.254.99.101" }, { ext_vlan_cidr   = "10.156.16.0/24" int_vlan_cidr   = "10.254.100.0/24" int_snat_cidr   = "10.10.21.0/24" int_vip_cidr    = "10.136.16.0/24" external_selfip = "10.156.16.101" internal_selfip = "10.254.100.101" }, { ext_vlan_cidr   = "10.157.17.0/24" int_vlan_cidr   = "10.254.101.0/24" int_snat_cidr   = "10.10.31.0/24" int_vip_cidr    = "10.137.17.0/24" external_selfip = "10.157.17.101" internal_selfip = "10.254.101.101" }, ]` | Per-zone subnet CIDRs (empty = install-guide defaults). Shared with the BNK phase. | no |
 | `gateway_class_name` | `string` | `"gateway-class"` | GatewayClass name | no |
-| `gateway_controller_name` | `string` | `"f5.com/f5-bnk-f5-cne-controller"` | GatewayClass controllerName (the BNK CNE controller) | no |
+| `gateway_controller_name` | `string` | `""` | GatewayClass controllerName. Empty (the default) DERIVES it from flo_namespace as "f5.com/`<flo_namespace>`-f5-cne-controller", which is the only value the CNE controller answers to — it must equal the CNEInstance's own name (modules/cne_instance/.../main.tf builds that as "`<flo_namespace>`-f5-cne-controller"). This used to be the literal "f5.com/f5-bnk-f5-cne-controller", i.e. the DEFAULT namespace baked in as a constant, so any workspace with a non-default bnk.flo_namespace got a GatewayClass no controller ever accepted and a Gateway that never programmed. Set explicitly only to point at a controller this module did not deploy. | no |
 | `gateway_bnkgateway_name` | `string` | `"bnkgateway-cloud1"` | F5BnkGateway name (referenced by the Gateway parametersRef) | no |
 | `gateway_name` | `string` | `"http-gw"` | Gateway (gateway.networking.k8s.io) name | no |
 | `gateway_listener_port` | `number` | `80` | Gateway HTTP listener port | no |

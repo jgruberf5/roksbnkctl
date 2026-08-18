@@ -30,6 +30,15 @@ output "gateway_class_name" {
   value       = local.enabled ? var.gateway_class_name : ""
 }
 
+# Surfaced because the failure it diagnoses is SILENT: a controllerName that no
+# controller answers to leaves GatewayClass ACCEPTED=<none> and the apply
+# succeeds. Having the resolved value in `gateway output` makes "does this match
+# the CNEInstance?" a one-line check instead of an inspection of two CRs.
+output "gateway_controller_name" {
+  description = "Resolved GatewayClass controllerName (derived from flo_namespace unless set)"
+  value       = local.enabled ? local.gateway_controller_name : ""
+}
+
 output "gateway_bnkgateway_name" {
   description = "Name of the F5BnkGateway (k8s.f5net.com) CR"
   value       = local.enabled ? var.gateway_bnkgateway_name : ""

@@ -64,6 +64,10 @@ var phaseOutputOwnership = map[string][]string{
 		"gateway_flo_namespace",
 		"gateway_name",
 		"gateway_class_name",
+		// The resolved controllerName. Listed because a wrong value produces no
+		// error anywhere — GatewayClass stays un-Accepted and the apply succeeds
+		// — so the only cheap check is reading back what was applied.
+		"gateway_controller_name",
 		"gateway_bnkgateway_name",
 		"gateway_route_name",
 		"gateway_backend",

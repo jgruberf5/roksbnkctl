@@ -110,7 +110,7 @@ variable "flo_cluster_issuer_name" {
 # ============================================================
 
 variable "cneinstance_deployment_size" {
-  description = "Deployment size for CNEInstance (Small, Medium, Large)"
+  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses."
   type        = string
   default     = "Small"
 }

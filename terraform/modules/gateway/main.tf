@@ -19,6 +19,25 @@ locals {
 
   zone_names = [for i in range(length(var.cneinstance_network_zones)) : "${var.ibmcloud_cluster_region}-${i + 1}"]
 
+  # The GatewayClass controllerName is not a free-form label — it is the string
+  # the CNE controller matches itself against, and the controller identifies as
+  # the CNEInstance's own name, which is "<flo_namespace>-f5-cne-controller".
+  # Deriving it here is what keeps the two in step; a literal cannot, because the
+  # namespace is a variable. The BNK 2.4 install guide states the requirement
+  # outright ("Make sure controller name(f5-bnk-f5-cne-controller) is same as in
+  # CNEInstance CR"), but it holds for 2.3 just as much.
+  #
+  # Empty var → derive. A non-default bnk.flo_namespace previously produced
+  # "f5.com/f5-bnk-f5-cne-controller" against a controller calling itself
+  # something else: GatewayClass ACCEPTED=<none>, Gateway never programmed, and
+  # nothing in the apply failed. With the default namespace the derived value is
+  # byte-identical to the old literal, so no existing deployment moves.
+  gateway_controller_name = (
+    var.gateway_controller_name != ""
+    ? var.gateway_controller_name
+    : "f5.com/${var.flo_namespace}-f5-cne-controller"
+  )
+
   do_automap  = contains(["automap", "both"], var.gateway_egress_mode)
   do_snatpool = contains(["snatpool", "both"], var.gateway_egress_mode)
 
@@ -86,7 +105,7 @@ resource "kubectl_manifest" "gateway_class" {
     kind       = "GatewayClass"
     metadata   = { name = var.gateway_class_name }
     spec = {
-      controllerName = var.gateway_controller_name
+      controllerName = local.gateway_controller_name
       description    = "F5 BIG-IP Kubernetes Gateway"
     }
   })
