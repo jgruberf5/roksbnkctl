@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
+            window.path_to_searchindex_js = "searchindex-28314693.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -300,6 +300,19 @@ roksbnkctl cleanup --auto     # skip the confirmation prompt
 <li>The <strong>BNK trusted profile</strong> (named after the cluster ID — found via <code>cluster-outputs.json</code>, so it’s still identifiable after the cluster is gone).</li>
 </ul>
 <p>Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is <strong>best-effort</strong>: a failure on one resource is reported and the sweep continues. Re-run <code>cleanup</code> for anything blocked on an async delete (e.g. a VPC that can’t go until its cluster finishes terminating).</p>
+<h3 id="how-the-transit-gateway-is-handled"><a class="header" href="#how-the-transit-gateway-is-handled">How the Transit Gateway is handled</a></h3>
+<p>A gateway cannot be deleted while anything is attached to it, so <code>cleanup</code> detaches its connections first, <strong>waits for them to actually clear</strong>, and only then deletes the gateway. The detach is asynchronous — IBM leaves the connection in <code>deleting</code> for a few seconds — and deleting the gateway during that window fails with:</p>
+<pre><code>412 Precondition Failed: Before you can delete this gateway,
+you must delete all attached connections.
+</code></pre>
+<p>Which connections it may detach is a deliberate limit, not an oversight:</p>
+<ul>
+<li>A connection to a <strong>VPC this same sweep is deleting</strong> is yours; <code>cleanup</code> removes it.</li>
+<li><strong>Anything else</strong> — a VPC under a different prefix, another account’s network, a Direct Link or GRE attachment — belongs to someone else. <code>cleanup</code> <strong>refuses the gateway</strong> and names what is attached, rather than quietly disconnecting a shared gateway’s other tenants.</li>
+</ul>
+<p>Connections already in <code>deleting</code> — someone else’s detach, or a cascade from a cluster delete this same sweep kicked off — are a third case: waited for, never deleted again. Re-issuing a <code>DELETE</code> against one is rejected, and that rejection would abort a gateway delete that was seconds from succeeding.</p>
+<p>A refusal is not a transient, and an identical re-run will not clear it. <strong>Check the region first</strong>: <code>cleanup</code> scans only the workspace’s cluster and client regions by default, so the commonest reason a VPC looks foreign is that it is yours and simply was not scanned. Re-run with <code>--all-regions</code> (or <code>--region &lt;name&gt;</code>) and it comes into scope. If the network really is someone else’s, detach it yourself (<code>ibmcloud tg connection-delete &lt;gateway-id&gt; &lt;connection-id&gt;</code>) or delete it, then sweep again.</p>
+<p>This matters most for the shared-gateway topology in <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>, where one gateway deliberately outlives the clusters attached to it.</p>
 <h3 id="which-regions-it-scans"><a class="header" href="#which-regions-it-scans">Which regions it scans</a></h3>
 <p>By default <code>cleanup</code> scans the workspace’s cluster region plus the testing-client region (from <code>config.yaml</code>’s <a href="./28-configuration-reference.html#resources-block"><code>resources.client_region</code></a> and <code>cluster-outputs.json</code>). If resources landed in a region not recorded in config, add it explicitly or sweep everything:</p>
 <pre><code class="language-bash">roksbnkctl cleanup --region ca-tor   # add a specific region to the scan

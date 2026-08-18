@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
+            window.path_to_searchindex_js = "searchindex-28314693.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -236,7 +236,7 @@
 <tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles granted to the CNE controller’s Trusted Profile, scoped to the cluster’s OWN VPC (serviceName=is, vpcId=<cluster vpc="">).</cluster></td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
-<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
@@ -268,6 +268,8 @@
 <tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin for the f5-license-proxy chart version (empty → registry latest).</td><td>no</td></tr>
 <tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs (FLP phase). Default = ROKS VPC block.</td><td>no</td></tr>
 <tr><td><code>gateway_app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by the gateway module)</td><td>no</td></tr>
+<tr><td><code>gateway_class_name</code></td><td><code>string</code></td><td><code>"gateway-class"</code></td><td>GatewayClass name. Set it to run more than one BNK GatewayClass in a cluster — GatewayClass is cluster-scoped, so two installs sharing the name collide.</td><td>no</td></tr>
+<tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GatewayClass controllerName. Empty → derived as f5.com/<code>&lt;flo_namespace&gt;</code>-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds).</td><td>no</td></tr>
 <tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
 <tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
 <tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default), automap, or both</td><td>no</td></tr>
@@ -355,7 +357,7 @@
 <tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>The CNE controller service account; must match what the flo module linked.</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM IAM Trusted Profile ID for provisioning VPC routes</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>mTLS certificate issuer name</td><td>no</td></tr>
-<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Small, Medium, Large)</td><td>no</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
@@ -484,7 +486,8 @@
 <tr><td><code>flp_vsi_licensing_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply.</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>The cluster VPC id (from cluster-outputs.json) the FLP VSI joins so the CWC reaches it directly.</td><td>no</td></tr>
-<tr><td><code>flp_image_registry</code></td><td><code>string</code></td><td><code>"repo.f5.com/images"</code></td><td>FAR image host prefix, e.g. repo.f5.com/images.</td><td>no</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository host for the FLP chart pulls. Same value as the root far_repo_url.</td><td>no</td></tr>
+<tr><td><code>flp_image_registry</code></td><td><code>string</code></td><td><code>""</code></td><td>FAR image host prefix. Empty (the default) derives <code>&lt;far_repo_url&gt;</code>/images, so the image host follows the chart host instead of pinning repo.f5.com independently.</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><em>required</em></td><td>BNK manifest version — the f5-license-proxy chart/image tag is resolved from it (like the helm path) when flp_chart_version is empty.</td><td>no</td></tr>
 <tr><td><code>flp_chart_version</code></td><td><code>string</code></td><td><code>""</code></td><td>Pin the f5-license-proxy chart/image tag. Empty → resolved from the BNK manifest.</td><td>no</td></tr>
 <tr><td><code>flp_vault_image_tag</code></td><td><code>string</code></td><td><code>"2.0.0"</code></td><td>Tag for the vault image.</td><td>no</td></tr>
@@ -533,7 +536,7 @@
 <tr><td><code>app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by this module)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[ { ext_vlan_cidr   = "10.155.15.0/24" int_vlan_cidr   = "10.254.99.0/24" int_snat_cidr   = "10.10.11.0/24" int_vip_cidr    = "10.135.15.0/24" external_selfip = "10.155.15.101" internal_selfip = "10.254.99.101" }, { ext_vlan_cidr   = "10.156.16.0/24" int_vlan_cidr   = "10.254.100.0/24" int_snat_cidr   = "10.10.21.0/24" int_vip_cidr    = "10.136.16.0/24" external_selfip = "10.156.16.101" internal_selfip = "10.254.100.101" }, { ext_vlan_cidr   = "10.157.17.0/24" int_vlan_cidr   = "10.254.101.0/24" int_snat_cidr   = "10.10.31.0/24" int_vip_cidr    = "10.137.17.0/24" external_selfip = "10.157.17.101" internal_selfip = "10.254.101.101" }, ]</code></td><td>Per-zone subnet CIDRs (empty = install-guide defaults). Shared with the BNK phase.</td><td>no</td></tr>
 <tr><td><code>gateway_class_name</code></td><td><code>string</code></td><td><code>"gateway-class"</code></td><td>GatewayClass name</td><td>no</td></tr>
-<tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>"f5.com/f5-bnk-f5-cne-controller"</code></td><td>GatewayClass controllerName (the BNK CNE controller)</td><td>no</td></tr>
+<tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GatewayClass controllerName. Empty (the default) DERIVES it from flo_namespace as “f5.com/<code>&lt;flo_namespace&gt;</code>-f5-cne-controller”, which is the only value the CNE controller answers to — it must equal the CNEInstance’s own name (modules/cne_instance/…/main.tf builds that as “<code>&lt;flo_namespace&gt;</code>-f5-cne-controller”). This used to be the literal “f5.com/f5-bnk-f5-cne-controller”, i.e. the DEFAULT namespace baked in as a constant, so any workspace with a non-default bnk.flo_namespace got a GatewayClass no controller ever accepted and a Gateway that never programmed. Set explicitly only to point at a controller this module did not deploy.</td><td>no</td></tr>
 <tr><td><code>gateway_bnkgateway_name</code></td><td><code>string</code></td><td><code>"bnkgateway-cloud1"</code></td><td>F5BnkGateway name (referenced by the Gateway parametersRef)</td><td>no</td></tr>
 <tr><td><code>gateway_name</code></td><td><code>string</code></td><td><code>"http-gw"</code></td><td>Gateway (gateway.networking.k8s.io) name</td><td>no</td></tr>
 <tr><td><code>gateway_listener_port</code></td><td><code>number</code></td><td><code>80</code></td><td>Gateway HTTP listener port</td><td>no</td></tr>

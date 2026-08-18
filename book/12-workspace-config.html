@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
+            window.path_to_searchindex_js = "searchindex-28314693.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -391,7 +391,7 @@ cos:             # optional COS supply-chain config
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>.</td></tr>
+<tr><td><code>cneinstance_size</code></td><td>enum</td><td>upstream HCL default (<code>Small</code>)</td><td><code>Tiny</code> | <code>Small</code> | <code>Medium</code> | <code>Large</code>. Sets <code>cneinstance_deployment_size</code>. <code>Tiny</code> is what the BNK 2.4 install guide uses. Passed through unvalidated — a size a given manifest does not define is rejected by the operator, not by this tool.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td>upstream HCL default (<code>repo.f5.com</code>)</td><td>The FAR Docker/Helm repo. Override only for staging/internal repos.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td>upstream HCL default</td><td>Pin a specific BNK manifest chart version. Leave empty to track the upstream HCL’s pin.</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>F5 Lifecycle Operator namespace. Sets <code>flo_namespace</code>.</td></tr>

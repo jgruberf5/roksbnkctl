@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
+            window.path_to_searchindex_js = "searchindex-28314693.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -337,7 +337,7 @@ bnkforge:        # optional; opt-in BNK Forge cluster registration
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Allowed</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Small</code> | <code>Medium</code> | <code>Large</code></td><td>Sizing for the deployed CNE Instance. Renders into the upstream HCL <code>cneinstance_deployment_size</code> variable.</td></tr>
+<tr><td><code>cneinstance_size</code></td><td>string</td><td><code>Small</code></td><td><code>Tiny</code> | <code>Small</code> | <code>Medium</code> | <code>Large</code></td><td>Sizing for the deployed CNE Instance → <code>cneinstance_deployment_size</code>. <code>Tiny</code> is what the BNK 2.4 install guide uses. The value is passed through <strong>unvalidated</strong>: which sizes exist is a property of the manifest, not of this tool, so an unknown one is rejected by the operator rather than at plan time.</td></tr>
 <tr><td><code>far_repo_url</code></td><td>string</td><td><code>repo.f5.com</code></td><td>URL of a Docker-compatible image registry</td><td>The image registry FLO pulls FAR container images from. Override for air-gapped installs pointing at a local mirror.</td></tr>
 <tr><td><code>manifest_version</code></td><td>string</td><td><code>2.3.0-3.2598.3-0.0.170</code></td><td>a published <code>f5-bigip-k8s-manifest</code> chart version</td><td>Pins the FLO + CIS versions transitively (both are extracted from the manifest chart).</td></tr>
 <tr><td><code>flo_namespace</code></td><td>string</td><td><code>f5-bnk</code></td><td>RFC 1123 namespace label</td><td>Namespace the F5 Lifecycle Operator installs into (<code>flo_namespace</code>). Set for multi-tenant clusters or to avoid a namespace collision.</td></tr>
@@ -372,16 +372,23 @@ than what the config currently asks for.</p>
 </thead>
 <tbody>
 <tr><td>2.3</td><td><strong>yes</strong></td><td><strong>no</strong> — 2.3 does not express the multi-NIC network attachments or CNEInstance options</td></tr>
-<tr><td>2.4</td><td><strong>yes</strong></td><td><strong>yes</strong> — provisional; see the note below</td></tr>
+<tr><td>2.4</td><td><strong>yes</strong></td><td><strong>no</strong> — on the evidence available; see the note below</td></tr>
 </tbody>
 </table>
 </div>
+<p><strong>No shipped BNK line expresses multi-NIC yet.</strong> The 2.4 row originally claimed
+it, on the expectation that 2.4 would add it. The BNK 2.4 EA install guide does
+not: it is single-NIC throughout — one NetworkAttachmentDefinition, one
+<code>external-vlan</code> network, no second data-plane interface anywhere. The claim was
+withdrawn rather than left standing, because a cell that passes on an
+expectation is worse than no cell: it lets the plan-time check approve a
+deployment nobody has grounds for.</p>
 <p>A 2.4 install still drives a single-NIC cluster, including one created before
-multi-NIC existed. That is what lets an existing deployment move to 2.4 without
-touching its cluster. What does not exist is a conversion: a cluster is built in
-one mode and stays in it.</p>
-<p>The 2.4 row is <strong>provisional</strong>: it was written before 2.4 shipped and has never
-been run against it. Every value in it is an expectation, not an observation.</p>
+the network-mode field existed. That is what lets an existing deployment move to
+2.4 without touching its cluster. What does not exist is a conversion: a cluster
+is built in one mode and stays in it.</p>
+<p>The 2.4 row remains <strong>provisional</strong> in its other values — the contract range was
+written before 2.4 shipped and has never been run against it.</p>
 <p><code>roksbnkctl</code> checks the pairing before it plans and refuses an unsupported one
 there, rather than letting it fail against real infrastructure. The matrix is
 data (<code>internal/config/support_matrix.yaml</code>), not a rule buried in code, so
@@ -440,6 +447,55 @@ comfortably above the budget is used exactly as written.</p>
 <code>init --non-interactive --override-from-env</code> and there is no <code>config.yaml</code> to edit
 (<a href="./07a-unattended-setup.html">Chapter 7a</a>). See
 <a href="./appendix-a-disconnected-roks-cluster.html">Appendix A</a> for the gate’s full output and rationale.</p>
+<h2 id="gateway-block"><a class="header" href="#gateway-block"><code>gateway:</code> block</a></h2>
+<p>Overrides for the <strong>gateway phase</strong> — the data-plane ingress/egress
+configuration applied by <code>roksbnkctl gateway up</code>, not by <code>bnk up</code>. The phase
+itself is driven by the command; nothing here turns it on. Every field is
+optional and an absent block leaves the terraform module’s install-guide
+defaults in place.</p>
+<pre><code class="language-yaml">gateway:
+  # Identity. GatewayClass is CLUSTER-scoped.
+  class_name: gateway-class        # optional
+  controller_name: ""              # optional — LEAVE EMPTY (see below)
+
+  # What the sample Gateway + HTTPRoute front.
+  app_namespace: f5-app
+  backend_service: nginx-service
+  backend_port: 80
+
+  # Egress.
+  egress_mode: both                # snatpool | automap | both
+  vxlan_port: 6789
+  client_subnet_local:  ["10.241.0.0/24"]
+  client_subnet_remote: ["10.242.0.0/24"]
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Default</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>class_name</code></td><td>string</td><td><code>gateway-class</code></td><td>GatewayClass name. GatewayClass is <strong>cluster-scoped</strong>, so two BNK installs sharing one cluster must not share this name.</td></tr>
+<tr><td><code>controller_name</code></td><td>string</td><td><em>(derived)</em></td><td>GatewayClass <code>controllerName</code>. <strong>Leave this empty.</strong> Empty derives <code>f5.com/&lt;bnk.flo_namespace&gt;-f5-cne-controller</code>, which is the only value the CNE controller answers to — it must equal the CNEInstance’s own name. Set it only to point the GatewayClass at a controller this deployment did not install.</td></tr>
+<tr><td><code>app_namespace</code></td><td>string</td><td><code>f5-app</code></td><td>Namespace the sample Gateway, HTTPRoute and application live in. Created by the phase.</td></tr>
+<tr><td><code>backend_service</code></td><td>string</td><td><code>nginx-service</code></td><td>Service the HTTPRoute forwards to.</td></tr>
+<tr><td><code>backend_port</code></td><td>int</td><td><code>80</code></td><td>Its port.</td></tr>
+<tr><td><code>egress_mode</code></td><td>string</td><td><code>both</code></td><td>Which egress CRs to apply: <code>automap</code> (SNAT to the TMM self-IP), <code>snatpool</code> (SNAT from a pool), or <code>both</code>.</td></tr>
+<tr><td><code>vxlan_port</code></td><td>int</td><td><code>6789</code></td><td>Egress VXLAN UDP port. Also opened inbound on the cluster’s worker security group — the tunnel does not form without that rule.</td></tr>
+<tr><td><code>client_subnet_local</code></td><td>list(string)</td><td><code>[]</code></td><td>Client subnets <strong>in the cluster’s own VPC</strong> that need a return route through TMM. One static route per subnet per zone.</td></tr>
+<tr><td><code>client_subnet_remote</code></td><td>list(string)</td><td><code>[]</code></td><td>The same for subnets reached across a Transit Gateway.</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong><code>controller_name</code> fails silently when wrong.</strong> A <code>controllerName</code> no
+controller matches leaves the GatewayClass with <code>ACCEPTED=&lt;none&gt;</code> and the
+Gateway unprogrammed — while <code>terraform apply</code> reports success. Before
+<code>v1.46.0</code> the default was the literal <code>f5.com/f5-bnk-f5-cne-controller</code>, so
+<strong>any workspace with a non-default <code>bnk.flo_namespace</code> hit exactly this.</strong>
+The derived default fixes it; check the applied value with
+<code>roksbnkctl gateway output gateway_controller_name</code>.</p>
+</blockquote>
 <h2 id="test-block"><a class="header" href="#test-block"><code>test:</code> block</a></h2>
 <pre><code class="language-yaml">test:
   throughput:
@@ -890,6 +946,15 @@ values. The resulting block looks like:</p>
 <tr><td><code>targets.&lt;name&gt;.user</code></td><td>string</td><td>—</td><td>SSH user.</td></tr>
 <tr><td><code>targets.&lt;name&gt;.key_path</code></td><td>string</td><td>(empty)</td><td>PEM file path.</td></tr>
 <tr><td><code>targets.&lt;name&gt;.key_source</code></td><td>string</td><td>(empty)</td><td><code>agent</code> | <code>tf-output:&lt;name&gt;</code>.</td></tr>
+<tr><td><code>gateway.class_name</code></td><td>string</td><td><code>gateway-class</code></td><td>GatewayClass name → <code>gateway_class_name</code>. Cluster-scoped; two installs in one cluster must differ.</td></tr>
+<tr><td><code>gateway.controller_name</code></td><td>string</td><td><em>(derived)</em></td><td>GatewayClass <code>controllerName</code> → <code>gateway_controller_name</code>. Empty derives <code>f5.com/&lt;bnk.flo_namespace&gt;-f5-cne-controller</code>. <strong>Leave empty</strong> unless targeting a controller this deployment did not install.</td></tr>
+<tr><td><code>gateway.app_namespace</code></td><td>string</td><td><code>f5-app</code></td><td>Namespace the sample Gateway/HTTPRoute/app live in → <code>gateway_app_namespace</code>.</td></tr>
+<tr><td><code>gateway.backend_service</code></td><td>string</td><td><code>nginx-service</code></td><td>HTTPRoute backend Service → <code>gateway_backend_service</code>.</td></tr>
+<tr><td><code>gateway.backend_port</code></td><td>integer</td><td><code>80</code></td><td>Its port → <code>gateway_backend_port</code>.</td></tr>
+<tr><td><code>gateway.egress_mode</code></td><td>string</td><td><code>both</code></td><td><code>snatpool</code> | <code>automap</code> | <code>both</code> → <code>gateway_egress_mode</code>.</td></tr>
+<tr><td><code>gateway.vxlan_port</code></td><td>integer</td><td><code>6789</code></td><td>Egress VXLAN UDP port → <code>gateway_vxlan_port</code>; also opened on the worker security group.</td></tr>
+<tr><td><code>gateway.client_subnet_local</code></td><td>list(string)</td><td><code>[]</code></td><td>Same-VPC client subnets needing a return route → <code>gateway_client_subnet_local</code>.</td></tr>
+<tr><td><code>gateway.client_subnet_remote</code></td><td>list(string)</td><td><code>[]</code></td><td>Across-TGW client subnets → <code>gateway_client_subnet_remote</code>.</td></tr>
 <tr><td><code>exec.&lt;tool&gt;.backend</code></td><td>string</td><td><code>local</code> (varies by tool)</td><td><code>local</code> | <code>docker</code> | <code>k8s</code> | <code>ssh:&lt;target&gt;</code>.</td></tr>
 <tr><td><code>bnkforge.register</code></td><td>bool</td><td><code>false</code></td><td>Opt into BNK Forge cluster registration on <code>cluster up</code>.</td></tr>
 <tr><td><code>bnkforge.url</code></td><td>string</td><td>(CLI’s stored-session URL)</td><td>Override the BNK Forge server URL.</td></tr>

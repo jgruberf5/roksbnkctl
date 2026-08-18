@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d07e2c74.js";
+            window.path_to_searchindex_js = "searchindex-28314693.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -395,10 +395,12 @@ comes from <code>cluster-outputs.json</code>, not from <code>config.yaml</code>.
 <p><strong>Root cause</strong>: the BNK release — derived from <code>bnk.manifest_version</code> — cannot
 drive a cluster of that network mode. 2.3 does not express the multi-NIC network
 attachments or CNEInstance options.</p>
-<p><strong>Fix</strong>: use a <code>bnk.manifest_version</code> on a line that supports the mode (2.4+ for
-multi-nic), or a cluster built in a mode this line supports. The pairing is
-checked at plan time precisely so this is a message rather than a failed apply
-against real infrastructure.</p>
+<p><strong>Fix</strong>: use a cluster built in a mode this line supports. <strong>There is currently
+no line to move to for <code>multi-nic</code></strong> — 2.4 was expected to add it and, on the
+evidence of its EA install guide, does not, so its row was corrected to
+single-nic. See <a href="./28-configuration-reference.html#bnk-release-and-network-mode">Chapter 28</a>.
+The pairing is checked at plan time precisely so this is a message rather than a
+failed apply against real infrastructure.</p>
 <h3 id="symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix"><a class="header" href="#symptom--unknown-bnk-release-line-bnk-25-is-not-in-this-builds-support-matrix">Symptom: <code>! unknown BNK release line: BNK 2.5 is not in this build's support matrix</code></a></h3>
 <p><strong>This is a warning, and the run continues.</strong> It is expected, not a defect.</p>
 <p><strong>Root cause</strong>: the support matrix ships <em>inside</em> the binary, so a release newer
