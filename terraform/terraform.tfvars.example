@@ -187,7 +187,7 @@ bigip_url      = "https://192.168.1.245"
 
 # --- CNEInstance (ws4) ---
 
-# Deployment size for the CNEInstance.  Options: Small, Medium, Large.
+# Deployment size for the CNEInstance.  Options: Tiny, Small, Medium, Large.
 cneinstance_deployment_size = "Small"
 
 # GSLB datacenter name. Leave empty if not using GSLB.

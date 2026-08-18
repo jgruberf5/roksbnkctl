@@ -354,6 +354,14 @@ func renderGatewayFields(w io.Writer, ws *config.Workspace) {
 	if g.AppNamespace != "" {
 		fmt.Fprintf(w, "gateway_app_namespace = %q\n", g.AppNamespace)
 	}
+	if g.ClassName != "" {
+		fmt.Fprintf(w, "gateway_class_name = %q\n", g.ClassName)
+	}
+	// Unset stays unset: an empty gateway_controller_name is the DERIVE sentinel
+	// the module resolves against flo_namespace, not a missing value.
+	if g.ControllerName != "" {
+		fmt.Fprintf(w, "gateway_controller_name = %q\n", g.ControllerName)
+	}
 	if g.BackendService != "" {
 		fmt.Fprintf(w, "gateway_backend_service = %q\n", g.BackendService)
 	}

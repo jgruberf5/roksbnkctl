@@ -262,6 +262,24 @@ func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[s
 
 	res := map[string]string{}
 
+	// GatewayClass first, because everything below it is downstream of this one
+	// condition and its failure is otherwise invisible. A controllerName that no
+	// controller matches leaves Accepted absent — terraform still reports
+	// success, the Gateway simply never programs, and nothing says why. Reporting
+	// the class's Accepted condition next to the controllerName that produced it
+	// turns that into a one-line diagnosis.
+	if className := outString(outs, "gateway_class_name"); className != "" {
+		gc, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "GatewayClass", "", className)
+		if err != nil {
+			res["gatewayclass"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["gatewayclass"] = crConditionSummary(gc, "Accepted")
+			if cn, found, _ := unstructured.NestedString(gc.Object, "spec", "controllerName"); found && cn != "" {
+				res["gatewayclass_controller"] = cn
+			}
+		}
+	}
+
 	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", outString(outs, "gateway_app_namespace"), gwName)
 	if err != nil {
 		res["gateway"] = fmt.Sprintf("(error: %v)", err)
@@ -415,7 +433,7 @@ var gatewayStatusCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return runPhaseStatus(cmd, "gateway", config.WorkspaceGatewayStateDir,
-			[]string{"gateway_enabled", "gateway_name", "gateway_bnkgateway_name", "gateway_app_namespace", "gateway_listener_networks", "gateway_egress_mode"},
+			[]string{"gateway_enabled", "gateway_name", "gateway_class_name", "gateway_controller_name", "gateway_bnkgateway_name", "gateway_app_namespace", "gateway_listener_networks", "gateway_egress_mode"},
 			gatewayProbe)
 	},
 }

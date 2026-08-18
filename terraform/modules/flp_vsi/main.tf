@@ -20,6 +20,13 @@ locals {
   floating_ip_addr = local.enabled && var.flp_vsi_floating_ip ? try(ibm_is_floating_ip.flp[0].address, "") : ""
   # FLP chart/image tag: pinned, else resolved from the BNK manifest.
   flp_tag = var.flp_chart_version != "" ? var.flp_chart_version : try(data.external.flp_version[0].result.v, "")
+
+  # FAR host, used for BOTH chart pulls below and (by derivation) the image host.
+  # Deriving the image host rather than defaulting it separately is what keeps the
+  # two from drifting: a workspace pointing at an alternate FAR gets its charts and
+  # its images from the same registry, which is the only combination that works.
+  far_host           = var.far_repo_url != "" ? var.far_repo_url : "repo.f5.com"
+  flp_image_registry = var.flp_image_registry != "" ? var.flp_image_registry : "${local.far_host}/images"
 }
 
 # ── resource group + newest Ubuntu 24.04 stock image ─────────────────────────
@@ -301,7 +308,7 @@ resource "null_resource" "resolve_flp_version" {
   # for the extract — no host tar/grep/awk). --file is the basename; the verb walks
   # the untarred tree to find it. No interpreter → cmd.exe execs roksbnkctl.exe.
   provisioner "local-exec" {
-    command = "${local.roksbnkctl_bin} tfx helm-value chart-version --chart oci://repo.f5.com/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value chart-version --chart oci://${local.far_host}/release/f5-bigip-k8s-manifest --version ${var.f5_bigip_k8s_manifest_version} --subchart charts/f5-license-proxy --file bigip-k8s-manifest-${var.f5_bigip_k8s_manifest_version}.yaml --registry-login ${local.far_host} --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/flp-version.txt"
     environment = {
       HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
     }
@@ -332,7 +339,7 @@ resource "null_resource" "extract_prod_jwks" {
   # helm-value prod-jwks: pull the FLP chart and extract + base64-decode the
   # bundled prod_jwks keyset (Go scan of the template YAMLs — no host tar/grep/awk).
   provisioner "local-exec" {
-    command = "${local.roksbnkctl_bin} tfx helm-value prod-jwks --chart oci://repo.f5.com/charts/f5-license-proxy --version ${local.flp_tag} --registry-login repo.f5.com --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/prod_jwks.txt"
+    command = "${local.roksbnkctl_bin} tfx helm-value prod-jwks --chart oci://${local.far_host}/charts/f5-license-proxy --version ${local.flp_tag} --registry-login ${local.far_host} --username _json_key_base64 --password-env HELM_REGISTRY_PW --out ${var.scratch_dir}/prod_jwks.txt"
     environment = {
       HELM_REGISTRY_PW = trimspace(data.local_file.far_sa[0].content)
     }
@@ -354,7 +361,7 @@ locals {
     pod_up_b64            = base64encode(file("${path.module}/flp-pod-up.sh"))
     jwt_token             = var.use_cos_bucket ? try(trimspace(data.http.jwt[0].response_body), "") : trimspace(var.f5_cne_subscription_jwt)
     external_ip           = local.floating_ip_addr # operator floating IP → added to the leaf-cert SAN (empty when disabled)
-    reg                   = var.flp_image_registry
+    reg                   = local.flp_image_registry
     tag                   = local.flp_tag
     vault_tag             = var.flp_vault_image_tag
     f5_cert_url           = var.f5_cert_url

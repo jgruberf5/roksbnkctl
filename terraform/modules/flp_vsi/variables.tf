@@ -75,11 +75,25 @@ variable "existing_cluster_vpc_id" {
   default     = ""
 }
 
+# ── FAR coordinates ───────────────────────────────────────────────────────────
+# This module used to spell the FAR host as the literal "repo.f5.com" in its two
+# chart pulls, and default its image host to "repo.f5.com/images" with no way to
+# override either. Every OTHER consumer of FAR (flo, cne_instance, flp) takes
+# far_repo_url, so a workspace that set bnk.far_repo_url got the alternate host
+# everywhere EXCEPT the standalone VSI path — which then pulled from the wrong
+# registry and failed on a chart that was never there. Non-production FAR hosts
+# (an EA repo, for one) are exactly the case that surfaces it.
+variable "far_repo_url" {
+  description = "FAR repository host for the FLP chart pulls. Same value as the root far_repo_url."
+  type        = string
+  default     = "repo.f5.com"
+}
+
 # ── FLP image coordinates (resolved from the BNK manifest by the phase) ───────
 variable "flp_image_registry" {
-  description = "FAR image host prefix, e.g. repo.f5.com/images."
+  description = "FAR image host prefix. Empty (the default) derives <far_repo_url>/images, so the image host follows the chart host instead of pinning repo.f5.com independently."
   type        = string
-  default     = "repo.f5.com/images"
+  default     = ""
 }
 
 variable "f5_bigip_k8s_manifest_version" {

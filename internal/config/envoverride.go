@@ -60,6 +60,8 @@ import (
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLO_NAMESPACE        → bnk.flo_namespace (set both to one value for a
 //	ROKSBNKCTL_FLO_UTILS_NAMESPACE  → bnk.flo_utils_namespace   single shared namespace)
+//	ROKSBNKCTL_GATEWAY_CLASS_NAME   → gateway.class_name (GatewayClass is cluster-scoped)
+//	ROKSBNKCTL_GATEWAY_CONTROLLER_NAME → gateway.controller_name (empty derives it from the FLO namespace)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
 //	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
@@ -387,6 +389,21 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 		ws.BNK.FLP.Namespace = v
 		applied = append(applied, "bnk.flp.namespace (ROKSBNKCTL_FLP_NAMESPACE)")
+	}
+
+	// Gateway-phase identity. GatewayClass is CLUSTER-scoped, so two BNK installs
+	// sharing a cluster need distinct class names — which a CI matrix has to set
+	// per job, not per committed config.yaml. The controller name is the value
+	// the CNE controller matches itself against; leaving it empty derives it from
+	// the FLO namespace, which is right for every deployment that installs its
+	// own controller.
+	if v := envValue("ROKSBNKCTL_GATEWAY_CLASS_NAME"); v != "" {
+		ws.Gateway.ClassName = v
+		applied = append(applied, "gateway.class_name (ROKSBNKCTL_GATEWAY_CLASS_NAME)")
+	}
+	if v := envValue("ROKSBNKCTL_GATEWAY_CONTROLLER_NAME"); v != "" {
+		ws.Gateway.ControllerName = v
+		applied = append(applied, "gateway.controller_name (ROKSBNKCTL_GATEWAY_CONTROLLER_NAME)")
 	}
 
 	// The foreign-proxy handoff (the "shared licensing cluster" topology). These

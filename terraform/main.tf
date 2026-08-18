@@ -283,7 +283,11 @@ module "gateway" {
   cneinstance_network_zones = length(var.cneinstance_network_zones) > 0 ? var.cneinstance_network_zones : null
   kubeconfig_dir            = "${var.kubeconfig_dir}/gateway"
 
-  app_namespace                = var.gateway_app_namespace
+  app_namespace = var.gateway_app_namespace
+  # Empty gateway_controller_name is the DERIVE sentinel, resolved inside the
+  # module against flo_namespace — passing it straight through is deliberate.
+  gateway_class_name           = var.gateway_class_name
+  gateway_controller_name      = var.gateway_controller_name
   gateway_backend_service      = var.gateway_backend_service
   gateway_backend_port         = var.gateway_backend_port
   gateway_egress_mode          = var.gateway_egress_mode
@@ -367,6 +371,9 @@ module "flp_vsi" {
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flp_chart_version             = var.flp_chart_version
   flp_prod_jwks_b64             = var.flp_prod_jwks_b64
+  # The VSI path used to spell FAR as a literal, so bnk.far_repo_url reached every
+  # other module and silently missed this one.
+  far_repo_url = var.far_repo_url
 
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket

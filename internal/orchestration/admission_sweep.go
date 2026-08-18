@@ -31,9 +31,18 @@ import (
 // k8s delete. Best-effort — if the cluster can't be reached the sweep is skipped
 // (the module's loop was best-effort too).
 
+// All three resource types are swept because the OpenShift ingress operator has
+// used more than one to express the same block. 4.18 ships it as a
+// ValidatingAdmissionPolicy + binding; the BNK 2.4 install guide instructs
+// operators on OCP >= 4.19 to delete a ValidatingWebhookConfiguration of the
+// same name. Which one exists is a function of the cluster's OCP version, not of
+// anything we control, so sweeping all three is the only version-independent
+// answer. Deleting a name that does not exist is a no-op, so the extra entry
+// costs a 4.18 cluster nothing.
 var admissionSweepGVRs = []schema.GroupVersionResource{
 	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicybindings"},
 	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingadmissionpolicies"},
+	{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "validatingwebhookconfigurations"},
 }
 
 const admissionSweepName = "openshift-ingress-operator-gatewayapi-crd-admission"

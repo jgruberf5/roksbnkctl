@@ -255,6 +255,52 @@ The env vars matter for the CI path in particular, where the workspace is built 
 ([Chapter 7a](./07a-unattended-setup.md)). See
 [Appendix A](./appendix-a-disconnected-roks-cluster.md) for the gate's full output and rationale.
 
+## `gateway:` block
+
+Overrides for the **gateway phase** — the data-plane ingress/egress
+configuration applied by `roksbnkctl gateway up`, not by `bnk up`. The phase
+itself is driven by the command; nothing here turns it on. Every field is
+optional and an absent block leaves the terraform module's install-guide
+defaults in place.
+
+```yaml
+gateway:
+  # Identity. GatewayClass is CLUSTER-scoped.
+  class_name: gateway-class        # optional
+  controller_name: ""              # optional — LEAVE EMPTY (see below)
+
+  # What the sample Gateway + HTTPRoute front.
+  app_namespace: f5-app
+  backend_service: nginx-service
+  backend_port: 80
+
+  # Egress.
+  egress_mode: both                # snatpool | automap | both
+  vxlan_port: 6789
+  client_subnet_local:  ["10.241.0.0/24"]
+  client_subnet_remote: ["10.242.0.0/24"]
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `class_name` | string | `gateway-class` | GatewayClass name. GatewayClass is **cluster-scoped**, so two BNK installs sharing one cluster must not share this name. |
+| `controller_name` | string | *(derived)* | GatewayClass `controllerName`. **Leave this empty.** Empty derives `f5.com/<bnk.flo_namespace>-f5-cne-controller`, which is the only value the CNE controller answers to — it must equal the CNEInstance's own name. Set it only to point the GatewayClass at a controller this deployment did not install. |
+| `app_namespace` | string | `f5-app` | Namespace the sample Gateway, HTTPRoute and application live in. Created by the phase. |
+| `backend_service` | string | `nginx-service` | Service the HTTPRoute forwards to. |
+| `backend_port` | int | `80` | Its port. |
+| `egress_mode` | string | `both` | Which egress CRs to apply: `automap` (SNAT to the TMM self-IP), `snatpool` (SNAT from a pool), or `both`. |
+| `vxlan_port` | int | `6789` | Egress VXLAN UDP port. Also opened inbound on the cluster's worker security group — the tunnel does not form without that rule. |
+| `client_subnet_local` | list(string) | `[]` | Client subnets **in the cluster's own VPC** that need a return route through TMM. One static route per subnet per zone. |
+| `client_subnet_remote` | list(string) | `[]` | The same for subnets reached across a Transit Gateway. |
+
+> **`controller_name` fails silently when wrong.** A `controllerName` no
+> controller matches leaves the GatewayClass with `ACCEPTED=<none>` and the
+> Gateway unprogrammed — while `terraform apply` reports success. Before
+> `v1.46.0` the default was the literal `f5.com/f5-bnk-f5-cne-controller`, so
+> **any workspace with a non-default `bnk.flo_namespace` hit exactly this.**
+> The derived default fixes it; check the applied value with
+> `roksbnkctl gateway output gateway_controller_name`.
+
 ## `test:` block
 
 ```yaml
@@ -664,6 +710,15 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `targets.<name>.user` | string | — | SSH user. |
 | `targets.<name>.key_path` | string | (empty) | PEM file path. |
 | `targets.<name>.key_source` | string | (empty) | `agent` \| `tf-output:<name>`. |
+| `gateway.class_name` | string | `gateway-class` | GatewayClass name → `gateway_class_name`. Cluster-scoped; two installs in one cluster must differ. |
+| `gateway.controller_name` | string | *(derived)* | GatewayClass `controllerName` → `gateway_controller_name`. Empty derives `f5.com/<bnk.flo_namespace>-f5-cne-controller`. **Leave empty** unless targeting a controller this deployment did not install. |
+| `gateway.app_namespace` | string | `f5-app` | Namespace the sample Gateway/HTTPRoute/app live in → `gateway_app_namespace`. |
+| `gateway.backend_service` | string | `nginx-service` | HTTPRoute backend Service → `gateway_backend_service`. |
+| `gateway.backend_port` | integer | `80` | Its port → `gateway_backend_port`. |
+| `gateway.egress_mode` | string | `both` | `snatpool` \| `automap` \| `both` → `gateway_egress_mode`. |
+| `gateway.vxlan_port` | integer | `6789` | Egress VXLAN UDP port → `gateway_vxlan_port`; also opened on the worker security group. |
+| `gateway.client_subnet_local` | list(string) | `[]` | Same-VPC client subnets needing a return route → `gateway_client_subnet_local`. |
+| `gateway.client_subnet_remote` | list(string) | `[]` | Across-TGW client subnets → `gateway_client_subnet_remote`. |
 | `exec.<tool>.backend` | string | `local` (varies by tool) | `local` \| `docker` \| `k8s` \| `ssh:<target>`. |
 | `bnkforge.register` | bool | `false` | Opt into BNK Forge cluster registration on `cluster up`. |
 | `bnkforge.url` | string | (CLI's stored-session URL) | Override the BNK Forge server URL. |

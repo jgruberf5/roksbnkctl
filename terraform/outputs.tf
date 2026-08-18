@@ -171,6 +171,11 @@ output "gateway_class_name" {
   value       = module.gateway.gateway_class_name
 }
 
+output "gateway_controller_name" {
+  description = "Resolved GatewayClass controllerName (derived from flo_namespace unless set)"
+  value       = module.gateway.gateway_controller_name
+}
+
 output "gateway_bnkgateway_name" {
   description = "Name of the F5BnkGateway (k8s.f5net.com) CR"
   value       = module.gateway.gateway_bnkgateway_name
