@@ -361,6 +361,12 @@ convention. It always lists what it found and asks before deleting (unless
 --auto); --dry-run lists without deleting. Re-run if some deletes fail (e.g. a
 VPC waiting on an async cluster delete).
 
+A Transit Gateway is deleted only once its connections are detached, and
+cleanup detaches only connections to VPCs it is also deleting. A gateway still
+attached to anything else — a VPC under another prefix, a Direct Link, a GRE
+tunnel — is REFUSED rather than silently disconnected from its other tenants.
+Re-running will not clear that: detach it yourself, or delete those networks.
+
 **Flags**
 
 | Flag | Type | Default | Description |

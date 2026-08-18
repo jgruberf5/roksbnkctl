@@ -53,7 +53,14 @@ The 4-command lifecycle:
   roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)
 
 See https://jgruberf5.github.io/roksbnkctl/book/ for the canonical user guide.`,
-	SilenceUsage:      true,
+	SilenceUsage: true,
+	// Every error was printed TWICE: cobra emits "Error: <msg>" on its way out
+	// of Execute, and main then prints "roksbnkctl: <msg>" before exiting 1
+	// (#85). One message, one prefix — and the roksbnkctl-prefixed one is the
+	// one to keep, since it names the tool in a CI log full of other output.
+	// The tfx subcommands already set this individually; it belongs on the root
+	// so it holds for every command rather than the handful that remembered.
+	SilenceErrors:     true,
 	PersistentPreRunE: rootPersistentPreRunE,
 }
 

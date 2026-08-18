@@ -162,6 +162,22 @@ Everything whose name is the workspace prefix or a `<prefix>-` child, across:
 
 Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is **best-effort**: a failure on one resource is reported and the sweep continues. Re-run `cleanup` for anything blocked on an async delete (e.g. a VPC that can't go until its cluster finishes terminating).
 
+### How the Transit Gateway is handled
+
+A gateway cannot be deleted while anything is attached to it, so `cleanup` detaches its connections first, **waits for them to actually clear**, and only then deletes the gateway. The detach is asynchronous — IBM leaves the connection in `deleting` for a few seconds — and deleting the gateway during that window fails with:
+
+```
+412 Precondition Failed: Before you can delete this gateway,
+you must delete all attached connections.
+```
+
+Which connections it may detach is a deliberate limit, not an oversight:
+
+- A connection to a **VPC this same sweep is deleting** is yours; `cleanup` removes it.
+- **Anything else** — a VPC under a different prefix, another account's network, a Direct Link or GRE attachment — belongs to someone else. `cleanup` **refuses the gateway** and names what is attached, rather than quietly disconnecting a shared gateway's other tenants.
+
+A refusal is not a transient, and re-running will not clear it. Detach the connection yourself (`ibmcloud tg connection-delete <gateway-id> <connection-id>`) or delete the network it points at, then sweep again. This matters most for the shared-gateway topology in [Sharing a Transit Gateway](./09a-transit-gateway-sharing.md), where one gateway deliberately outlives the clusters attached to it.
+
 ### Which regions it scans
 
 By default `cleanup` scans the workspace's cluster region plus the testing-client region (from `config.yaml`'s [`resources.client_region`](./28-configuration-reference.md#resources-block) and `cluster-outputs.json`). If resources landed in a region not recorded in config, add it explicitly or sweep everything:

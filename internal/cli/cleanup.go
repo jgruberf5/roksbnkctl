@@ -34,7 +34,13 @@ the registry COS instance, the ROKS cluster, and the BNK trusted profile).
 This is a DESTRUCTIVE, best-effort sweep keyed purely on the <prefix>- name
 convention. It always lists what it found and asks before deleting (unless
 --auto); --dry-run lists without deleting. Re-run if some deletes fail (e.g. a
-VPC waiting on an async cluster delete).`,
+VPC waiting on an async cluster delete).
+
+A Transit Gateway is deleted only once its connections are detached, and
+cleanup detaches only connections to VPCs it is also deleting. A gateway still
+attached to anything else — a VPC under another prefix, a Direct Link, a GRE
+tunnel — is REFUSED rather than silently disconnected from its other tenants.
+Re-running will not clear that: detach it yourself, or delete those networks.`,
 	Args: cobra.NoArgs,
 	RunE: runCleanup,
 }
@@ -107,21 +113,35 @@ func runCleanup(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	var failures int
+	var failures, refusals int
 	for _, o := range orphans {
 		label := fmt.Sprintf("%s %s", o.Kind, o.Name)
 		if o.Region != "" {
 			label += " (" + o.Region + ")"
 		}
-		if derr := ic.DeleteOrphan(ctx, o); derr != nil {
+		// The whole discovered set goes with each delete: the Transit Gateway
+		// path has to know which VPCs this run is removing before it decides
+		// which connections it may detach.
+		if derr := ic.DeleteOrphan(ctx, o, orphans); derr != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", label, derr)
 			failures++
+			if errors.Is(derr, ibm.ErrForeignTGWConnection) {
+				refusals++
+			}
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "  ✓ %s\n", label)
 	}
 
 	if failures > 0 {
+		// "Re-run" is the right advice ONLY for a delete that can still
+		// converge on its own. A refusal cannot: nothing in the loop will ever
+		// remove a connection to a network outside the sweep, so telling the
+		// operator to re-run would send them round a loop that fails
+		// identically every time (#85).
+		if refusals > 0 {
+			return fmt.Errorf("%d of %d resource(s) failed to delete; %d refused because a Transit Gateway is still attached to networks outside this sweep — re-running will NOT clear those, detach them (or delete those networks) first", failures, len(orphans), refusals)
+		}
 		return fmt.Errorf("%d of %d resource(s) failed to delete — re-run `roksbnkctl cleanup` (some may be waiting on an async delete)", failures, len(orphans))
 	}
 	fmt.Fprintf(os.Stderr, "\n✓ Deleted %d orphaned resource(s).\n", len(orphans))
