@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-13cc9227.js";
+            window.path_to_searchindex_js = "searchindex-e7f8b3e4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ecec3061.js"></script>
+        <script src="toc-24bcf78d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -463,6 +463,10 @@ defaults in place.</p>
   backend_service: nginx-service
   backend_port: 80
 
+  # Extra route kinds to create working examples of (default: none).
+  route_examples: [GRPCRoute, L4Route]
+  l4_listener_port: 8080
+
   # Egress.
   egress_mode: both                # snatpool | automap | both
   vxlan_port: 6789
@@ -480,6 +484,8 @@ defaults in place.</p>
 <tr><td><code>app_namespace</code></td><td>string</td><td><code>f5-app</code></td><td>Namespace the sample Gateway, HTTPRoute and application live in. Created by the phase.</td></tr>
 <tr><td><code>backend_service</code></td><td>string</td><td><code>nginx-service</code></td><td>Service the HTTPRoute forwards to.</td></tr>
 <tr><td><code>backend_port</code></td><td>int</td><td><code>80</code></td><td>Its port.</td></tr>
+<tr><td><code>route_examples</code></td><td>list(string)</td><td><code>[]</code></td><td>Extra route kinds to create <strong>working examples</strong> of, alongside the HTTPRoute the phase always creates. On BNK 2.3 the accepted values are <code>GRPCRoute</code> and <code>L4Route</code>; anything else is refused at plan time. See the note below — the valid set is a property of the Gateway API channel BNK installs, not of this tool.</td></tr>
+<tr><td><code>l4_listener_port</code></td><td>int</td><td><code>8080</code></td><td>Port for the TCP listener that <code>L4Route</code> requires. Only used when <code>route_examples</code> includes <code>L4Route</code>.</td></tr>
 <tr><td><code>egress_mode</code></td><td>string</td><td><code>both</code></td><td>Which egress CRs to apply: <code>automap</code> (SNAT to the TMM self-IP), <code>snatpool</code> (SNAT from a pool), or <code>both</code>.</td></tr>
 <tr><td><code>vxlan_port</code></td><td>int</td><td><code>6789</code></td><td>Egress VXLAN UDP port. Also opened inbound on the cluster’s worker security group — the tunnel does not form without that rule.</td></tr>
 <tr><td><code>client_subnet_local</code></td><td>list(string)</td><td><code>[]</code></td><td>Client subnets <strong>in the cluster’s own VPC</strong> that need a return route through TMM. One static route per subnet per zone.</td></tr>
@@ -487,6 +493,17 @@ defaults in place.</p>
 </tbody>
 </table>
 </div>
+<blockquote>
+<p><strong>Why <code>TCPRoute</code> is not on that list.</strong> BNK 2.3 requires Gateway API <strong>1.4.1
+standard</strong> and refuses to install against anything else. The standard channel
+contains <code>GatewayClass</code>, <code>Gateway</code>, <code>HTTPRoute</code>, <code>GRPCRoute</code>, <code>ReferenceGrant</code>
+and <code>BackendTLSPolicy</code> — and <em>not</em> <code>TCPRoute</code>, <code>TLSRoute</code> or <code>UDPRoute</code>, which
+live only in the experimental channel. BNK closes that gap with its own CRD,
+<code>L4Route</code> (<code>gateway.k8s.f5net.com/v1</code>), which is what <code>route_examples</code> uses for
+TCP. Requesting <code>L4Route</code> also adds a <strong>TCP listener</strong> to the Gateway, because
+an <code>L4Route</code> cannot attach to an HTTP one; without it the route would be
+created and never accepted.</p>
+</blockquote>
 <blockquote>
 <p><strong><code>controller_name</code> fails silently when wrong.</strong> A <code>controllerName</code> no
 controller matches leaves the GatewayClass with <code>ACCEPTED=&lt;none&gt;</code> and the

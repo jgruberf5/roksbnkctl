@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-13cc9227.js";
+            window.path_to_searchindex_js = "searchindex-e7f8b3e4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ecec3061.js"></script>
+        <script src="toc-24bcf78d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -309,6 +309,8 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLO_UTILS_NAMESPACE</code></td><td><code>bnk.flo_utils_namespace</code></td><td>Namespace for the F5 utility components. Default <code>f5-utils</code>. <strong>Set both to the same value for one shared namespace</strong> — verified against BNK 2.3.</td></tr>
 <tr><td><code>ROKSBNKCTL_GATEWAY_CLASS_NAME</code></td><td><code>gateway.class_name</code></td><td>GatewayClass name; blank → <code>gateway-class</code>. GatewayClass is <strong>cluster-scoped</strong>, so two BNK installs sharing a cluster must not share it.</td></tr>
 <tr><td><code>ROKSBNKCTL_GATEWAY_CONTROLLER_NAME</code></td><td><code>gateway.controller_name</code></td><td><strong>Leave blank.</strong> Blank derives <code>f5.com/&lt;flo_namespace&gt;-f5-cne-controller</code> — the value the CNE controller answers to — and follows <code>ROKSBNKCTL_FLO_NAMESPACE</code> automatically. Set it only to aim the GatewayClass at a controller this deployment did not install. A wrong value fails <strong>silently</strong>: the apply succeeds, the GatewayClass is never <code>Accepted</code>, and no traffic flows.</td></tr>
+<tr><td><code>ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES</code></td><td><code>gateway.route_examples</code></td><td>Comma-separated extra route kinds to create working examples of. On BNK 2.3: <code>GRPCRoute</code>, <code>L4Route</code>. Blank leaves an existing deployment byte-identical. <code>TCPRoute</code> is <strong>not</strong> valid — 2.3 pins Gateway API 1.4.1 <em>standard</em>, which does not contain it; BNK uses its own <code>L4Route</code> for TCP.</td></tr>
+<tr><td><code>ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT</code></td><td><code>gateway.l4_listener_port</code></td><td>Port for the TCP listener <code>L4Route</code> needs. Blank → <code>8080</code>.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_NAMESPACE</code></td><td><code>bnk.flp.namespace</code></td><td>verbatim (FLP mode only)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>

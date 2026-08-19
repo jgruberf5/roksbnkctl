@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>GitHub Actions CI as an example - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>B — Replicating FAR into an existing registry - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,159 +177,224 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="github-actions-ci-as-an-example"><a class="header" href="#github-actions-ci-as-an-example">GitHub Actions CI as an example</a></h1>
-<p>roksbnkctl is built to be driven from a pipeline: <strong>config is the input, the
-environment supplies the values, and one image carries every tool.</strong> This chapter
-is a worked GitHub Actions example — a single cluster, then a fleet — using the
-<a href="./07a-unattended-setup.html">unattended / <code>--non-interactive</code></a> flow and the
-<a href="./04-installation.html#path-c--run-from-the-all-in-one-container-image-no-install">all-in-one runner image</a>.</p>
-<p>The whole model in one breath: <strong>GitHub secrets → <code>ROKSBNKCTL_*</code> env →
-<code>init --non-interactive</code> builds <code>config.yaml</code> → <code>up</code> reconciles it.</strong> No API key
-in the repo, no hand-edited config, no interactive prompts.</p>
-<h2 id="the-runner-image-as-a-job-container"><a class="header" href="#the-runner-image-as-a-job-container">The runner image as a job container</a></h2>
-<p>Run the job <em>in</em> <code>roksbnkctl-tools-runner</code> — it has <code>roksbnkctl</code> plus terraform,
-helm, kubectl, oc, and the IBM Cloud CLI on <code>PATH</code>, so the workflow needs nothing
-installed:</p>
-<pre><code class="language-yaml">jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest
-    steps:
-      - run: roksbnkctl version
+                        <h1 id="b--replicating-far-into-an-existing-registry"><a class="header" href="#b--replicating-far-into-an-existing-registry">B — Replicating FAR into an existing registry</a></h1>
+<p>This appendix mirrors the F5 Artifact Repository into a registry <strong>you already
+run</strong> — a JFrog Artifactory, or IBM Cloud Container Registry. It does not cover
+standing either one up; it is for the common case where the registry is already
+your organization’s registry of record and BNK is simply one more thing that has
+to live in it.</p>
+<p>Two targets, one set of verbs. <code>bom</code>, <code>diff</code>, <code>replicate</code> and <code>verify</code> are
+identical either way — only the four lines that select the target differ. Start
+with <a href="#ibm-cloud-container-registry">ICR</a> if you are already on IBM Cloud, since
+it needs no credentials of its own, or
+<a href="#jfrog-artifactory">Artifactory</a> if that is your registry of record.</p>
+<p>Nothing here needs a Kubernetes cluster. <code>registry replicate</code> copies
+registry-to-registry from wherever <code>roksbnkctl</code> runs, so the mirror can be
+seeded as a supply-chain step long before a cluster exists — which is usually
+the point, since the cluster is air-gapped and the mirror is what makes it
+installable at all.</p>
+<h2 id="ibm-cloud-container-registry"><a class="header" href="#ibm-cloud-container-registry">IBM Cloud Container Registry</a></h2>
+<p>ICR is the shortest path on IBM Cloud: it reuses the workspace’s own IBM Cloud
+API key, so there is no second credential to create, distribute, or rotate.</p>
+<h3 id="what-icr-needs-first"><a class="header" href="#what-icr-needs-first">What ICR needs first</a></h3>
+<p><strong>A namespace.</strong> ICR’s namespace is the tenant unit artifacts nest under, and
+<code>roksbnkctl</code> does not create it:</p>
+<pre><code class="language-bash">ibmcloud cr region-set us-east
+ibmcloud cr namespace-add bnk-mirror
 </code></pre>
-<h2 id="ephemeral-runners-need-remote-state"><a class="header" href="#ephemeral-runners-need-remote-state">Ephemeral runners need remote state</a></h2>
-<p>A GitHub-hosted runner is thrown away after the job, so a later <strong>teardown</strong> run
-can’t see the terraform state from the <strong>deploy</strong> run. Put the state in COS so it
-survives across runs (and across runners) — see <a href="./12a-remote-state.html">Remote state</a>:</p>
-<pre><code class="language-yaml">state: { backend: s3 }   # in config.yaml; HMAC keys come from env (below)
+<p>That is the only prerequisite. There is no repository to pre-create — ICR
+creates repositories on first push, which is the main practical difference from
+Artifactory.</p>
+<h3 id="pointing-roksbnkctl-at-it"><a class="header" href="#pointing-roksbnkctl-at-it">Pointing roksbnkctl at it</a></h3>
+<pre><code class="language-bash">roksbnkctl registry target icr
+roksbnkctl registry target icr_namespace bnk-mirror
 </code></pre>
-<p>Supply the bucket via config and the HMAC keys via env
-(<code>ROKSBNKCTL_COS_HMAC_ACCESS_KEY</code> / <code>_SECRET_KEY</code>).</p>
-<h2 id="a-single-cluster-workflow"><a class="header" href="#a-single-cluster-workflow">A single-cluster workflow</a></h2>
-<pre><code class="language-yaml">name: Deploy BNK
-on:
-  workflow_dispatch:
-    inputs:
-      region:  { description: IBM Cloud region, default: eu-de }
-      prefix:  { description: Resource prefix,  default: ci }
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    env:
-      # secrets → the credential + cluster identity
-      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_REGION:              ${{ inputs.region }}
-      ROKSBNKCTL_RESOURCE_GROUP:      default
-      ROKSBNKCTL_PREFIX:              ${{ inputs.prefix }}
-      ROKSBNKCTL_CLUSTER_NAME:        ${{ inputs.prefix }}-roks
-      ROKSBNKCTL_CLUSTER_CREATE:      "true"
-      # adopt shared infrastructure (reuse is config — no extra commands)
-      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
-      # remote state so teardown works from a fresh runner
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - name: Seed config.yaml from the environment
-        run: roksbnkctl -w ci init --non-interactive
-
-      - name: Deploy (cluster + BNK + testing, per config)
-        run: roksbnkctl -w ci up --auto
-
-      - name: Publish cluster outputs
-        run: |
-          roksbnkctl -w ci cluster output --json | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "roks_cluster_id=$(roksbnkctl -w ci cluster output roks_cluster_id)" &gt;&gt; "$GITHUB_OUTPUT"
+<p>Both remaining fields derive themselves:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Derived from</th><th>Override when</th></tr>
+</thead>
+<tbody>
+<tr><td>host</td><td><code>ibmcloud.region</code> — <code>us-east</code> → <code>us.icr.io</code>, <code>eu-de</code> → <code>de.icr.io</code>, <code>eu-gb</code> → <code>uk.icr.io</code></td><td>your region is not in the map, or you are deliberately mirroring to another region’s registry</td></tr>
+<tr><td>namespace</td><td>the workspace <code>prefix</code></td><td>you want a name that is not the prefix</td></tr>
+</tbody>
+</table>
+</div>
+<p>Set the host explicitly with <code>roksbnkctl registry target icr_host de.icr.io</code>.</p>
+<p>Authentication is <code>iamapikey</code> plus the workspace’s IBM Cloud API key, resolved
+the same way every other IBM Cloud call resolves it. Nothing further to
+configure — and on the cluster side, pods pull from <code>*.icr.io</code> using the pull
+secret ROKS already provides, so an ICR mirror needs no image-pull secret work
+either.</p>
+<h3 id="replicating"><a class="header" href="#replicating">Replicating</a></h3>
+<pre><code class="language-bash">roksbnkctl registry bom
+roksbnkctl registry diff
+roksbnkctl registry replicate
+roksbnkctl registry verify
 </code></pre>
-<p><code>init --non-interactive</code> logs which fields it pulled from the environment (never
-the values), then <code>up</code> brings up the cluster (create <em>or</em> attach, per
-<code>cluster.create</code>) and <strong>BNK ∥ Testing</strong> — exactly the phases the config enables.
-Add <code>roksbnkctl -w ci gateway up --auto</code> if the deployment includes the gateway
-phase.</p>
-<h2 id="a-fleet-deploy-many-clusters-with-a-matrix"><a class="header" href="#a-fleet-deploy-many-clusters-with-a-matrix">A fleet: deploy many clusters with a matrix</a></h2>
-<p>The thing that makes this a <em>CI</em> tool is that the same env-driven flow scales to a
-fleet — one workspace per cluster, varied by the matrix, all sharing one TGW:</p>
-<pre><code class="language-yaml">name: Deploy fleet
-on: { workflow_dispatch: {} }
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    strategy:
-      fail-fast: false
-      matrix:
-        cluster:
-          - { ws: eu,  region: eu-de,   prefix: acme-eu }
-          - { ws: us,  region: us-south, prefix: acme-us }
-          - { ws: jp,  region: jp-tok,   prefix: acme-jp }
-    env:
-      IBMCLOUD_API_KEY:                ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_RESOURCE_GROUP:       default
-      ROKSBNKCTL_CLUSTER_CREATE:       "true"
-      ROKSBNKCTL_TRANSIT_GATEWAY_NAME: shared-corp-tgw
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY:  ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY:  ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - env:
-          ROKSBNKCTL_REGION:       ${{ matrix.cluster.region }}
-          ROKSBNKCTL_PREFIX:       ${{ matrix.cluster.prefix }}
-          ROKSBNKCTL_CLUSTER_NAME: ${{ matrix.cluster.prefix }}-roks
-        run: |
-          roksbnkctl -w ${{ matrix.cluster.ws }} init --non-interactive
-          roksbnkctl -w ${{ matrix.cluster.ws }} up --auto
+<p>Then confirm from the IBM Cloud side, which is worth doing once because it
+proves the artifacts are visible to something other than the tool that wrote
+them:</p>
+<pre><code class="language-bash">ibmcloud cr images --restrict bnk-mirror
 </code></pre>
-<p>Each matrix leg is one cluster; reuse-by-name (<code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME</code>)
-lets them share one network fabric. To dictate per-AZ addressing or attach a BIG-IP
-for CIS, add the matching env vars (<code>ROKSBNKCTL_ZONE&lt;n&gt;_*</code>, <code>ROKSBNKCTL_BIGIP_*</code>) —
-the full set is in <a href="./07a-unattended-setup.html#-override-from-env">Unattended setup</a>.</p>
-<h2 id="teardown"><a class="header" href="#teardown">Teardown</a></h2>
-<p>A separate manually-triggered (or PR-close) workflow tears a workspace down. Because
-the state lives in COS, it runs cleanly on a fresh runner:</p>
-<pre><code class="language-yaml">name: Teardown
-on: { workflow_dispatch: { inputs: { ws: { required: true } } } }
-jobs:
-  destroy:
-    runs-on: ubuntu-latest
-    container: { image: ghcr.io/jgruberf5/roksbnkctl-tools-runner:latest }
-    env:
-      IBMCLOUD_API_KEY:               ${{ secrets.IBMCLOUD_API_KEY }}
-      ROKSBNKCTL_COS_HMAC_ACCESS_KEY: ${{ secrets.COS_HMAC_ACCESS_KEY }}
-      ROKSBNKCTL_COS_HMAC_SECRET_KEY: ${{ secrets.COS_HMAC_SECRET_KEY }}
-    steps:
-      - run: roksbnkctl -w ${{ inputs.ws }} down --auto
+<h3 id="choosing-between-the-two"><a class="header" href="#choosing-between-the-two">Choosing between the two</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>ICR</th><th>Artifactory</th></tr>
+</thead>
+<tbody>
+<tr><td>Credential</td><td>the workspace IBM Cloud API key</td><td>a separate user + access token</td></tr>
+<tr><td>Namespace / repository</td><td>namespace created once; repositories appear on push</td><td>a <strong>local Docker</strong> repository created in advance</td></tr>
+<tr><td>TLS</td><td>publicly trusted</td><td>publicly trusted, or a private CA you supply</td></tr>
+<tr><td>Cluster pull secret</td><td>already present on ROKS</td><td>needs configuring</td></tr>
+<tr><td>Edition constraints</td><td>none</td><td>Docker repositories are a licensed feature</td></tr>
+</tbody>
+</table>
+</div>
+<p>ICR is fewer moving parts on IBM Cloud. Artifactory is the right answer when it
+is already where your organization’s artifacts live, or when the cluster is not
+on IBM Cloud at all.</p>
+<h2 id="jfrog-artifactory"><a class="header" href="#jfrog-artifactory">JFrog Artifactory</a></h2>
+<h3 id="what-artifactory-has-to-provide"><a class="header" href="#what-artifactory-has-to-provide">What Artifactory has to provide</a></h3>
+<p>Three things must exist before <code>roksbnkctl</code> is involved, and all three are
+created through the Artifactory UI or its REST API. This is the manual part.</p>
+<p><strong>A local Docker repository.</strong> BNK’s artifacts are OCI images and OCI-packaged
+Helm charts, so the target must be a Docker repository — a <em>local</em> one, not a
+remote or virtual one. Remote repositories are read-through caches of an
+upstream and cannot be pushed to; a virtual repository can only be pushed to if
+it has a local deployment target, so pointing at the local repository directly
+is simpler and fails more clearly when permissions are wrong.</p>
+<blockquote>
+<p><strong>Artifactory OSS cannot do this.</strong> Docker repository support is a licensed
+feature. An OSS instance has no Docker repository type at all, so there is
+nothing to point at. A Pro, Enterprise, or Cloud instance — including a trial
+— is required. This is a property of Artifactory, not of <code>roksbnkctl</code>, and it
+is worth confirming before planning an air-gap rollout around it.</p>
+</blockquote>
+<p><strong>A Docker access method.</strong> Artifactory exposes Docker repositories in one of
+two ways, and which one your instance uses decides how the mirror is addressed:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>Image reference</th><th>Needs</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Repository path</strong></td><td><code>artifactory.example.com/bnk-mirror/f5-tmm</code></td><td>nothing extra</td></tr>
+<tr><td><strong>Subdomain</strong></td><td><code>bnk-mirror.artifactory.example.com/f5-tmm</code></td><td>wildcard DNS + a wildcard certificate</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>roksbnkctl</code> composes references as <code>&lt;generic_host&gt;/&lt;generic_repo_prefix&gt;/&lt;image&gt;</code>,
+which is the repository-path form. On a subdomain instance, put the full
+subdomain host in <code>generic_host</code> and leave <code>generic_repo_prefix</code> empty.</p>
+<p><strong>A user with deploy permission.</strong> A dedicated account with an <em>access token</em>
+rather than a password is the right shape here — the token is scoped, and it can
+be revoked without disturbing a human login. It needs Deploy/Cache and Read on
+the target repository. Anonymous push works if your instance permits it, in
+which case leave both credential fields unset.</p>
+<h3 id="pointing-roksbnkctl-at-it-1"><a class="header" href="#pointing-roksbnkctl-at-it-1">Pointing roksbnkctl at it</a></h3>
+<pre><code class="language-bash">roksbnkctl registry target generic
+roksbnkctl registry target generic_host       artifactory.example.com
+roksbnkctl registry target generic_repo_prefix bnk-mirror
+roksbnkctl registry target generic_username    bnk-mirror-bot
+echo "$ARTIFACTORY_TOKEN" | roksbnkctl registry target generic_password --password-stdin
 </code></pre>
-<p>(An <em>attached</em> existing cluster — <code>ROKSBNKCTL_CLUSTER_CREATE=false</code> — is not
-destroyed; <code>down</code> tears down only what roksbnkctl created.)</p>
-<h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
-<ul>
-<li><strong>Pin the image by digest</strong> in production CI (<code>...-runner@sha256:…</code>), not
-<code>:latest</code>, so a run can’t silently change toolchains.</li>
-<li><strong>Secrets never reach the repo or the logs</strong> — they enter as job env from GitHub
-Secrets, and <code>init</code> redacts which fields it applied.</li>
-<li><strong>This is the same contract bnk-forge uses.</strong> The bnk-forge container step <em>is</em> a
-GitHub-Action-style invocation of this image with these env vars; this chapter is
-the do-it-yourself version of <a href="./24a-bnk-forge-registration.html">Registering with BNK Forge</a>.</li>
-<li><strong>Every phase has <code>status</code> + <code>output</code>.</strong> <code>roksbnkctl &lt;phase&gt; status [--json]</code> and <code>&lt;phase&gt; output [name]</code> (scoped to that phase’s own attributes) are CI stage gates; <code>roksbnkctl output</code> merges them all — e.g. <code>roksbnkctl testing output testing_tgw_jumphost_ip</code>.</li>
-<li><strong>Where this is heading.</strong> <code>up</code> already reconciles cluster + BNK + Testing from
-config; folding <code>gateway</code> in (so a single <code>up</code> is the whole deployment) plus
-<code>output -o json</code> / <code>validate</code> are the next step — see
-<a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/17-DECLARATIVE-CLI.md">PRD 17 — Declarative CLI</a>.</li>
-</ul>
+<p><code>--password-stdin</code> is the reason the token never reaches a shell history, a
+process listing, or a terminal recording. Prefer it to an inline argument
+everywhere, and note that it applies to the token, not to <code>IBMCLOUD_API_KEY</code> —
+which this flow does not use at all, since no IBM Cloud resource is touched.</p>
+<p>If Artifactory presents a certificate from a private CA, record the CA from the
+file that issued it:</p>
+<pre><code class="language-bash">roksbnkctl registry target generic_ca /etc/pki/ca-trust/source/anchors/corp-root.crt
+</code></pre>
+<p>Recording it from the file rather than capturing it from the host matters: a CA
+learned over the connection it is meant to authenticate proves nothing. When
+<code>generic_ca</code> is set, <code>replicate</code> never dials the registry to discover trust.</p>
+<h3 id="doing-the-replication"><a class="header" href="#doing-the-replication">Doing the replication</a></h3>
+<pre><code class="language-bash">roksbnkctl registry bom          # what BNK needs — offline, no registry required
+roksbnkctl registry diff         # what is missing from Artifactory right now
+roksbnkctl registry replicate    # copy it
+roksbnkctl registry verify       # confirm every artifact is present and digest-matched
+</code></pre>
+<p>A successful run ends on the line that is worth putting on the screen:</p>
+<pre><code>✓ mirrored 89 artifacts into artifactory.example.com/bnk-mirror
+✓ all 89 BOM artifacts present + digest-matched in the mirror
+</code></pre>
+<p><code>verify</code> is the step that means anything. <code>replicate</code> reports what it pushed;
+<code>verify</code> independently re-reads the BOM and checks each artifact against the
+digest it should have, so a partial copy, a silently truncated layer, or a tag
+that moved underneath you is caught. Treat <code>replicate</code> succeeding as progress
+and <code>verify</code> succeeding as done.</p>
+<p><code>diff</code> before and after is what makes this legible in a demonstration: it prints
+a populated list, then an empty one.</p>
+<h2 id="configuration-and-environment-equivalents"><a class="header" href="#configuration-and-environment-equivalents">Configuration and environment equivalents</a></h2>
+<p>Every field above is <code>config.yaml</code> state and can be set without the CLI.</p>
+<p>ICR:</p>
+<pre><code class="language-yaml">registry:
+  target: icr
+  icr_namespace: bnk-mirror
+  icr_host: us.icr.io        # optional — derived from ibmcloud.region
+</code></pre>
+<p>Artifactory:</p>
+<pre><code class="language-yaml">registry:
+  target: generic
+  generic_host: artifactory.example.com
+  generic_repo_prefix: bnk-mirror
+  generic_username: bnk-mirror-bot
+  generic_password_b64: &lt;base64 of the access token&gt;
+  generic_ca_b64: &lt;base64 of the CA PEM&gt;
+</code></pre>
+<p><code>generic_password_b64</code> is <strong>obfuscation, not encryption</strong> — it exists so the
+value survives YAML and does not trip the plaintext-secret check. Treat the file
+as a secret: <code>chmod 600</code>, never commit it.</p>
+<p>For CI, each has an environment override, so no <code>config.yaml</code> need be authored:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Field</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ROKSBNKCTL_GENERIC_HOST</code></td><td><code>registry.generic_host</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td><td><code>registry.generic_repo_prefix</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_USERNAME</code></td><td><code>registry.generic_username</code></td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_PASSWORD</code></td><td><code>registry.generic_password_b64</code> (raw; encoded for you)</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_B64</code></td><td><code>registry.generic_ca_b64</code> (already base64)</td></tr>
+<tr><td><code>ROKSBNKCTL_GENERIC_CA_SHA256</code></td><td><code>registry.generic_ca_sha256</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="when-it-goes-wrong"><a class="header" href="#when-it-goes-wrong">When it goes wrong</a></h2>
+<p><strong><code>UNAUTHORIZED</code> on push, <code>docker login</code> works by hand.</strong> The account can read
+but not deploy. Docker’s error surfaces at the first blob upload, which is well
+after the login it is easy to mistake for proof of access.</p>
+<p><strong><code>404</code> or <code>repository not found</code>.</strong> Usually the repository-path/subdomain
+mismatch above: a repository-path reference against a subdomain-configured
+instance resolves to a repository key that does not exist. Confirm which method
+the instance uses before assuming the prefix is wrong.</p>
+<p><strong><code>x509: certificate signed by unknown authority</code>.</strong> <code>generic_ca</code> is unset or
+does not chain to the certificate Artifactory is serving. Record the CA that
+issued the cert actually in use, which on a load-balanced instance may not be
+the one issued to the origin.</p>
+<p><strong>ICR: <code>namespace not found</code>.</strong> <code>roksbnkctl</code> does not create the namespace.
+Run <code>ibmcloud cr namespace-add &lt;name&gt;</code> first, and check <code>ibmcloud cr region</code>
+matches the region the host was derived from — a namespace created in one ICR
+region is not visible from another.</p>
+<p><strong>Storage.</strong> The BOM is 89 artifacts of container images and OCI-packaged
+charts. An Artifactory instance with a repository quota, or a filestore near
+capacity, fails partway through <code>replicate</code> — and because the copy is
+per-artifact, it fails <em>partway</em> rather than cleanly. Re-run <code>diff</code> to see what
+actually landed, then <code>replicate</code> again; it copies only what is missing.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="07a-unattended-setup.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="appendix-a-disconnected-roks-cluster.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="08-cluster-phase.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -337,13 +402,10 @@ config; folding <code>gateway</code> in (so a single <code>up</code> is the whol
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="07a-unattended-setup.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="appendix-a-disconnected-roks-cluster.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="08-cluster-phase.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                    </a>
             </nav>
 
         </div>

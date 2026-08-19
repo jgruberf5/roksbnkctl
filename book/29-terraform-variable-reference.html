@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-13cc9227.js";
+            window.path_to_searchindex_js = "searchindex-e7f8b3e4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ecec3061.js"></script>
+        <script src="toc-24bcf78d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -269,6 +269,8 @@
 <tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs (FLP phase). Default = ROKS VPC block.</td><td>no</td></tr>
 <tr><td><code>gateway_app_namespace</code></td><td><code>string</code></td><td><code>"f5-app"</code></td><td>Application namespace the Gateway + HTTPRoute serve (created by the gateway module)</td><td>no</td></tr>
 <tr><td><code>gateway_class_name</code></td><td><code>string</code></td><td><code>"gateway-class"</code></td><td>GatewayClass name. Set it to run more than one BNK GatewayClass in a cluster — GatewayClass is cluster-scoped, so two installs sharing the name collide.</td><td>no</td></tr>
+<tr><td><code>gateway_route_examples</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Extra route kinds to create working examples of, alongside the default HTTPRoute. Valid on BNK 2.3: GRPCRoute, L4Route. Empty (default) leaves an existing deployment byte-identical. L4Route also adds a TCP listener to the Gateway, because an L4Route cannot attach to an HTTP one.</td><td>no</td></tr>
+<tr><td><code>gateway_l4_listener_port</code></td><td><code>number</code></td><td><code>8080</code></td><td>Port for the TCP listener added when gateway_route_examples includes L4Route</td><td>no</td></tr>
 <tr><td><code>gateway_controller_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GatewayClass controllerName. Empty → derived as f5.com/<code>&lt;flo_namespace&gt;</code>-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds).</td><td>no</td></tr>
 <tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
 <tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
@@ -547,6 +549,8 @@
 <tr><td><code>gateway_route_name</code></td><td><code>string</code></td><td><code>"http-route"</code></td><td>HTTPRoute name</td><td>no</td></tr>
 <tr><td><code>gateway_backend_service</code></td><td><code>string</code></td><td><code>"nginx-service"</code></td><td>HTTPRoute backend Service name in the app namespace</td><td>no</td></tr>
 <tr><td><code>gateway_backend_port</code></td><td><code>number</code></td><td><code>80</code></td><td>HTTPRoute backend Service port</td><td>no</td></tr>
+<tr><td><code>gateway_route_examples</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Extra route kinds to create WORKING examples of, alongside the default HTTPRoute. Empty (the default) changes nothing about an existing deployment.</td><td>no</td></tr>
+<tr><td><code>gateway_l4_listener_port</code></td><td><code>number</code></td><td><code>8080</code></td><td>Port for the TCP listener added when gateway_route_examples includes L4Route</td><td>no</td></tr>
 <tr><td><code>gateway_egress_mode</code></td><td><code>string</code></td><td><code>"snatpool"</code></td><td>Egress SNAT strategy: snatpool (default; creates the SnatPool + snatpool Egress), automap (automap Egress only), or both.</td><td>no</td></tr>
 <tr><td><code>gateway_snatpool_name</code></td><td><code>string</code></td><td><code>"egress-snat-vx102"</code></td><td>F5SPKSnatpool name</td><td>no</td></tr>
 <tr><td><code>gateway_snat_host</code></td><td><code>number</code></td><td><code>111</code></td><td>Host number in int_snat_cidr for each zone’s SNAT address</td><td>no</td></tr>
