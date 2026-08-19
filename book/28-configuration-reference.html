@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
+            window.path_to_searchindex_js = "searchindex-13cc9227.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -597,9 +597,9 @@ cells:
 <tr><th>Field</th><th>Type</th><th>Default</th><th>Notes</th></tr>
 </thead>
 <tbody>
-<tr><td><code>iperf3_server</code></td><td>bool</td><td><code>false</code></td><td>Deploy the L4 iperf3 server (the throughput fixture); the TCPRoute’s backend.</td></tr>
+<tr><td><code>iperf3_server</code></td><td>bool</td><td><code>false</code></td><td>Deploy the L4 iperf3 server (the throughput fixture); the <code>L4Route</code>’s backend.</td></tr>
 <tr><td><code>http_backend</code></td><td>bool</td><td><code>false</code></td><td>Deploy an nginx backend serving <code>/128</code>, <code>/5k</code>, <code>/512k</code>; the L7 backend.</td></tr>
-<tr><td><code>routes</code></td><td>bool</td><td><code>false</code></td><td>Apply TCPRoute + HTTPRoute (+ TLS HTTPRoute &amp; self-signed Secret when <code>https_section</code> is set), attaching to <code>gateway.name</code>.</td></tr>
+<tr><td><code>routes</code></td><td>bool</td><td><code>false</code></td><td>Apply L4Route + HTTPRoute (+ TLS HTTPRoute &amp; self-signed Secret when <code>https_section</code> is set), attaching to <code>gateway.name</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -612,7 +612,7 @@ cells:
 </thead>
 <tbody>
 <tr><td><code>vsi</code></td><td><code>target</code> (SSH target name)</td><td>an <code>ssh:&lt;target&gt;</code> jumphost — a traffic-source client</td></tr>
-<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 TCP server (e.g. a TCPRoute VIP); an <code>iperf3</code> cell’s <code>server</code></td></tr>
+<tr><td><code>address</code></td><td><code>host</code>, <code>port</code> (default <code>5201</code>)</td><td>an iperf3 TCP server (e.g. an L4Route VIP); an <code>iperf3</code> cell’s <code>server</code></td></tr>
 <tr><td><code>url</code></td><td><code>url</code> (full <code>http(s)://</code>)</td><td>an HTTPRoute target; an <code>l7</code> cell’s <code>server</code>. The scheme selects cleartext vs TLS-terminate-at-TMM.</td></tr>
 </tbody>
 </table>

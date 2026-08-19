@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
+            window.path_to_searchindex_js = "searchindex-13cc9227.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -192,7 +192,7 @@
 </ul>
 <p>The runner turns each cell into a tool command and runs it from wherever you point it — locally, or on a jumphost over SSH.</p>
 <h3 id="iperf3--tcp-throughput"><a class="header" href="#iperf3--tcp-throughput"><code>iperf3</code> — TCP throughput</a></h3>
-<p>iperf3 measures plain TCP throughput against a <code>host:port</code> target (a TCPRoute VIP). The <code>length</code> field sets the TCP block size, which stands in for message size: <code>"128"</code> for tiny messages, <code>"512K"</code> for bulk transfer. The other knobs map straight to iperf3 flags:</p>
+<p>iperf3 measures plain TCP throughput against a <code>host:port</code> target (an <code>L4Route</code> VIP — BNK’s own L4 CRD, <code>gateway.k8s.f5net.com/v1</code>; the Gateway API <em>standard</em> channel BNK installs has no <code>TCPRoute</code>). The <code>length</code> field sets the TCP block size, which stands in for message size: <code>"128"</code> for tiny messages, <code>"512K"</code> for bulk transfer. The other knobs map straight to iperf3 flags:</p>
 <div class="table-wrapper">
 <table>
 <thead>
