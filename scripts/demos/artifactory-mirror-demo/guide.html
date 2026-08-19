@@ -245,20 +245,35 @@ export ART_RESOURCE_GROUP=default
 <div class="step">
   <div class="num">03</div>
   <div class="body">
-    <span class="tag tag-ui">Artifactory console</span>
-    <h3>Set the administrator password</h3>
-    <p>Open <code>https://artifactory.example.com</code> and sign in with the initial credentials
-    <code>admin</code> / <code>password</code>. This step is deliberately not automated — it is the
-    point at which the instance becomes yours.</p>
+    <span class="tag tag-cli">Nothing to do</span>
+    <h3>The server configures itself</h3>
+    <p>There are no console steps. The virtual server writes an
+    <code>artifactory.config.import.yml</code> before Artifactory first starts, and Artifactory
+    applies it during initialisation:</p>
+    <pre>version: 1
+GeneralConfiguration:
+  eula:
+    accepted: true
+OnboardingConfiguration:
+  repoTypes:
+    - docker
+    - helm</pre>
+    <p>That accepts the licence agreement and creates the repositories. You can watch it happen in
+    the container log:</p>
+    <pre>OnboardingYamlBootstrapper - Bootstrapping artifactory from artifactory.config.import.yml
+OnboardingYamlBootstrapper - Creating default repositories for docker
+OnboardingYamlBootstrapper - Creating default repositories for helm
+OnboardingYamlBootstrapper - Configuration reloaded</pre>
     <div class="note">
-      <span class="lbl">Do this first, and do it now</span>
-      <p>The server is on the public internet: it has to be, because Caddy obtains its certificate
-      over an ACME challenge that reaches it from outside. Until you change it, <strong>anyone who
-      finds the hostname has administrator access</strong> with the well-known default password.</p>
-      <p>Treat the gap between step 2 finishing and this step as an exposure window, and keep it
-      short. If the instance will live longer than the demo, also narrow the security group: port
-      80 must stay open for certificate renewal, but 443 and 22 can be restricted to the addresses
-      you work from.</p>
+      <span class="lbl">On JCR this is the only way, not merely the convenient one</span>
+      <p>Creating a repository over REST answers <code>400 This REST API is available only in
+      Artifactory Pro</code>, and the EULA endpoint the web console itself calls returns
+      <code>404</code>. Without this file the console shows a <em>No signed EULA</em> banner and
+      returns server errors, with no working way to clear it.</p>
+      <p>The schema is small and fixed: <code>eula.accepted</code> takes a boolean, and
+      <code>repoTypes</code> takes a list of package types. There is <strong>no field for
+      repository names</strong> — each type gets JFrog's defaults, which is why the mirror below
+      targets <code>docker-local</code>.</p>
     </div>
   </div>
 </div>
@@ -266,61 +281,25 @@ export ART_RESOURCE_GROUP=default
 <div class="step">
   <div class="num">04</div>
   <div class="body">
-    <span class="tag tag-ui">Artifactory console</span>
-    <h3>Create the Docker repository</h3>
-    <p>Go to <strong>Administration → Repositories → Repositories</strong>, choose
-    <strong>Add Repository → Local Repository</strong>, and select <strong>Docker</strong>.
-    Give it the repository key <code>bnk-mirror</code> and save.</p>
-    <p>It must be a <strong>local</strong> repository. A remote repository is a read-through cache
-    of an upstream and cannot be pushed to; a virtual repository can only accept a push if it has
-    a local deployment target, so pointing at the local repository directly is simpler and fails
-    more clearly when permissions are wrong.</p>
+    <span class="tag tag-ui">Recommended, not required</span>
+    <h3>Change the administrator password</h3>
+    <p>The mirror works with the initial credentials, so this does not block anything. Do it anyway:
+    the server is on the public internet — it has to be, because its certificate is obtained over a
+    challenge that reaches it from outside — and until you change it,
+    <strong>anyone who finds the hostname has administrator access</strong> with the well-known
+    default.</p>
+    <p>Sign in at <code>https://artifactory.example.com</code> as <code>admin</code> /
+    <code>password</code> and set a new one. If the instance will outlive the demonstration, also
+    narrow the security group: port 80 must stay open for certificate renewal, but 443 and 22 can
+    be restricted to the addresses you work from.</p>
     <div class="note">
-      <span class="lbl">Artifactory OSS cannot do this</span>
-      <p>Docker repository support is a licensed feature. An OSS instance has no Docker repository
-      type at all, so there is nothing to create and nothing to point at.</p>
-      <p>The server built in step 2 runs <strong>JFrog Container Registry</strong>, the free edition
-      built specifically around Docker and Helm repositories — which is exactly what this needs, and
-      requires no licence key. If you hold an Artifactory Pro or Enterprise licence, set
-      <code>ARTIFACTORY_IMAGE</code> to the Pro image instead; nothing downstream changes, because
-      <code>roksbnkctl</code> only ever speaks the OCI registry API.</p>
-    </div>
-  </div>
-</div>
-
-<div class="step">
-  <div class="num">05</div>
-  <div class="body">
-    <span class="tag tag-ui">Artifactory console</span>
-    <h3>Generate an access token</h3>
-    <p>Click your avatar (top right) → <strong>Edit Profile</strong>, re-enter the admin password
-    to unlock the page, then <strong>Generate an Identity Token</strong>. Give it a description and
-    copy the value — it is shown once and never again.</p>
-    <p>That token is what the mirror authenticates with. Use it rather than the admin password so
-    the credential you hand to a pipeline can be revoked on its own, without changing the login you
-    use in the browser.</p>
-    <div class="note">
-      <span class="lbl">JCR has no user management — this is not a missing step</span>
-      <p>Artifactory's users, groups and permission targets are <strong>licensed Pro
-      features</strong>. On JCR their REST APIs answer <code>400: This REST API is available only
-      in Artifactory Pro</code>, and the corresponding screens are absent. There is no
-      <em>Deploy/Cache</em> or <em>Read</em> checkbox to find, because there is no permission model
-      to attach it to.</p>
-      <p>So on JCR the mirror runs as <strong>admin</strong>, holding an admin-scoped token. That
-      is acceptable for a demonstration or a single-purpose mirror host. It is not what you want
-      for a shared registry — see below.</p>
-    </div>
-    <div class="note">
-      <span class="lbl">On Artifactory Pro or Enterprise, do this instead</span>
-      <p>Create a dedicated identity rather than reusing admin. It is three separate objects, and
-      conflating them is the usual source of confusion — creating a user does <em>not</em> grant
-      it anything:</p>
-      <p><strong>1.</strong> <em>Administration → User Management → Users → New User</em> — name
-      and password only.<br>
-      <strong>2.</strong> <em>Administration → User Management → Permissions → New Permission</em>
-      — add the <code>bnk-mirror</code> repository, add the user, and grant it <strong>read</strong>
-      and <strong>write/deploy</strong>. (The exact action labels have changed across 7.x releases.)<br>
-      <strong>3.</strong> Generate that user's token as above.</p>
+      <span class="lbl">Why there is no dedicated mirror user</span>
+      <p>Artifactory's users, groups and permission targets are licensed Pro features; on JCR their
+      REST APIs answer <code>400 … only in Artifactory Pro</code> and the screens are absent. There
+      is no scoped identity to create, so the mirror authenticates as <code>admin</code>. That is
+      reasonable for a demonstration or a single-purpose mirror host, and not what you want for a
+      shared registry — on Pro or Enterprise, create a user, grant it read and write on the
+      repository through a permission, and use that instead.</p>
     </div>
   </div>
 </div>
@@ -328,7 +307,7 @@ export ART_RESOURCE_GROUP=default
 <h2 class="sec">Mirror it — interactively</h2>
 
 <div class="step">
-  <div class="num">06</div>
+  <div class="num">05</div>
   <div class="body">
     <span class="tag tag-cli">roksbnkctl</span>
     <h3>Point a workspace at the repository</h3>
@@ -356,7 +335,7 @@ echo "$ART_TOKEN" | roksbnkctl -w art registry target generic_password --passwor
 </div>
 
 <div class="step">
-  <div class="num">07</div>
+  <div class="num">06</div>
   <div class="body">
     <span class="tag tag-cli">roksbnkctl</span>
     <h3>Replicate, then verify</h3>
@@ -380,7 +359,7 @@ roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
 <h2 class="sec">Mirror it — unattended</h2>
 
 <div class="step">
-  <div class="num">08</div>
+  <div class="num">07</div>
   <div class="body">
     <span class="tag tag-ctr">Container</span>
     <h3>The same work, with no config file</h3>
@@ -406,7 +385,7 @@ roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
 </div>
 
 <div class="step">
-  <div class="num">09</div>
+  <div class="num">08</div>
   <div class="body">
     <span class="tag tag-ctr">Argo Workflows</span>
     <h3>Run it as a workflow</h3>
