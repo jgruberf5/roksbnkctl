@@ -4,6 +4,33 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.49.0 — 2026-08-19
+
+Everything here came out of the v1.48.0 demo cycle. Two of the three fixes were **tests asserting the bug rather than catching it**: the perf matrix *required* the exact rendering that could never work, and the arbitrary-uid gate passes on the platform it runs on (kind) while the platform it ships to (OpenShift) fails.
+
+### Added
+
+- **Working examples of every route kind BNK 2.3 supports.** The gateway phase created exactly one route kind, and its listener's `allowedRoutes.kinds` was hard-coded to `HTTPRoute` — so a `GRPCRoute` could be created and would **never attach**: the Gateway refused it and nothing in the apply failed. `gateway.route_examples` now adds working `GRPCRoute` and `L4Route` examples, with the listener's allowed kinds derived from what is enabled. Requesting `L4Route` also adds a **TCP listener**, because an L4Route cannot attach to an HTTP one. The kinds live in a catalogue keyed by kind, carrying each one's API group and which listener it attaches to, so BNK 2.4's expected move to the experimental channel is a row rather than a rewrite. Off by default, and byte-identical when unset. (#98)
+- **A standalone demo mirroring FAR into a self-hosted JFrog Artifactory on one IBM Cloud VSI**, with a step-by-step customer guide covering the Artifactory UI prerequisites — including that Artifactory **OSS cannot be a BNK mirror**, Docker repositories being a licensed feature — and an Argo workflow running the same mirror as an unattended container step.
+- **Book appendix B — replicating FAR into an existing registry**, covering both IBM Cloud Container Registry and JFrog Artifactory, for readers whose registry already exists.
+
+### Fixed
+
+- **The perf matrix's L4 leg targeted a CRD BNK never installs.** The fixture rendered `gateway.networking.k8s.io/v1alpha2 TCPRoute`, but BNK 2.3 requires Gateway API **1.4.1 standard**, whose channel contains no `TCPRoute` at all — so the object could never be created and the iperf3 L4 leg has **never** run against a VIP. It failed silently, because the fixture apply is best-effort: no L4 result rather than an error. It now renders BNK's own `L4Route` (`gateway.k8s.f5net.com/v1`) with `spec.protocol: TCP`. The existing test *required* the broken shape, pinning exactly what could not work; it now asserts the `L4Route` shape **and** that `TCPRoute` cannot come back. `TLSRouteName` is renamed `HTTPSRouteName` — it has always been rendered by `renderHTTPRoute` and named a kind it has never been. (#99)
+- **The `tools-ibmcloud` image could not run under OpenShift's arbitrary uid.** Its `$HOME` was created `0755` owned by uid 1000, so only uid 1000 could write it — but `runAsJob` deliberately leaves `RunAsUser` unset so a cluster's own admission may assign one, and OpenShift's SCC (which is what ROKS uses) assigns an arbitrary high uid from the namespace range, in gid 0. The `ibmcloud` CLI then died on its first config write with `mkdir /home/runner/.bluemix: permission denied`, regardless of subcommand. Now `0775` with gid 0 — the OpenShift image convention, and what `tools-runner` already did; this image had simply not been brought in line. Every image was audited and empirically run under an arbitrary uid: `runner`, `iperf3` and `h2load` pass unchanged, and `flp-status` runs under podman on a VSI rather than under an SCC. (#104)
+
+## v1.48.0 — 2026-08-19
+
+Two bugs found by **running the v1.47.0 demo**, both of which cost a full demo cycle before they were understood. Neither was reachable from CI: one needs a real OpenShift ingress operator racing a real FLO, the other needs a terraform state large enough to contain an IBM resource-group object.
+
+### Fixed
+
+- **`bnk up` now recovers when FLO's crd-installer loses the gateway-api admission-policy race, instead of failing the whole apply.** The sweep goroutine deletes OpenShift's `openshift-ingress-operator-gatewayapi-crd-admission` policy every 5s for the duration of the apply, but it is a **race**, not a deterministic block: the ingress operator can recreate the policy in the window between a sweep tick and FLO's CRD create, and a single denied `backendtlspolicies` create leaves the crd-installer Job failed and `CRDInstallerAvailable=False` **permanently** — FLO does not retry it. The apply then burned the full CNEInstance timeout and failed, and the only fix was by hand: delete the policy, delete the failed Job, `rollout restart` the operator. That sequence now runs automatically, while `tfx wait` is still waiting, so the apply converges rather than needing a re-run.
+
+  Deliberately narrow in three ways, because the repair restarts FLO and a false positive would bounce the operator mid-install: it matches the condition **message** (`admission policy`) and not merely `CRDInstallerAvailable=False` — which is the normal state for much of an install — so an unrelated installer failure (an `ImagePullBackOff`, say) is left alone to report its own error; it fires **once** per apply, since if one restart does not clear it the cause is not the race; and it is best-effort throughout, so a partial repair still improves the odds and the apply's own error remains the source of truth. (#96)
+- **`bnk up` refused a workspace that DID own its install.** The adopt guard (#53) decided whether a workspace's terraform state held resources by scanning the file for `"resources": []`. Terraform state is not the only thing in that file with a key called `resources` — IBM Cloud resource-group and IAM objects carry one as an *attribute*, routinely empty — so a state holding **221** resources read as empty, and `bnk up` refused with advice ("use the workspace that installed it") naming the very workspace it was refusing. It now decodes the single top-level `resources` key instead of scanning; the entries stay `json.RawMessage` and are never interpreted, so nothing about their contents can confuse it again. The old rationale — that a parse would have to track state-format changes — had it backwards: a scan reads every attribute of every resource, and so is the version maximally exposed to unrelated content. (#100)
+
+
 ## v1.47.0 — 2026-08-19
 
 Everything here was found by **running the two demos end to end** against v1.46.0, in an account where every prior resource had been cleaned up. Nothing in this release was found by reading code or by CI — each bug needed a real cluster, a real Transit Gateway, or a genuinely clean slate to appear at all.

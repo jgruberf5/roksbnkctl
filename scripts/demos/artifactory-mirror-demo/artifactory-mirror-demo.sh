@@ -45,7 +45,7 @@ ART_REPO="${ART_REPO:-bnk-mirror}"
 ART_USER="${ART_USER:-bnk-mirror-bot}"
 ART_TOKEN="${ART_TOKEN:-}"
 
-RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-runner:v1.47.0}"
+RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.0}"
 ARGO_NS="${ARGO_NS:-bnk-ci}"
 
 # Everything secret goes through secret() BEFORE it can reach the screen. These

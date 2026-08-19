@@ -34,7 +34,7 @@ spec:
   arguments:
     parameters:
       - name: runner-image
-        value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.47.0
+        value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.0
       - name: bnk-version
         value: 2.3.0-3.2598.3-0.0.170
   # No onExit teardown: a failed replicate should leave the workspace on the PVC
