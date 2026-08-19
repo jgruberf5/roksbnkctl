@@ -155,6 +155,7 @@ a:focus-visible,summary:focus-visible{outline:2px solid var(--accent); outline-o
   <div class="fact"><dt>Artifacts</dt><dd>89</dd></div>
   <div class="fact"><dt>Time</dt><dd>~45 min</dd></div>
   <div class="fact"><dt>Servers</dt><dd>1 VSI</dd></div>
+  <div class="fact"><dt>Containers</dt><dd>3</dd></div>
   <div class="fact"><dt>Clusters</dt><dd>None</dd></div>
 </dl>
 
@@ -191,8 +192,20 @@ cluster that needs it cannot reach the internet.</p>
     <span class="tag tag-cli">Your workstation</span>
     <h3>Create the server</h3>
     <p>One script creates an isolated VPC, a subnet, a public gateway, a security group, and a
-    single virtual server running Artifactory behind Caddy for TLS. Nothing outside that VPC is
-    touched.</p>
+    single virtual server. On that server it runs three containers: <strong>Artifactory</strong>,
+    a <strong>PostgreSQL</strong> database, and <strong>Caddy</strong> for TLS. Nothing outside
+    that VPC is touched.</p>
+    <div class="note">
+      <span class="lbl">Why a database container</span>
+      <p>Artifactory <strong>requires PostgreSQL</strong>. Its Access service refuses to start
+      against the embedded Derby database — <code>DB Type derby is not allowed</code> — so a
+      single-container deployment never comes up, however long you wait for it.</p>
+      <p>The failure is worth recognising because it does not look like a database problem:
+      Artifactory's own API answers on <code>8081</code> while Access never binds
+      <code>8046</code>, and every other service sits in a <code>Cluster join: Retry N</code>
+      loop that reads exactly like slow startup. The script handles this for you; the note is
+      here for anyone adapting it.</p>
+    </div>
     <pre><span class="c"># point this at a DNS name you can update</span>
 export ART_DOMAIN=artifactory.example.com
 export IBMCLOUD_API_KEY=...
@@ -211,7 +224,12 @@ export ART_RESOURCE_GROUP=default
       yourself.</p>
     </div>
     <p>The script prints the floating IP as soon as it has one, then waits for Artifactory to
-    answer over HTTPS. <strong>Point your DNS name at that IP while it waits.</strong></p>
+    answer over HTTPS. <strong>Point your DNS name at that IP while it waits.</strong> First boot
+    takes roughly ten minutes: PostgreSQL initialises, then Artifactory creates its schema.</p>
+    <p>The script also generates Artifactory's two startup secrets — its <em>master key</em> and
+    <em>join key</em> — and writes them before the first boot. They are not optional and
+    Artifactory does not create them itself in a container deployment; starting without them
+    leaves the database in a state that only a wipe recovers.</p>
     <div class="note">
       <span class="lbl">If it never finishes</span>
       <p>By far the most common cause is DNS: Caddy cannot obtain a certificate until the name
