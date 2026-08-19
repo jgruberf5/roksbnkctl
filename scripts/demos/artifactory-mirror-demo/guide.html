@@ -292,13 +292,36 @@ export ART_RESOURCE_GROUP=default
   <div class="num">05</div>
   <div class="body">
     <span class="tag tag-ui">Artifactory console</span>
-    <h3>Create a user and an access token</h3>
-    <p>Under <strong>Administration → User Management</strong>, create a user such as
-    <code>bnk-mirror-bot</code> with <strong>Deploy/Cache</strong> and <strong>Read</strong>
-    permission on <code>bnk-mirror</code>. Then generate an <strong>access token</strong> for it.</p>
-    <p>Use a token rather than the account password. It is scoped to what it can do and can be
-    revoked on its own, which matters here because you are about to hand it to an automated
-    pipeline.</p>
+    <h3>Generate an access token</h3>
+    <p>Click your avatar (top right) → <strong>Edit Profile</strong>, re-enter the admin password
+    to unlock the page, then <strong>Generate an Identity Token</strong>. Give it a description and
+    copy the value — it is shown once and never again.</p>
+    <p>That token is what the mirror authenticates with. Use it rather than the admin password so
+    the credential you hand to a pipeline can be revoked on its own, without changing the login you
+    use in the browser.</p>
+    <div class="note">
+      <span class="lbl">JCR has no user management — this is not a missing step</span>
+      <p>Artifactory's users, groups and permission targets are <strong>licensed Pro
+      features</strong>. On JCR their REST APIs answer <code>400: This REST API is available only
+      in Artifactory Pro</code>, and the corresponding screens are absent. There is no
+      <em>Deploy/Cache</em> or <em>Read</em> checkbox to find, because there is no permission model
+      to attach it to.</p>
+      <p>So on JCR the mirror runs as <strong>admin</strong>, holding an admin-scoped token. That
+      is acceptable for a demonstration or a single-purpose mirror host. It is not what you want
+      for a shared registry — see below.</p>
+    </div>
+    <div class="note">
+      <span class="lbl">On Artifactory Pro or Enterprise, do this instead</span>
+      <p>Create a dedicated identity rather than reusing admin. It is three separate objects, and
+      conflating them is the usual source of confusion — creating a user does <em>not</em> grant
+      it anything:</p>
+      <p><strong>1.</strong> <em>Administration → User Management → Users → New User</em> — name
+      and password only.<br>
+      <strong>2.</strong> <em>Administration → User Management → Permissions → New Permission</em>
+      — add the <code>bnk-mirror</code> repository, add the user, and grant it <strong>read</strong>
+      and <strong>write/deploy</strong>. (The exact action labels have changed across 7.x releases.)<br>
+      <strong>3.</strong> Generate that user's token as above.</p>
+    </div>
   </div>
 </div>
 
@@ -314,7 +337,7 @@ export ART_RESOURCE_GROUP=default
     <pre>roksbnkctl -w art registry target generic
 roksbnkctl -w art registry target generic_host        artifactory.example.com
 roksbnkctl -w art registry target generic_repo_prefix bnk-mirror
-roksbnkctl -w art registry target generic_username    bnk-mirror-bot
+roksbnkctl -w art registry target generic_username    admin          <span class="c"># JCR: admin is the only identity</span>
 
 <span class="c"># the token on stdin — never as an argument</span>
 echo "$ART_TOKEN" | roksbnkctl -w art registry target generic_password --password-stdin</pre>
@@ -377,7 +400,7 @@ roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
     <pre>printf '%s' "$ART_TOKEN" | kubectl -n bnk-ci create secret generic artifactory-mirror \
   --from-literal=host=artifactory.example.com \
   --from-literal=repo=bnk-mirror \
-  --from-literal=username=bnk-mirror-bot \
+  --from-literal=username=admin \
   --from-file=password=/dev/stdin</pre>
   </div>
 </div>
