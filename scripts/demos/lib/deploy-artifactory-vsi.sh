@@ -29,7 +29,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_FILE="${STATE_FILE:-$SCRIPT_DIR/../.bootstrap-state/artifactory.env}"
 
 : "${IBMCLOUD_API_KEY:?set IBMCLOUD_API_KEY}"
-: "${ART_DOMAIN:?set ART_DOMAIN — the public DNS name Caddy gets a certificate for}"
+# ART_DOMAIN is NOT required here: it is only meaningful when creating, and
+# demanding it up front made `--destroy` refuse to run without a hostname it has
+# no use for. Checked below, after the destroy dispatch.
 
 # ART_* wins, then the demo's own REGION/RESOURCE_GROUP, then the default. The
 # guide has the reader put REGION and RESOURCE_GROUP in .env; reading only the
@@ -133,6 +135,8 @@ destroy(){
 command -v jq >/dev/null || die "jq is required"
 
 [[ "${1:-}" == "--destroy" ]] && { destroy; exit 0; }
+
+: "${ART_DOMAIN:?set ART_DOMAIN — the public DNS name Caddy gets a certificate for}"
 
 login
 
