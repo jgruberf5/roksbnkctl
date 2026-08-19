@@ -15,7 +15,7 @@ import (
 
 // fixturePlanFor builds the render plan from the matrix spec's fixtures
 // + gateway identity. The TCP route defaults to the iperf3 server fixture
-// (roksbnkctl-iperf3:5201) so an L4 TCPRoute has a backend out of the box.
+// (roksbnkctl-iperf3:5201) so an L4Route has a backend out of the box.
 func fixturePlanFor(spec *test.MatrixSpec) test.FixturePlan {
 	g := spec.Gateway
 	return test.FixturePlan{

@@ -767,7 +767,7 @@ func runTestListCmd(_ *cobra.Command, _ []string) error {
 		{"connectivity", "HTTP/HTTPS reachability of configured hosts"},
 		{"dns", "DNS resolution probe (miekg/dns; --gslb-compare for multi-vantage)"},
 		{"throughput", "iperf3 throughput (v1.x)"},
-		{"matrix", "declarative perf grid: iperf3 L4 (TCPRoute) + h2load L7 (HTTPRoute, http/https)"},
+		{"matrix", "declarative perf grid: iperf3 L4 (L4Route) + h2load L7 (HTTPRoute, http/https)"},
 		{"all", "runs connectivity + dns (throughput once available)"},
 	}
 	for _, s := range suites {

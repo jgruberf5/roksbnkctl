@@ -395,9 +395,9 @@ The only cluster writes the matrix performs; all torn down after the run unless 
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `iperf3_server` | bool | `false` | Deploy the L4 iperf3 server (the throughput fixture); the TCPRoute's backend. |
+| `iperf3_server` | bool | `false` | Deploy the L4 iperf3 server (the throughput fixture); the `L4Route`'s backend. |
 | `http_backend` | bool | `false` | Deploy an nginx backend serving `/128`, `/5k`, `/512k`; the L7 backend. |
-| `routes` | bool | `false` | Apply TCPRoute + HTTPRoute (+ TLS HTTPRoute & self-signed Secret when `https_section` is set), attaching to `gateway.name`. |
+| `routes` | bool | `false` | Apply L4Route + HTTPRoute (+ TLS HTTPRoute & self-signed Secret when `https_section` is set), attaching to `gateway.name`. |
 
 ### `endpoints:` — named `(placement, role)` anchors
 
@@ -406,7 +406,7 @@ A map of `name → { kind, … }`. The locality axis is implicit in which `vsi` 
 | `kind` | Fields | Resolves to |
 |---|---|---|
 | `vsi` | `target` (SSH target name) | an `ssh:<target>` jumphost — a traffic-source client |
-| `address` | `host`, `port` (default `5201`) | an iperf3 TCP server (e.g. a TCPRoute VIP); an `iperf3` cell's `server` |
+| `address` | `host`, `port` (default `5201`) | an iperf3 TCP server (e.g. an L4Route VIP); an `iperf3` cell's `server` |
 | `url` | `url` (full `http(s)://`) | an HTTPRoute target; an `l7` cell's `server`. The scheme selects cleartext vs TLS-terminate-at-TMM. |
 
 ### `cells:` — the grid (one row per report cell)

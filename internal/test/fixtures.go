@@ -36,8 +36,14 @@ const (
 	HTTPBackendName = "matrix-http-backend"
 	TLSSecretName   = "matrix-tls"
 	HTTPRouteName   = "matrix-httproute"
-	TLSRouteName    = "matrix-httproute-tls"
-	TCPRouteName    = "matrix-tcproute"
+	// HTTPSRouteName is the HTTPS-listener HTTPRoute. It was called
+	// TLSRouteName, which described a kind it has never been: renderHTTPRoute
+	// produces it, and a TLSRoute is a different object in a channel BNK does
+	// not install.
+	HTTPSRouteName = "matrix-httproute-tls"
+	// L4RouteName is BNK's own L4 route. NOT a Gateway API TCPRoute — see
+	// renderL4Route.
+	L4RouteName = "matrix-l4route"
 
 	httpBackendImage = "nginx:stable"
 )
@@ -113,7 +119,7 @@ func RenderFixtures(p FixturePlan) (string, error) {
 				return "", fmt.Errorf("fixtures: generating TLS cert: %w", err)
 			}
 			docs = append(docs, renderTLSSecret(TLSSecretName, ns, certPEM, keyPEM))
-			docs = append(docs, renderHTTPRoute(TLSRouteName, ns, gwName, p.HTTPSSection, svc, port))
+			docs = append(docs, renderHTTPRoute(HTTPSRouteName, ns, gwName, p.HTTPSSection, svc, port))
 		}
 
 		// TCP route (only if a TCP section is named).
@@ -123,7 +129,7 @@ func RenderFixtures(p FixturePlan) (string, error) {
 			if tsvc == "" {
 				tsvc, tport = "iperf3-server", 5201 // the throughput fixture's service
 			}
-			docs = append(docs, renderTCPRoute(TCPRouteName, ns, gwName, p.TCPSection, tsvc, tport))
+			docs = append(docs, renderL4Route(L4RouteName, ns, gwName, p.TCPSection, tsvc, tport))
 		}
 	}
 
@@ -207,13 +213,24 @@ spec:
 `, name, ns, gateway, sec, svc, port, labelsBlock("  "))
 }
 
-func renderTCPRoute(name, ns, gateway, section, svc string, port int) string {
+// renderL4Route emits BNK's L4Route, not a Gateway API TCPRoute.
+//
+// This used to render `gateway.networking.k8s.io/v1alpha2 TCPRoute` — a CRD BNK
+// NEVER installs. BNK 2.3 requires Gateway API 1.4.1 STANDARD, and the standard
+// channel has no TCPRoute at all (verified on a live cluster: six CRDs, all
+// annotated channel=standard). So the object could not be created, the iperf3
+// L4 leg of the matrix never ran, and because the fixture apply is best-effort
+// the failure was silent — it produced no L4 result rather than an error.
+//
+// BNK provides L4 through its own CRD instead. `protocol` carries no enum on
+// that CRD, so its accepted values are controller-validated.
+func renderL4Route(name, ns, gateway, section, svc string, port int) string {
 	sec := ""
 	if section != "" {
 		sec = fmt.Sprintf("\n    sectionName: %s", section)
 	}
-	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1alpha2
-kind: TCPRoute
+	return fmt.Sprintf(`apiVersion: gateway.k8s.f5net.com/v1
+kind: L4Route
 metadata:
   name: %[1]s
   namespace: %[2]s
@@ -222,6 +239,7 @@ spec:
   parentRefs:
   - name: %[3]s
     namespace: %[2]s%[4]s
+  protocol: TCP
   rules:
   - backendRefs:
     - name: %[5]s

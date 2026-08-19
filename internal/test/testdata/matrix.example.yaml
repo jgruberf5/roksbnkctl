@@ -2,12 +2,12 @@
 #
 # Run AFTER a full cluster + BNK (+ optional gateway) deployment. The
 # matrix owns only ephemeral fixtures (an iperf3 server, an HTTP file
-# backend, and — when fixtures.routes is on — TCPRoute / HTTPRoute / TLS
+# backend, and — when fixtures.routes is on — L4Route / HTTPRoute / TLS
 # objects that ATTACH to your existing Gateway by name). It never touches
 # Terraform or the gateway-phase objects.
 #
 # Map to the source perf plan:
-#   - L4 TCP (TC01–04) -> family: iperf3 over a TCPRoute VIP, length knob
+#   - L4 TCP (TC01–04) -> family: iperf3 over a L4Route VIP, length knob
 #     as the 128 B / 512 KB content-size analog.
 #   - L7 HTTP  (TC05)  -> family: l7, http:// URL (cps / tps / throughput).
 #   - L7 HTTPS (TC06)  -> family: l7, https:// URL (TLS terminate at TMM).
@@ -23,23 +23,23 @@ gateway:
   name: bnk-gateway
   http_section: http      # an HTTP listener section on the Gateway
   https_section: https    # an HTTPS (TLS) listener section
-  tcp_section: tcp         # a TCP listener section (for the L4 TCPRoute)
+  tcp_section: tcp         # a TCP listener section (for the L4 L4Route)
 
 # Ephemeral, runner-owned fixtures (all torn down after, unless --keep).
 fixtures:
-  iperf3_server: true      # L4 server (roksbnkctl-iperf3:5201) — TCPRoute backend
+  iperf3_server: true      # L4 server (roksbnkctl-iperf3:5201) — L4Route backend
   http_backend: true       # nginx serving /128, /5k, /512k — L7 backend
-  routes: true             # apply TCPRoute + HTTPRoute(+TLS) attaching to the gateway
+  routes: true             # apply L4Route + HTTPRoute(+TLS) attaching to the gateway
 
 # Named (placement, role) anchors. "vsi" -> an ssh:<target> jumphost the
 # Testing phase auto-registered. "address" -> an iperf3 TCP server (a
-# TCPRoute VIP). "url" -> an HTTPRoute target.
+# L4Route VIP). "url" -> an HTTPRoute target.
 endpoints:
   vsi-same-zone: { kind: vsi, target: jumphost-jp-osa-1 }  # client in TMM's zone
   vsi-diff-zone: { kind: vsi, target: jumphost-jp-osa-3 }  # client in another zone, same VPC
   vsi-diff-vpc:  { kind: vsi, target: jumphost }           # client in the TGW/client VPC
 
-  tmm-tcp:   { kind: address, host: 10.240.0.10, port: 5201 }   # TCPRoute VIP:port
+  tmm-tcp:   { kind: address, host: 10.240.0.10, port: 5201 }   # L4Route VIP:port
 
   # L7 targets. Payload (128 B / 512 KB) is the URL path the nginx fixture
   # serves (/128, /5k, /512k), so define one endpoint per payload+scheme.
