@@ -4,6 +4,42 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.47.0 — 2026-08-19
+
+Everything here was found by **running the two demos end to end** against v1.46.0, in an account where every prior resource had been cleaned up. Nothing in this release was found by reading code or by CI — each bug needed a real cluster, a real Transit Gateway, or a genuinely clean slate to appear at all.
+
+### Fixed
+
+- **`cleanup` could not delete a Transit Gateway whose connection was still attaching** ([#87](https://github.com/jgruberf5/roksbnkctl/issues/87)). IBM accepts a connection `DELETE` only from a settled state, and `pending` is not one — so a sweep run right after an interrupted `up`, which is exactly when you reach for `cleanup`, failed with `409 invalid_state` and advised a re-run that failed identically until IBM finished attaching. The sweep now does that wait itself.
+
+  The two transient states turned out to mean opposite things, and collapsing them hid a second bug: `deleting` is **departing** — going away whoever started it, so never a reason to refuse a gateway — while `pending` is **arriving**, where ownership decides. A *foreign* connection that happened to be `pending` had its foreign-ness masked by its status. Ownership is now settled before status, and a gateway attached to someone else's network is refused on the first listing instead of after a five-minute wait for a verdict that could not change.
+
+- **`cluster down` and `down` failed on a workspace with nothing left to destroy** ([#89](https://github.com/jgruberf5/roksbnkctl/issues/89)), while `bnk down` and `tgw disconnect` treated the identical state as success. An orchestrated teardown runs every phase unconditionally — BNK Forge as reverse-order module steps, the demos as one workflow per phase — so a non-zero exit for *having nothing to do* failed a teardown that had in fact worked. All four now agree.
+
+  With one distinction the old code did not draw: an **uninitialised** workspace is still an error. `DetectPresence` reports all-false for "no such workspace" exactly as it does for "empty", and they mean opposite things — `-w prdo down` (a typo for `prod`) reporting a completed teardown is how someone concludes a cluster came down while it is still running.
+
+- **The standalone FLP VSI ignored the workspace prefix** ([#88](https://github.com/jgruberf5/roksbnkctl/issues/88)). Every resource was named with a literal (`flp-vsi`, `flp-vsi-subnet`, …), so an account could hold exactly **one** standalone proxy — which rules out the topology the FLP exists for, one per environment. It also meant `cleanup`, which sweeps `<prefix>-*`, could never see the proxy's VSI, floating IP, subnet, security group or boot volume, so a failed `flp down` stranded precisely the resources most worth sweeping.
+
+  New `bnk.flp.vsi.name_prefix` / `ROKSBNKCTL_FLP_VSI_NAME_PREFIX`. **Empty is the default and stays that way** — renaming a terraform resource *replaces* it, so defaulting to the workspace prefix would destroy and rebuild every running proxy on upgrade.
+
+- **The License CR raced the ResourceQuota controller on every fresh install** ([#90](https://github.com/jgruberf5/roksbnkctl/issues/90)). Kubernetes refuses admission while quota status is uncomputed, and the quota controller only discovers a newly-installed CRD on its resync — so the window is open on exactly the run where the CRD is newest. `applyWithRetry` always recovered it, so nothing was broken; this replaces the retry with a wait, because 90 seconds of red `Error:` output on every first install trains readers to skim past errors and makes a genuinely broken install look identical to the benign one.
+
+### Fixed — the demo harness
+
+Three failures that only the clean-slate path could hit, which is the path a recorded demo always takes:
+
+- `bootstrap-services.sh` died outright on IBM's eventual consistency: `vpc-create` returns an id before the VPC is readable, the next line read it back, and `set -e` ended the run with the VPC already built.
+- The blueprint demo pinned its runner image to **`v1.42.0`**, four releases stale. Every run exercised an old binary regardless of what was installed, and reported success doing it. A test now fails when that pin drifts from the newest release, so it cannot go stale again quietly.
+- The CLI demo did a bare `chmod 600` on the SSH key. `lib/ssh-key.sh` exists because that silently fails on DrvFs (`/mnt/c`, `/mnt/d` — the normal case under WSL) and OpenSSH then refuses the key, surfacing as `Permission denied (publickey)`. The bootstrap used the helper; this demo never did.
+
+### Verified
+
+Both demos completed on v1.46.0 with these fixes: the **Argo blueprint demo 6/6** and the **disconnected-cluster CLI demo 5/5**, each checked against the live cluster rather than by exit status. The disconnected paths pulled **45 of 45 container images from Harbor's private IP** over the Transit Gateway and licensed through the FLP — no image or licensing traffic left the VPC.
+
+### Docs
+
+The teardown chapter's dispatch tables still described `bnk down` refusing an empty workspace, which had not been true for some time, and PRD 06's table specified the refusals this release removes. Both corrected, with PRD 06 recording the supersession and its reasoning rather than being quietly overwritten.
+
 ## v1.46.0 — 2026-08-18
 
 Three bugs that failed **silently** — no error, no failed apply, just a thing that quietly did not work — plus the evaluation of BNK 2.4 against every phase of the tool.

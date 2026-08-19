@@ -18,7 +18,7 @@ nowhere to stage a file.
 | An IBM Cloud API key | able to create VPCs, clusters and Transit Gateways |
 | IBM Cloud Object Storage | holding your F5 FAR auth key and subscription JWT |
 | A Transit Gateway | existing, for the disconnected use cases |
-| The runner image | `ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.42.0` or later |
+| The runner image | `ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.47.0` or later |
 
 Everything else — the services VPC, the private registry, the licence proxy, even the
 Argo controller itself — is built for you by `bootstrap`.
@@ -357,7 +357,14 @@ The bootstrap does this for itself; only your own ssh commands need it.
 
 Every use case below was run on **roksbnkctl v1.42.0** against IBM Cloud ROKS
 **4.20.32**, and confirmed by checking BNK pods on the cluster — not just by the
-workflow's exit status.
+workflow's exit status. The run ids and pod counts in the table belong to that
+run and are left as recorded.
+
+All **six** blueprints were re-run on **v1.46.0** during the v1.47.0 cycle and
+verified the same way. The disconnected pair is the one worth repeating: 45 of 45
+container images came from Harbor's private IP over the Transit Gateway, and
+`bnk-license` reported `Active` in mode `f5licenseproxy` — no image or licensing
+traffic left the VPC.
 
 | # | Use case | Workflow run | Result |
 |---|---|---|---|

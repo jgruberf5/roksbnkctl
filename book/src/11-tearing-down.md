@@ -48,7 +48,7 @@ roksbnkctl down
 |---|---|
 | Split (cluster + trial) | trial destroy → cluster destroy |
 | ClusterOnly (only cluster applied) | cluster destroy |
-| Empty | error: `nothing to destroy in this workspace` |
+| Empty | no-op success: `✓ Nothing to destroy in this workspace — no phase has any state.` |
 
 This is the safe default — `down` always does the right thing regardless of shape.
 
@@ -176,7 +176,24 @@ Which connections it may detach is a deliberate limit, not an oversight:
 - A connection to a **VPC this same sweep is deleting** is yours; `cleanup` removes it.
 - **Anything else** — a VPC under a different prefix, another account's network, a Direct Link or GRE attachment — belongs to someone else. `cleanup` **refuses the gateway** and names what is attached, rather than quietly disconnecting a shared gateway's other tenants.
 
-Connections **mid-transition** are a third case: waited for, never acted on. IBM accepts a connection `DELETE` only from a settled state, and refuses both ends of the lifecycle — `deleting` (someone else's detach, or a cascade from a cluster delete this same sweep kicked off) and `pending` (still attaching). The second matters more than it sounds: `cleanup` is most often reached for right after an interrupted `up`, which is exactly when a connection is still attaching. Sweeping then used to fail with `409 invalid_state` and advise a re-run that failed identically until IBM finished attaching — a wait the sweep now does itself.
+Connections **mid-transition** are a third case, and the two directions are not the same:
+
+| status | meaning | what `cleanup` does |
+|---|---|---|
+| `deleting` / `detaching` | **departing** — going away | waited for, whoever started it. It will be gone either way, so it is never a reason to refuse the gateway |
+| `pending` | **arriving** — still attaching | ownership decides: **yours** is waited for; **someone else's** is refused straight away |
+
+IBM accepts a connection `DELETE` only from a settled state, so acting on either would fail with `409 invalid_state`. The `pending` case matters more than it sounds: `cleanup` is most often reached for right after an interrupted `up`, which is exactly when a connection is still attaching. Sweeping then used to fail and advise a re-run that failed identically until IBM finished attaching — a wait the sweep now does itself.
+
+Ownership is checked **before** that wait, because it cannot change as a connection settles. A gateway attached to a network outside the sweep is refused on the first listing rather than after the timeout.
+
+If a connection never finishes attaching, the sweep says so rather than timing out twice on something it never had a chance to delete:
+
+```
+transit gateway f5orph-tgw still has a connection attaching after 5m0s:
+conn-1 [vpc crn:…, pending] — IBM refuses a DELETE from `pending`, so this
+has to finish before the gateway can go. Re-run once it reports `attached`
+```
 
 States that are *settled* — including `failed` and `suspended` — are detached normally. Waiting for `attached` specifically would mean a broken connection was never cleaned up, which is the opposite of what a sweep is for.
 
@@ -217,8 +234,9 @@ The phase-scoped destroy verbs refuse loudly when the shape doesn't allow what y
 | `testing down` with **no jumphosts** | *(not a refusal — exits 0)* `✓ No testing jumphost state to destroy in this workspace — nothing to do.` | No-op success — the testing phase is optional, so `down` returns cleanly when nothing was provisioned. |
 | `gateway down` with **no gateway state** | *(not a refusal — exits 0)* `✓ No gateway phase state to destroy in this workspace — nothing to do.` | No-op success — the gateway phase is opt-in, so `down` returns cleanly when it was never applied. |
 | `cluster down` on **Split** | ``BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)`` | Run `bnk down` first to remove the trial, then `cluster down` for the cluster — or `roksbnkctl down` to do both in one shot. |
-| `cluster down` on **Empty** | `nothing to destroy in this workspace` | Nothing to do — the cluster hasn't been provisioned. |
-| `down` on **Empty** | `nothing to destroy in this workspace` | Nothing to do — the workspace has no state. |
+| `cluster down` on **Empty** | *(not a refusal — exits 0)* `✓ No cluster state to destroy in this workspace — nothing to do.` | No-op success — the cluster hasn't been provisioned. |
+| `down` on **Empty** | *(not a refusal — exits 0)* `✓ Nothing to destroy in this workspace — no phase has any state.` | No-op success — no phase has any state. |
+| any `down` on an **uninitialised workspace** | ``workspace "<name>" is not initialised; run `roksbnkctl init` first`` | A **real error**, unlike the empty case above. The two are indistinguishable to the state check but mean opposite things: a mistyped `-w` reporting a successful teardown is how someone concludes a cluster came down while it is still running. |
 
 ## What survives a destroy
 

@@ -259,7 +259,7 @@ $ roksbnkctl bnk up --auto
 Destroys the trial only. The cluster phase keeps running.
 
 - On a **split** workspace (cluster + trial both present), `bnk down` runs `terraform destroy` against the trial state — ~41 resources, the same as the trial half of a full `down`.
-- On an **empty** or **cluster-only** workspace, `bnk down` refuses: there's no trial to destroy.
+- On an **empty** or **cluster-only** workspace, `bnk down` is a **no-op success** (exit 0): there's no trial to destroy, and an orchestrated teardown runs every phase unconditionally, so failing for having nothing to do would fail a teardown that worked.
 
 Sample output against a split workspace:
 
@@ -283,11 +283,11 @@ The unscoped `roksbnkctl up` / `down` verbs are now **shape-aware composites** �
 | Command | **Empty** (nothing applied) | **ClusterOnly** (`cluster up` ran) | **Split** (cluster + trial both applied) |
 |---|---|---|---|
 | `up` | `cluster up` → trial up | trial up | `cluster up` (refresh) → trial up |
-| `down` | error: nothing to destroy | `cluster down` | trial down → `cluster down` |
+| `down` | no-op (exit 0): nothing to destroy | `cluster down` | trial down → `cluster down` |
 | `bnk up` | confirm + `cluster up` → trial up | trial up | trial up |
 | `bnk down` | no-op (exit 0): no trial | no-op (exit 0): no trial | trial down |
 | `cluster up` | `cluster up` | `cluster up` (refresh) | `cluster up` (refresh) |
-| `cluster down` | refuse: nothing to destroy | `cluster down` | **refuse**: trial exists |
+| `cluster down` | no-op (exit 0): nothing to destroy | `cluster down` | **refuse**: trial exists |
 
 The user-facing simplification: the unscoped `up` / `down` "just work" against every shape. The phase-scoped commands (`bnk`, `cluster`) only operate when the shape allows isolation and refuse loudly with an actionable message otherwise. Refusals always point at the resolution — see [Chapter 11 §"Refusal messages"](./11-tearing-down.md#refusal-messages-catalogue) for the full catalogue.
 
