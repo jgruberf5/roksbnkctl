@@ -103,6 +103,15 @@ check cluster_vpc_cidr "10.242.0.0/24" reject "needs /18 or larger"
 check cluster_vpc_cidr "10.242.0.0/20" reject "needs /18 or larger"
 check cluster_vpc_cidr "garbage"       reject "must be empty or a valid CIDR"
 
+# Route-example kinds. TCPRoute is the important rejection: it is the kind a
+# reader coming from upstream Gateway API docs will reach for first, and BNK 2.3
+# installs the STANDARD channel, which does not contain it.
+check gateway_route_examples '[]'                        accept
+check gateway_route_examples '["GRPCRoute"]'             accept
+check gateway_route_examples '["GRPCRoute","L4Route"]'   accept
+check gateway_route_examples '["TCPRoute"]'              reject "accepts only GRPCRoute and L4Route"
+check gateway_route_examples '["HTTPRoute"]'             reject "accepts only GRPCRoute and L4Route"
+
 if (( fails )); then
   echo "==> $fails variable-validation case(s) FAILED"
   exit 1

@@ -137,6 +137,8 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_FLO_UTILS_NAMESPACE` | `bnk.flo_utils_namespace` | Namespace for the F5 utility components. Default `f5-utils`. **Set both to the same value for one shared namespace** — verified against BNK 2.3. |
 | `ROKSBNKCTL_GATEWAY_CLASS_NAME` | `gateway.class_name` | GatewayClass name; blank → `gateway-class`. GatewayClass is **cluster-scoped**, so two BNK installs sharing a cluster must not share it. |
 | `ROKSBNKCTL_GATEWAY_CONTROLLER_NAME` | `gateway.controller_name` | **Leave blank.** Blank derives `f5.com/<flo_namespace>-f5-cne-controller` — the value the CNE controller answers to — and follows `ROKSBNKCTL_FLO_NAMESPACE` automatically. Set it only to aim the GatewayClass at a controller this deployment did not install. A wrong value fails **silently**: the apply succeeds, the GatewayClass is never `Accepted`, and no traffic flows. |
+| `ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES` | `gateway.route_examples` | Comma-separated extra route kinds to create working examples of. On BNK 2.3: `GRPCRoute`, `L4Route`. Blank leaves an existing deployment byte-identical. `TCPRoute` is **not** valid — 2.3 pins Gateway API 1.4.1 *standard*, which does not contain it; BNK uses its own `L4Route` for TCP. |
+| `ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT` | `gateway.l4_listener_port` | Port for the TCP listener `L4Route` needs. Blank → `8080`. |
 | `ROKSBNKCTL_FLP_NAMESPACE` | `bnk.flp.namespace` | verbatim (FLP mode only) |
 | `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` | verbatim — license against a proxy in **another** cluster |
 | `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` | **verbatim; already base64** — re-encoding it hands the CWC a corrupt CA |

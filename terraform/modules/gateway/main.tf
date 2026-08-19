@@ -38,6 +38,55 @@ locals {
     : "f5.com/${var.flo_namespace}-f5-cne-controller"
   )
 
+  # ── Route-kind catalogue ───────────────────────────────────────────────────
+  #
+  # DATA, not a resource per kind. The set of route kinds BNK can serve is a
+  # property of the Gateway API channel it installs, and that changes by BNK
+  # line: 2.3 pins 1.4.1 STANDARD, which contains HTTPRoute and GRPCRoute and
+  # NOT TCPRoute/TLSRoute/UDPRoute — BNK ships L4Route
+  # (gateway.k8s.f5net.com/v1) for TCP instead. 2.4 is expected to move to the
+  # experimental channel, which adds the three upstream L4 kinds; that is a row
+  # here, not a rewrite, which is the whole reason this is a map.
+  #
+  # `listener` is which Gateway listener the kind can attach to. It is not
+  # cosmetic: a GRPCRoute attaches to an HTTP listener, an L4Route cannot, and a
+  # route on the wrong listener is created successfully and then never accepted.
+  route_kind_catalog = {
+    GRPCRoute = { group = "gateway.networking.k8s.io", api = "gateway.networking.k8s.io/v1", listener = "http" }
+    L4Route   = { group = "gateway.k8s.f5net.com", api = "gateway.k8s.f5net.com/v1", listener = "tcp" }
+  }
+  route_examples = { for k in var.gateway_route_examples : k => local.route_kind_catalog[k] }
+  want_l4        = contains(var.gateway_route_examples, "L4Route")
+
+  # The HTTP listener must ALLOW every kind that attaches to it. This was
+  # hard-coded to HTTPRoute, so a GRPCRoute could be created and would never
+  # attach — the Gateway refused it and nothing in the apply failed.
+  http_listener_kinds = concat(
+    [{ kind = "HTTPRoute" }],
+    [for k, v in local.route_examples : { group = v.group, kind = k } if v.listener == "http"],
+  )
+
+  gateway_listeners = concat(
+    [{
+      name     = "http"
+      protocol = "HTTP"
+      port     = var.gateway_listener_port
+      allowedRoutes = {
+        namespaces = { from = "Same" }
+        kinds      = local.http_listener_kinds
+      }
+    }],
+    local.want_l4 ? [{
+      name     = "tcp"
+      protocol = "TCP"
+      port     = var.gateway_l4_listener_port
+      allowedRoutes = {
+        namespaces = { from = "Same" }
+        kinds      = [{ group = "gateway.k8s.f5net.com", kind = "L4Route" }]
+      }
+    }] : [],
+  )
+
   do_automap  = contains(["automap", "both"], var.gateway_egress_mode)
   do_snatpool = contains(["snatpool", "both"], var.gateway_egress_mode)
 
@@ -153,15 +202,7 @@ resource "kubectl_manifest" "gateway" {
         }
       }
       gatewayClassName = var.gateway_class_name
-      listeners = [{
-        name     = "http"
-        protocol = "HTTP"
-        port     = var.gateway_listener_port
-        allowedRoutes = {
-          namespaces = { from = "Same" }
-          kinds      = [{ kind = "HTTPRoute" }]
-        }
-      }]
+      listeners        = local.gateway_listeners
     }
   })
   server_side_apply = true
@@ -182,6 +223,73 @@ resource "kubectl_manifest" "http_route" {
         namespace   = var.app_namespace
         sectionName = "http"
       }]
+      rules = [{
+        backendRefs = [{
+          name = var.gateway_backend_service
+          port = var.gateway_backend_port
+        }]
+      }]
+    }
+  })
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  depends_on        = [kubectl_manifest.gateway]
+}
+
+# ── Route examples ───────────────────────────────────────────────────────────
+#
+# One resource per requested kind, rendered from the catalogue. They point at
+# the SAME backend Service as the default HTTPRoute, so enabling them needs no
+# extra workload — the example is the routing, not the application.
+#
+# GRPCRoute. Attaches to the HTTP listener. The empty rule matches all gRPC
+# traffic on the listener, which is the honest minimal example: a `matches`
+# block on service/method looks more complete but encodes a service name that
+# does not exist in the reader's cluster.
+resource "kubectl_manifest" "grpc_route_example" {
+  count = local.enabled && contains(var.gateway_route_examples, "GRPCRoute") ? 1 : 0
+  yaml_body = yamlencode({
+    apiVersion = local.route_kind_catalog["GRPCRoute"].api
+    kind       = "GRPCRoute"
+    metadata   = { name = "${var.gateway_route_name}-grpc", namespace = var.app_namespace }
+    spec = {
+      parentRefs = [{
+        name        = var.gateway_name
+        namespace   = var.app_namespace
+        sectionName = "http"
+      }]
+      rules = [{
+        backendRefs = [{
+          name = var.gateway_backend_service
+          port = var.gateway_backend_port
+        }]
+      }]
+    }
+  })
+  server_side_apply = true
+  field_manager     = "roksbnkctl"
+  force_conflicts   = true
+  depends_on        = [kubectl_manifest.gateway]
+}
+
+# L4Route — BNK's own CRD, not an upstream Gateway API kind. It exists because
+# the 1.4.1 STANDARD channel has no TCPRoute; this is how BNK does L4. It
+# attaches to the TCP listener that local.want_l4 added, and `protocol` carries
+# no enum on the CRD, so the accepted values are controller-validated.
+resource "kubectl_manifest" "l4_route_example" {
+  count = local.enabled && local.want_l4 ? 1 : 0
+  yaml_body = yamlencode({
+    apiVersion = local.route_kind_catalog["L4Route"].api
+    kind       = "L4Route"
+    metadata   = { name = "${var.gateway_route_name}-l4", namespace = var.app_namespace }
+    spec = {
+      parentRefs = [{
+        name        = var.gateway_name
+        namespace   = var.app_namespace
+        sectionName = "tcp"
+      }]
+      protocol = "TCP"
       rules = [{
         backendRefs = [{
           name = var.gateway_backend_service

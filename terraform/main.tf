@@ -290,6 +290,8 @@ module "gateway" {
   gateway_controller_name      = var.gateway_controller_name
   gateway_backend_service      = var.gateway_backend_service
   gateway_backend_port         = var.gateway_backend_port
+  gateway_route_examples       = var.gateway_route_examples
+  gateway_l4_listener_port     = var.gateway_l4_listener_port
   gateway_egress_mode          = var.gateway_egress_mode
   gateway_client_subnet_local  = var.gateway_client_subnet_local
   gateway_client_subnet_remote = var.gateway_client_subnet_remote

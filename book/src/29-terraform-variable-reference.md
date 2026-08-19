@@ -91,6 +91,8 @@ Source: `terraform/variables.tf`
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs (FLP phase). Default = ROKS VPC block. | no |
 | `gateway_app_namespace` | `string` | `"f5-app"` | Application namespace the Gateway + HTTPRoute serve (created by the gateway module) | no |
 | `gateway_class_name` | `string` | `"gateway-class"` | GatewayClass name. Set it to run more than one BNK GatewayClass in a cluster — GatewayClass is cluster-scoped, so two installs sharing the name collide. | no |
+| `gateway_route_examples` | `list(string)` | `[]` | Extra route kinds to create working examples of, alongside the default HTTPRoute. Valid on BNK 2.3: GRPCRoute, L4Route. Empty (default) leaves an existing deployment byte-identical. L4Route also adds a TCP listener to the Gateway, because an L4Route cannot attach to an HTTP one. | no |
+| `gateway_l4_listener_port` | `number` | `8080` | Port for the TCP listener added when gateway_route_examples includes L4Route | no |
 | `gateway_controller_name` | `string` | `""` | GatewayClass controllerName. Empty → derived as f5.com/`<flo_namespace>`-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds). | no |
 | `gateway_backend_service` | `string` | `"nginx-service"` | HTTPRoute backend Service name in the app namespace | no |
 | `gateway_backend_port` | `number` | `80` | HTTPRoute backend Service port | no |
@@ -345,6 +347,8 @@ Source: `terraform/modules/gateway/variables.tf`
 | `gateway_route_name` | `string` | `"http-route"` | HTTPRoute name | no |
 | `gateway_backend_service` | `string` | `"nginx-service"` | HTTPRoute backend Service name in the app namespace | no |
 | `gateway_backend_port` | `number` | `80` | HTTPRoute backend Service port | no |
+| `gateway_route_examples` | `list(string)` | `[]` | Extra route kinds to create WORKING examples of, alongside the default HTTPRoute. Empty (the default) changes nothing about an existing deployment. | no |
+| `gateway_l4_listener_port` | `number` | `8080` | Port for the TCP listener added when gateway_route_examples includes L4Route | no |
 | `gateway_egress_mode` | `string` | `"snatpool"` | Egress SNAT strategy: snatpool (default; creates the SnatPool + snatpool Egress), automap (automap Egress only), or both. | no |
 | `gateway_snatpool_name` | `string` | `"egress-snat-vx102"` | F5SPKSnatpool name | no |
 | `gateway_snat_host` | `number` | `111` | Host number in int_snat_cidr for each zone's SNAT address | no |
