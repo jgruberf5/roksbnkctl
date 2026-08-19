@@ -161,6 +161,122 @@ to someone else. A wrong bucket fails with `AccessDenied` rather than
 `NotFound`, which reads like a bad API key and sends you to check the wrong
 credential.
 
+## The same mirror as an Argo workflow
+
+Everything above is the interactive path: an operator with a workspace, testing a
+mirror by hand. Unattended, the same binary runs the same verbs in a container
+with **no `config.yaml` anywhere** — every setting arrives as an environment
+variable, because a CI runner has no shell, no prompts and nowhere to stage a
+file.
+
+The credentials go in a Secret. Keep the token off the command line here too:
+
+```bash
+printf '%s' "$ARTIFACTORY_TOKEN" | kubectl -n bnk-ci create secret generic artifactory-mirror \
+  --from-literal=host=artifactory.example.com \
+  --from-literal=repo=bnk-mirror \
+  --from-literal=username=admin \
+  --from-file=password=/dev/stdin \
+  --from-literal=ibmcloud-api-key="$IBMCLOUD_API_KEY"
+```
+
+The workflow runs the five verbs as pipeline steps and gates on `verify`:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-artifactory-mirror-
+  namespace: bnk-ci
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      - {name: runner-image,   value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.0}
+      - {name: bnk-version,    value: 2.3.0-3.2598.3-0.0.170}
+      - {name: cos-instance,   value: bnk-supply-chain}
+      - {name: cos-bucket,     value: ""}          # account-specific; no default
+      - {name: cos-region,     value: us-south}
+      - {name: region,         value: us-east}
+      - {name: resource-group, value: default}
+      - {name: prefix,         value: art-mirror}
+  # No onExit teardown: a failed replicate should leave the workspace on the PVC
+  # so the next run RESUMES. replicate is idempotent — an artifact already
+  # present at the right digest is skipped — so a re-run costs only what did not
+  # land, not the whole mirror again.
+  volumes:
+    - name: work
+      persistentVolumeClaim: {claimName: bnk-work}
+  templates:
+    - name: mirror
+      steps:
+        - - {name: init,               template: rbk, arguments: {parameters: [{name: cmd, value: "init -w art --non-interactive --override-from-env"}]}}
+        - - {name: show-target,        template: rbk, arguments: {parameters: [{name: cmd, value: "-w art registry target"}]}}
+        - - {name: registry-bom,       template: rbk, arguments: {parameters: [{name: cmd, value: "-w art registry bom"}]}}
+        - - {name: registry-replicate, template: rbk, arguments: {parameters: [{name: cmd, value: "-w art registry replicate --target generic"}]}}
+        - - {name: registry-verify,    template: rbk, arguments: {parameters: [{name: cmd, value: "-w art registry verify"}]}}
+
+    - name: rbk
+      inputs:
+        parameters: [{name: cmd}]
+      container:
+        image: "{{workflow.parameters.runner-image}}"
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        env:
+          - {name: ROKSBNKCTL_REGION,           value: "{{workflow.parameters.region}}"}
+          - {name: ROKSBNKCTL_RESOURCE_GROUP,   value: "{{workflow.parameters.resource-group}}"}
+          - {name: ROKSBNKCTL_PREFIX,           value: "{{workflow.parameters.prefix}}"}
+          - {name: ROKSBNKCTL_CLUSTER_CREATE,   value: "false"}
+          - {name: ROKSBNKCTL_CLUSTER_NAME,     value: "none"}
+          - {name: ROKSBNKCTL_REGISTRY_TARGET,  value: "generic"}
+          - {name: ROKSBNKCTL_MANIFEST_VERSION, value: "{{workflow.parameters.bnk-version}}"}
+          - {name: ROKSBNKCTL_COS_INSTANCE,     value: "{{workflow.parameters.cos-instance}}"}
+          - {name: ROKSBNKCTL_COS_BUCKET,       value: "{{workflow.parameters.cos-bucket}}"}
+          - {name: ROKSBNKCTL_COS_REGION,       value: "{{workflow.parameters.cos-region}}"}
+          - name: ROKSBNKCTL_GENERIC_HOST
+            valueFrom: {secretKeyRef: {name: artifactory-mirror, key: host}}
+          - name: ROKSBNKCTL_GENERIC_REPO_PREFIX
+            valueFrom: {secretKeyRef: {name: artifactory-mirror, key: repo}}
+          - name: ROKSBNKCTL_GENERIC_USERNAME
+            valueFrom: {secretKeyRef: {name: artifactory-mirror, key: username}}
+          # The RAW token; roksbnkctl base64s it into generic_password_b64 itself.
+          - name: ROKSBNKCTL_GENERIC_PASSWORD
+            valueFrom: {secretKeyRef: {name: artifactory-mirror, key: password}}
+          - name: IBMCLOUD_API_KEY
+            valueFrom: {secretKeyRef: {name: artifactory-mirror, key: ibmcloud-api-key, optional: true}}
+          # The workspace lives on the PVC so a later run — or registry delete —
+          # sees the same mirror record.
+          - {name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl"}
+          - {name: HOME,            value: "/home/runner"}
+        volumeMounts:
+          - {name: work, mountPath: /work}
+```
+
+```bash
+argo submit -n bnk-ci --wait wf-artifactory-mirror.yaml -p cos-bucket=bnk-artifacts-<hex>
+```
+
+It ends on the same two lines the CLI does, from a step that ran in a container
+that never saw a config file:
+
+```
+✓ mirrored 89 artifacts into artifactory.example.com/bnk-mirror
+✓ all 89 BOM artifacts present + digest-matched in the mirror
+```
+
+**Three variables are easy to miss and stop the run before any registry work
+begins.** `init --non-interactive` requires `ROKSBNKCTL_REGION`,
+`ROKSBNKCTL_RESOURCE_GROUP` and `ROKSBNKCTL_PREFIX`, and refuses rather than
+defaulting — the error names them, which is the fastest way to diagnose it. The
+three `ROKSBNKCTL_COS_*` variables are needed for `registry bom` to resolve the
+FAR credential, and the bucket has no usable default.
+
+A workflow with the same shape ships as
+`scripts/demos/artifactory-mirror-demo/wf-artifactory-mirror.yaml`.
+
 ## When it goes wrong
 
 **`UNAUTHORIZED` on push, `docker login` works by hand.** The account can read
