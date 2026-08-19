@@ -278,6 +278,8 @@ KEY_ID=$(icjson is keys | jq -r --arg n "$KEY_NAME" '.[]|select(.name==$n)|.id' 
 
 say "VSI $VSI_NAME ($PROFILE)"
 VSI_ID=$(icjson is instances | jq -r --arg n "$VSI_NAME" '.[]|select(.name==$n)|.id' | head -1)
+VSI_EXISTED=0
+if [[ -n "$VSI_ID" ]]; then VSI_EXISTED=1; fi
 if [[ -z "$VSI_ID" ]]; then
   # --metadata-service true is REQUIRED, not optional. The IBM Cloud "minimal"
   # Ubuntu images — the only ones left — run cloud-init against the metadata
@@ -297,6 +299,19 @@ if [[ -z "$VSI_ID" ]]; then
 fi
 rm -f "$CLOUD_INIT"
 [[ -n "$VSI_ID" && "$VSI_ID" != "null" ]] || die "instance-create returned no id for $VSI_NAME"
+
+# EVERYTHING above -- the domain, the database password, both JFrog keys -- is
+# delivered by cloud-init, which runs ONCE, at creation. Reusing an existing VSI
+# therefore keeps whatever it was built with, and a re-run with a different
+# ART_DOMAIN silently keeps the OLD one: Caddy goes on requesting a certificate
+# for a name nobody asked for, and the wait below times out looking like a DNS
+# fault. Say so rather than let it be discovered.
+if [[ "$VSI_EXISTED" == "1" ]]; then
+  say "reusing the existing $VSI_NAME — cloud-init does NOT re-run"
+  say "  its domain, database password and JFrog keys are whatever it was BUILT with."
+  say "  To point it at a different name, edit /opt/artifactory/Caddyfile on the VSI"
+  say "  and restart the artifactory-caddy container, or --destroy and redeploy."
+fi
 
 say "waiting for the VSI to run"
 for _ in $(seq 1 60); do
