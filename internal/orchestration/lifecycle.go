@@ -575,8 +575,13 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	// ClusterResidual covers a workspace whose cluster resource is already gone
 	// but whose network (VPC/TGW) lingers from a partially-failed teardown —
 	// `down` must still resume and finish it, not report "nothing to destroy".
+	// Same rule as the per-phase downs: nothing to do is SUCCESS. `down` is the
+	// composite an automated teardown reaches for, and pres.Any() is false only
+	// when no phase has any state at all — so there is nothing to step over.
+	// Erroring here made a clean workspace look like a failed teardown (#89).
 	if !pres.Any() && !pres.ClusterResidual {
-		return errors.New("nothing to destroy in this workspace")
+		fmt.Fprintln(os.Stderr, "✓ Nothing to destroy in this workspace — no phase has any state.")
+		return nil
 	}
 	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
 	// live in the BNK namespace, so the BNK leg of this composite destroy would

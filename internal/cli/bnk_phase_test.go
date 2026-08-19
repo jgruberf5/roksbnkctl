@@ -176,34 +176,31 @@ func TestClusterDown_SplitRefuses(t *testing.T) {
 	}
 }
 
-// TestClusterDown_EmptyRefuses — nothing to destroy.
-func TestClusterDown_EmptyRefuses(t *testing.T) {
+// TestClusterDown_EmptySucceeds — nothing to destroy is a NO-OP SUCCESS.
+//
+// This test previously asserted a refusal, per PRD 06's original dispatch
+// table. That table was written when `down` was something a human typed; an
+// orchestrated teardown runs every phase unconditionally, so refusing "nothing
+// left to do" fails a teardown that worked (#89). `bnk down` was moved to no-op
+// success first for that reason and `tgw disconnect` followed — this completes
+// the set. PRD 06 §"Empty is success, not an error" records the supersession.
+func TestClusterDown_EmptySucceeds(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeEmpty)
 	pointWorkspaceFlag(t, ws)
 
-	err := runClusterDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "nothing to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
+	if err := runClusterDown(newCmd(), nil); err != nil {
+		t.Fatalf("an empty workspace has nothing to destroy — that is success: %v", err)
 	}
 }
 
-// TestRunDown_EmptyRefuses — composite `down` on empty errors with
-// "nothing to destroy", per PRD 06 dispatch table. Pinned here because
-// the composite is a new code path in Sprint 8.
-func TestRunDown_EmptyRefuses(t *testing.T) {
+// TestRunDown_EmptySucceeds — the composite agrees with the phase commands.
+// Same supersession as TestClusterDown_EmptySucceeds (#89); the composite is
+// the one an automated teardown reaches for most often.
+func TestRunDown_EmptySucceeds(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeEmpty)
 	pointWorkspaceFlag(t, ws)
 
-	err := runDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	want := "nothing to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error message missing %q\n  got: %v", want, err)
+	if err := runDown(newCmd(), nil); err != nil {
+		t.Fatalf("an empty workspace has nothing to destroy — that is success: %v", err)
 	}
 }

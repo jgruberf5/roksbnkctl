@@ -35,7 +35,7 @@ Both pain points compound: a user iterating on a BNK trial against a stable clus
 - Composite `roksbnkctl up` / `down` that dispatch on shape:
   - `up` on Empty/Split/ClusterOnly → `cluster up` then trial-state apply.
   - `up` on LegacySingle → monolithic trial-state apply (preserves v1.0.x behavior byte-for-byte).
-  - `down` on Empty → error "nothing to destroy."
+  - `down` on Empty → **no-op success** "nothing to destroy" (SUPERSEDED, see §"Empty is success, not an error").
   - `down` on Split → trial-state destroy, then `cluster down`.
   - `down` on ClusterOnly → `cluster down`.
   - `down` on LegacySingle → monolithic trial-state destroy.
@@ -43,7 +43,7 @@ Both pain points compound: a user iterating on a BNK trial against a stable clus
   - `cluster up` refuses on `ShapeLegacySingle` (cluster lives in the trial state; applying the cluster phase would create a duplicate).
   - `cluster down` refuses on `ShapeLegacySingle`, `ShapeSplit`, and `ShapeEmpty` (only operates on `ShapeClusterOnly`; replaces the v1.0.x warning-but-prompt behavior with a hard refusal when trial state exists).
   - `bnk up` and `bnk down` refuse on `ShapeLegacySingle` (can't isolate the trial when it shares state with the cluster).
-  - `bnk down` refuses on `ShapeEmpty` and `ShapeClusterOnly` (no trial to destroy).
+  - `bnk down` **no-ops with success** on `ShapeEmpty` and `ShapeClusterOnly` (no trial to destroy; SUPERSEDED, see below).
 - Refusal messages point at the resolution: "use `roksbnkctl up`/`down`" for legacy, "use `roksbnkctl bnk down` first" for trial-on-top scenarios.
 - **`roksbnkctl status` reflects the phase split** (Sprint 10 scope addition) — the v1.0.x status output shows a single "Last apply" line drawn from `state/terraform.tfstate` mtime, which conflates the cluster phase and the BNK trial under the new shape. Sprint 10 adds two per-phase lines, each reading the corresponding state file independently, so a reader can tell at a glance which phase is currently deployed without running `cluster show` + inspecting tfstate by hand. See §"`status` command integration" under §"Design".
 
@@ -99,11 +99,33 @@ Empirically verified against the canada-roks workspace (135 resources, includes 
 | Command | Empty | ClusterOnly | Split | LegacySingle |
 |---|---|---|---|---|
 | `up` | `cluster up` → trial up | trial up | `cluster up` (no-op refresh) → trial up | monolithic trial up |
-| `down` | error: nothing to destroy | `cluster down` | trial down → `cluster down` | monolithic trial down |
+| `down` | no-op success: nothing to destroy | `cluster down` | trial down → `cluster down` | monolithic trial down |
 | `bnk up` | confirm + `cluster up` → trial up | trial up | trial up | refuse |
 | `bnk down` | refuse: no trial | refuse: no trial | trial down | refuse |
 | `cluster up` | `cluster up` | `cluster up` (no-op refresh) | `cluster up` (no-op refresh) | refuse |
-| `cluster down` | refuse: nothing to destroy | `cluster down` | refuse: trial exists | refuse |
+| `cluster down` | no-op success: nothing to destroy | `cluster down` | refuse: trial exists | refuse |
+
+### Empty is success, not an error (supersedes the refusals above)
+
+As written, this PRD had every `down` variant REFUSE an empty workspace. That
+held while `down` was something a human typed. It stopped holding once
+teardown became orchestrated — BNK Forge tears phases down in reverse order as
+separate module steps, the demos' `teardown` submits one workflow per phase, and
+both run every phase unconditionally. A non-zero exit for *having nothing left
+to do* fails a teardown that in fact succeeded, and makes re-running one to
+confirm it finished report failure.
+
+`bnk down` was moved to no-op success first, for exactly that reason. `tgw
+disconnect` followed when it was added. `cluster down` and the composite `down`
+were left behind, so a teardown that ran all four got two zeros and two ones for
+the same state (#89). They now agree: **nothing to do is success, and says so.**
+
+This is NOT the [#79](https://github.com/jgruberf5/roksbnkctl/issues/79) skip,
+which stepped over a cluster that was gone while its resources lived on and
+orphaned three account-level IAM objects. The guard is what makes the difference
+— success is returned only when no phase has state AND no residual managed
+resources remain, so there is by construction nothing to orphan. Keep that
+condition strict.
 
 "Trial up" / "trial down" denote the existing terraform-apply / terraform-destroy paths against `state/` (the v1.0.x `runUp` / `runDown` bodies, factored out as `runTrialUp` / `runTrialDown` private helpers).
 
