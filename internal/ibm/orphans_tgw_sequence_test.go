@@ -2,6 +2,7 @@ package ibm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -354,5 +355,44 @@ func TestDeleteTransitGateway_WaitsOutAPendingConnection(t *testing.T) {
 	}
 	if getsBefore < 2 {
 		t.Fatalf("detached without waiting for the pending transition (%d listings before the delete): %v", getsBefore, calls)
+	}
+}
+
+// A foreign connection must be refused IMMEDIATELY, not after the settle wait.
+// Ownership is knowable from the first listing — network_type and network_id do
+// not change as a connection settles — so waiting first would cost the operator
+// the full timeout before telling them, correctly, that this gateway is not
+// ours to delete. Refusals are immediate; only work we intend to DO is waited on.
+func TestDeleteTransitGateway_ForeignPendingIsRefusedWithoutWaiting(t *testing.T) {
+	prev := tgwConnectionPollInterval
+	tgwConnectionPollInterval = time.Hour // any wait at all would hang the test
+	defer func() { tgwConnectionPollInterval = prev }()
+
+	var mu sync.Mutex
+	gets := 0
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/connections") {
+			gets++
+			return jsonResp(200, `{"connections":[{"id":"c2","name":"someone-elses","network_type":"vpc","network_id":"`+foreignVPCCRN+`","status":"pending"}]}`), nil
+		}
+		return jsonResp(204, ""), nil
+	})
+
+	err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if err == nil {
+		t.Fatal("a gateway attached to a foreign network must be refused")
+	}
+	if !errors.Is(err, ErrForeignTGWConnection) {
+		t.Fatalf("must be the refusal sentinel, got %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gets != 1 {
+		t.Errorf("refused after %d listings — ownership is knowable from the first, so the refusal must not wait", gets)
 	}
 }

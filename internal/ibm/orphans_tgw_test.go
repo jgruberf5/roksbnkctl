@@ -190,3 +190,34 @@ func TestPartitionConnections_FailedIsStillDetachable(t *testing.T) {
 		t.Fatalf("detach=%d settling=%d — a failed connection is deletable, not transient", len(detach), len(settling))
 	}
 }
+
+// The two transient states mean OPPOSITE things about ownership, and collapsing
+// them hid a foreign connection.
+//
+//	departing (deleting/detaching) — going away, so ownership is irrelevant and
+//	  it is never a reason to refuse the gateway (#85)
+//	arriving  (pending)            — coming in, so ownership decides: ours to
+//	  wait for, someone else's to refuse over, immediately (#87 review)
+func TestPartitionConnections_ArrivingVersusDeparting(t *testing.T) {
+	swept := sweptVPCCRNs(sweepWithVPC(sweptVPCCRN))
+
+	// Foreign + arriving → refuse NOW. Waiting first would cost the operator the
+	// whole settle timeout before a verdict knowable from the first listing.
+	_, settling, foreign := partitionTGWConnections([]TGWConnection{
+		{ID: "c1", NetworkType: "vpc", NetworkID: foreignVPCCRN, Status: "pending"},
+	}, swept)
+	if len(foreign) != 1 || len(settling) != 0 {
+		t.Errorf("foreign+pending: foreign=%d settling=%d — ownership is knowable now, so refuse now",
+			len(foreign), len(settling))
+	}
+
+	// Foreign + departing → still just waited for: it is leaving anyway, and
+	// refusing over it would block a gateway that is seconds from deletable.
+	_, settling, foreign = partitionTGWConnections([]TGWConnection{
+		{ID: "c2", NetworkType: "vpc", NetworkID: foreignVPCCRN, Status: "deleting"},
+	}, swept)
+	if len(settling) != 1 || len(foreign) != 0 {
+		t.Errorf("foreign+deleting: settling=%d foreign=%d — a departing connection never refuses the gateway",
+			len(settling), len(foreign))
+	}
+}
