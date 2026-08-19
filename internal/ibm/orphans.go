@@ -341,6 +341,16 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 	// DELETE whatever their status — so a sweep run right after an interrupted
 	// attach failed, and said "re-run", which failed identically until IBM
 	// finished attaching. That wait is one cleanup can do itself.
+	// Refuse BEFORE waiting. A connection's ownership is knowable from the first
+	// listing — network_type and network_id do not change as it settles — so a
+	// foreign connection that happens to be `pending` would otherwise cost the
+	// operator the full settle timeout before being told, correctly, that this
+	// gateway is not ours to delete. Refusals should be immediate; only work we
+	// intend to DO is worth waiting for.
+	if _, _, foreign := partitionTGWConnections(conns, sweptVPCs); len(foreign) > 0 {
+		return foreignTGWConnectionError(name, id, foreign)
+	}
+
 	conns, err = c.waitTGWConnectionsSettled(ctx, id, conns)
 	if err != nil {
 		return err
@@ -353,8 +363,23 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 		// looks foreign is that it IS yours and simply was not scanned — and
 		// without this the operator is told to go detach their own network by
 		// hand.
-		return fmt.Errorf("%w: %s is still attached to %s — cleanup detaches only VPCs it is also deleting, so removing these is your call. If a listed VPC is yours, it may just be in a region this sweep did not scan: re-run with --all-regions (or --region <name>). Otherwise detach it with `ibmcloud tg connection-delete %s <connection-id>`, or delete those networks, then sweep again",
-			ErrForeignTGWConnection, displayTGW(name, id), describeTGWConnections(foreign), id)
+		return foreignTGWConnectionError(name, id, foreign)
+	}
+
+	// Anything still ARRIVING here outlasted the settle wait. Say so and stop,
+	// rather than falling through: nothing was detachable, so the cleared-wait
+	// below would burn a second full timeout on connections we never deleted and
+	// then report "waiting for connections to detach" — which is not what
+	// happened. Halves the worst case and names the actual obstacle.
+	var stillArriving []TGWConnection
+	for _, conn := range settling {
+		if tgwConnectionArriving(conn.Status) {
+			stillArriving = append(stillArriving, conn)
+		}
+	}
+	if len(stillArriving) > 0 && len(detach) == 0 {
+		return fmt.Errorf("transit gateway %s still has a connection attaching after %s: %s — IBM refuses a DELETE from `pending`, so this has to finish before the gateway can go. Re-run once it reports `attached`",
+			displayTGW(name, id), tgwConnectionSettleTimeout, describeTGWConnections(stillArriving))
 	}
 
 	for _, conn := range detach {
@@ -379,6 +404,18 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 	return c.authedDELETE(ctx, gatewayURL)
 }
 
+// foreignTGWConnectionError is the single wording for the refusal, shared by
+// the pre-wait check and the post-wait one so the two cannot drift apart.
+//
+// The region hint is not filler. cleanup scans only the workspace's cluster and
+// client regions by default, so the likeliest reason a VPC looks foreign is that
+// it IS yours and simply was not scanned — and without this the operator is told
+// to go detach their own network by hand.
+func foreignTGWConnectionError(name, id string, foreign []TGWConnection) error {
+	return fmt.Errorf("%w: %s is still attached to %s — cleanup detaches only VPCs it is also deleting, so removing these is your call. If a listed VPC is yours, it may just be in a region this sweep did not scan: re-run with --all-regions (or --region <name>). Otherwise detach it with `ibmcloud tg connection-delete %s <connection-id>`, or delete those networks, then sweep again",
+		ErrForeignTGWConnection, displayTGW(name, id), describeTGWConnections(foreign), id)
+}
+
 // tgwConnectionInFlight reports whether a connection is mid-transition. IBM
 // accepts a connection DELETE only from a settled state, so these are the
 // statuses to WAIT OUT rather than act on:
@@ -393,8 +430,21 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 // wait out its whole timeout and then refuse to remove exactly the wreckage it
 // exists to remove.
 func tgwConnectionInFlight(status string) bool {
+	return tgwConnectionArriving(status) || tgwConnectionDeparting(status)
+}
+
+// tgwConnectionArriving — still attaching. Ours to wait for; someone else's to
+// refuse over, which is why this is distinct from departing.
+func tgwConnectionArriving(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), "pending")
+}
+
+// tgwConnectionDeparting — on its way out, under either of IBM's spellings.
+// Whoever started it, the connection will be gone, so it is never a reason to
+// refuse the gateway — only a reason to wait.
+func tgwConnectionDeparting(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "pending", "deleting", "detaching":
+	case "deleting", "detaching":
 		return true
 	}
 	return false
@@ -456,13 +506,31 @@ func (c *Client) waitTGWConnectionsSettled(ctx context.Context, id string, conns
 // #85 for the one case a re-run genuinely does fix.
 func partitionTGWConnections(conns []TGWConnection, sweptVPCs map[string]bool) (detach, settling, foreign []TGWConnection) {
 	for _, conn := range conns {
+		ours := strings.EqualFold(conn.NetworkType, "vpc") && sweptVPCs[strings.ToLower(conn.NetworkID)]
 		switch {
-		case tgwConnectionInFlight(conn.Status):
+		// DEPARTING — ownership is irrelevant. It will be gone either way, so
+		// refusing the gateway over someone else's outgoing connection would
+		// block a delete that is seconds from being possible (#85).
+		case tgwConnectionDeparting(conn.Status):
 			settling = append(settling, conn)
-		case strings.EqualFold(conn.NetworkType, "vpc") && sweptVPCs[strings.ToLower(conn.NetworkID)]:
-			detach = append(detach, conn)
-		default:
+
+		// NOT OURS — refuse, whatever state it is in. Checked BEFORE the
+		// arriving case on purpose: ownership does not change as a connection
+		// settles, so it is knowable from the first listing, and making the
+		// operator wait out the settle timeout for a refusal we can give now is
+		// wasted time. Collapsing "arriving" and "departing" into one
+		// in-flight check hid this — a foreign connection that happened to be
+		// `pending` was classified as ours to wait for.
+		case !ours:
 			foreign = append(foreign, conn)
+
+		// OURS, still ARRIVING — wait it out. IBM refuses a DELETE from
+		// `pending` with 409 invalid_state (#87).
+		case tgwConnectionArriving(conn.Status):
+			settling = append(settling, conn)
+
+		default:
+			detach = append(detach, conn)
 		}
 	}
 	return detach, settling, foreign
