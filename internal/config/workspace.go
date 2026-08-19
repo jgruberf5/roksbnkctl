@@ -574,7 +574,8 @@ type BNKFLPVSICfg struct {
 	//
 	// Mutually exclusive with VPC. Default false keeps existing workspaces unchanged.
 	CreateVPC bool `yaml:"create_vpc,omitempty"`
-	// VPCName names the VPC created when CreateVPC is set. Empty → flp-vsi-vpc.
+	// VPCName names the VPC created when CreateVPC is set. Empty derives it from
+	// NamePrefix — `flp-vsi-vpc` with no prefix, `<prefix>-flp-vsi-vpc` with one.
 	VPCName string `yaml:"vpc_name,omitempty"`
 	// SubnetCIDR is the address prefix for that VPC. It must not overlap anything
 	// the consuming clusters can already route to — a transit gateway silently
