@@ -86,11 +86,26 @@ Both paths have been run end to end against a real self-hosted Artifactory:
 The container run authored no `config.yaml` at all — 15 fields applied from the
 environment — which is the equivalence phase 8 exists to demonstrate.
 
-**The repository is `docker-local`, not `bnk-mirror`.** JCR cannot create a
-repository over REST (`400 available only in Artifactory Pro`), and the
-declarative `OnboardingConfiguration` schema has only `repoTypes` — no field for
-custom names — so each package type gets JFrog's defaults. A repo named
-`bnk-mirror` requires Artifactory Pro.
+### Which repository
+
+Two options, one config field apart. `ART_REPO` selects:
+
+| | Repository | Setup |
+|---|---|---|
+| Fully automated | `docker-local` | none — created by `config.import.yml` |
+| Named | `bnk-mirror` | create it once in the console |
+
+Both are verified: 89 artifacts, digest-matched, into each.
+
+`docker-local` is the default because it needs no console step at all. A custom
+name cannot be automated on JCR — repo creation over REST answers `400 available
+only in Artifactory Pro`, and the declarative `OnboardingConfiguration` schema
+has only `repoTypes`, which creates JFrog's default names. Creating one **in the
+web UI works fine**; it is only the automated paths that are restricted.
+
+Nothing else changes with a non-default repository. The name is a path segment
+in the composed reference `<host>/<prefix>/<image>`, so `bom`, `diff`,
+`replicate`, `verify`, `list`, `prune` and `delete` are all identical.
 
 ## Running it
 
