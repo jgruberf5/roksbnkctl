@@ -248,9 +248,18 @@ export ART_RESOURCE_GROUP=default
     <span class="tag tag-ui">Artifactory console</span>
     <h3>Set the administrator password</h3>
     <p>Open <code>https://artifactory.example.com</code> and sign in with the initial credentials
-    <code>admin</code> / <code>password</code>. Artifactory requires you to change the password
-    immediately. This step is deliberately not automated — it is the point at which the instance
-    becomes yours.</p>
+    <code>admin</code> / <code>password</code>. This step is deliberately not automated — it is the
+    point at which the instance becomes yours.</p>
+    <div class="note">
+      <span class="lbl">Do this first, and do it now</span>
+      <p>The server is on the public internet: it has to be, because Caddy obtains its certificate
+      over an ACME challenge that reaches it from outside. Until you change it, <strong>anyone who
+      finds the hostname has administrator access</strong> with the well-known default password.</p>
+      <p>Treat the gap between step 2 finishing and this step as an exposure window, and keep it
+      short. If the instance will live longer than the demo, also narrow the security group: port
+      80 must stay open for certificate renewal, but 443 and 22 can be restricted to the addresses
+      you work from.</p>
+    </div>
   </div>
 </div>
 
