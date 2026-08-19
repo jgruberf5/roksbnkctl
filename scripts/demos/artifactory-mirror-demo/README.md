@@ -74,6 +74,24 @@ through both with the exact menu paths.
 > to the Pro image if you hold a licence; nothing downstream changes, because
 > `roksbnkctl` only ever speaks the OCI registry API to it.
 
+## Verified
+
+Both paths have been run end to end against a real self-hosted Artifactory:
+
+| Path | Result |
+|---|---|
+| CLI (phases 3–7) | `mirrored 89 artifacts` → `all 89 BOM artifacts present + digest-matched` |
+| Container / Argo (phase 8) | 5/5 steps, same two lines, from an emptied mirror |
+
+The container run authored no `config.yaml` at all — 15 fields applied from the
+environment — which is the equivalence phase 8 exists to demonstrate.
+
+**The repository is `docker-local`, not `bnk-mirror`.** JCR cannot create a
+repository over REST (`400 available only in Artifactory Pro`), and the
+declarative `OnboardingConfiguration` schema has only `repoTypes` — no field for
+custom names — so each package type gets JFrog's defaults. A repo named
+`bnk-mirror` requires Artifactory Pro.
+
 ## Running it
 
 ```bash
