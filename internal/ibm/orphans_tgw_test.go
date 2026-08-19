@@ -143,3 +143,50 @@ func TestDisplayTGWFallsBackToID(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// #87: `pending` is mid-ATTACH. IBM refuses a DELETE from it with
+// 409 invalid_state, so it must be waited out, not deleted — the same rule
+// #85 established for `deleting`, on the other side of the lifecycle.
+func TestPartitionConnections_PendingIsWaitedForNotDeleted(t *testing.T) {
+	conns := []TGWConnection{
+		{ID: "c1", Name: "attaching", NetworkType: "vpc", NetworkID: sweptVPCCRN, Status: "pending"},
+	}
+	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 0 {
+		t.Errorf("detach=%d — deleting a pending connection is a 409", len(detach))
+	}
+	if len(settling) != 1 {
+		t.Errorf("settling=%d — it still has to be waited for", len(settling))
+	}
+	if len(foreign) != 0 {
+		t.Errorf("foreign=%d — it points at a VPC this sweep is deleting", len(foreign))
+	}
+}
+
+// The states to wait out are the TRANSIENT ones. `failed` and `suspended` are
+// settled — a DELETE is accepted, and requiring `attached` instead would make
+// cleanup time out and then refuse to remove exactly the wreckage it exists for.
+func TestConnectionInFlightCoversOnlyTransientStates(t *testing.T) {
+	for _, s := range []string{"pending", "deleting", "detaching", "PENDING", " Deleting "} {
+		if !tgwConnectionInFlight(s) {
+			t.Errorf("%q is mid-transition and must be waited out", s)
+		}
+	}
+	for _, s := range []string{"attached", "failed", "suspended", ""} {
+		if tgwConnectionInFlight(s) {
+			t.Errorf("%q is settled — a DELETE is accepted from it, so cleanup must act", s)
+		}
+	}
+}
+
+// A settled connection to a swept VPC is still ours to detach — the #87 fix
+// must not turn every connection into something to wait for.
+func TestPartitionConnections_FailedIsStillDetachable(t *testing.T) {
+	conns := []TGWConnection{
+		{ID: "c1", Name: "broken", NetworkType: "vpc", NetworkID: sweptVPCCRN, Status: "failed"},
+	}
+	detach, settling, _ := partitionTGWConnections(conns, sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if len(detach) != 1 || len(settling) != 0 {
+		t.Fatalf("detach=%d settling=%d — a failed connection is deletable, not transient", len(detach), len(settling))
+	}
+}

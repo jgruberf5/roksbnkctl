@@ -176,7 +176,9 @@ Which connections it may detach is a deliberate limit, not an oversight:
 - A connection to a **VPC this same sweep is deleting** is yours; `cleanup` removes it.
 - **Anything else** — a VPC under a different prefix, another account's network, a Direct Link or GRE attachment — belongs to someone else. `cleanup` **refuses the gateway** and names what is attached, rather than quietly disconnecting a shared gateway's other tenants.
 
-Connections already in `deleting` — someone else's detach, or a cascade from a cluster delete this same sweep kicked off — are a third case: waited for, never deleted again. Re-issuing a `DELETE` against one is rejected, and that rejection would abort a gateway delete that was seconds from succeeding.
+Connections **mid-transition** are a third case: waited for, never acted on. IBM accepts a connection `DELETE` only from a settled state, and refuses both ends of the lifecycle — `deleting` (someone else's detach, or a cascade from a cluster delete this same sweep kicked off) and `pending` (still attaching). The second matters more than it sounds: `cleanup` is most often reached for right after an interrupted `up`, which is exactly when a connection is still attaching. Sweeping then used to fail with `409 invalid_state` and advise a re-run that failed identically until IBM finished attaching — a wait the sweep now does itself.
+
+States that are *settled* — including `failed` and `suspended` — are detached normally. Waiting for `attached` specifically would mean a broken connection was never cleaned up, which is the opposite of what a sweep is for.
 
 A refusal is not a transient, and an identical re-run will not clear it. **Check the region first**: `cleanup` scans only the workspace's cluster and client regions by default, so the commonest reason a VPC looks foreign is that it is yours and simply was not scanned. Re-run with `--all-regions` (or `--region <name>`) and it comes into scope. If the network really is someone else's, detach it yourself (`ibmcloud tg connection-delete <gateway-id> <connection-id>`) or delete it, then sweep again.
 

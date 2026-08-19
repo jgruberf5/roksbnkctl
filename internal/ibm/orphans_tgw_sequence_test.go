@@ -282,3 +282,77 @@ func TestDeleteTransitGateway_UnreadableListingAndFailedDeleteReportsBoth(t *tes
 		}
 	}
 }
+
+// Regression for #87, reproducing the reported failure: a connection still
+// `pending` at sweep time. IBM rejects a DELETE from that state with
+// 409 invalid_state, which is what the reporter saw. The sweep must WAIT for it
+// to finish attaching, then detach — not fire immediately and tell the operator
+// to re-run into the identical failure.
+func TestDeleteTransitGateway_WaitsOutAPendingConnection(t *testing.T) {
+	prev := tgwConnectionPollInterval
+	tgwConnectionPollInterval = time.Millisecond
+	defer func() { tgwConnectionPollInterval = prev }()
+
+	pending := `{"connections":[{"id":"c1","name":"f5orph-conn","network_type":"vpc","network_id":"` + sweptVPCCRN + `","status":"pending"}]}`
+	attached := `{"connections":[{"id":"c1","name":"f5orph-conn","network_type":"vpc","network_id":"` + sweptVPCCRN + `","status":"attached"}]}`
+
+	var mu sync.Mutex
+	gets := 0
+	calls := []string{}
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/connections"):
+			gets++
+			switch {
+			case gets <= 2:
+				return jsonResp(200, pending), nil // still attaching
+			case gets <= 4:
+				return jsonResp(200, attached), nil // settled — now deletable
+			}
+			return jsonResp(200, `{"connections":[]}`), nil // detached
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/connections/"):
+			mu.Unlock()
+			mu.Lock()
+			// IBM's actual refusal while pending — if the fix regresses and the
+			// DELETE fires early, this is what comes back.
+			if gets <= 2 {
+				return jsonResp(409, `{"errors":[{"code":"invalid_state","message":"You cannot delete a connection that shows 'pending' status."}]}`), nil
+			}
+			return jsonResp(204, ""), nil
+		case r.Method == http.MethodDelete:
+			return jsonResp(204, ""), nil
+		}
+		return jsonResp(404, `{}`), nil
+	})
+
+	if err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweepWithVPC(sweptVPCCRN))); err != nil {
+		t.Fatalf("a pending connection must be waited out, not deleted early: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The connection DELETE must come after at least one re-read, i.e. after the
+	// wait actually observed the transition out of `pending`.
+	firstDelete := -1
+	getsBefore := 0
+	for i, call := range calls {
+		if strings.HasPrefix(call, "GET") && firstDelete < 0 {
+			getsBefore++
+		}
+		if strings.HasPrefix(call, "DELETE") && strings.Contains(call, "/connections/") && firstDelete < 0 {
+			firstDelete = i
+		}
+	}
+	if firstDelete < 0 {
+		t.Fatalf("the connection was never detached: %v", calls)
+	}
+	if getsBefore < 2 {
+		t.Fatalf("detached without waiting for the pending transition (%d listings before the delete): %v", getsBefore, calls)
+	}
+}
