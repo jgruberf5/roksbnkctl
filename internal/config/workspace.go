@@ -539,6 +539,22 @@ type BNKFLPCfg struct {
 // BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running the
 // f5-license-proxy stack as a podman pod. All fields optional; sensible defaults apply.
 type BNKFLPVSICfg struct {
+	// NamePrefix prefixes the FLP VSI's IBM Cloud resource names — instance,
+	// subnet, security group, floating IP, public gateway, boot volume, and the
+	// VPC when this module creates one. Empty (the default) keeps the legacy
+	// UNPREFIXED names.
+	//
+	// Empty is the default on purpose: renaming a terraform resource REPLACES it,
+	// so defaulting this to the workspace prefix would destroy and rebuild every
+	// running proxy on the next apply. Opt in deliberately.
+	//
+	// Set it when you need either of the two things the literals prevented (#88):
+	// more than one standalone FLP in an account — the shared-licensing topology,
+	// one proxy per environment — or `roksbnkctl cleanup` to be able to sweep the
+	// proxy's resources at all, since that sweep matches `<prefix>-*` and
+	// "flp-vsi" matches no workspace prefix.
+	NamePrefix string `yaml:"name_prefix,omitempty"`
+
 	// VPC is an existing VPC id to deploy the standalone FLP VSI into, WITHOUT any
 	// ROKS cluster. Set it to run `flp up` (vsi mode) as a standalone licensing
 	// appliance — e.g. in a services VPC that a disconnected cluster reaches over a

@@ -601,6 +601,13 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		// mode: vsi — the standalone-VSI backend. The deploy_flp_vsi toggle itself is
 		// forced by the FLP-phase override; these render the VSI's shape from config.
 		if vsi := flp.VSI; vsi != nil {
+			// Unset stays unset: an empty flp_vsi_name_prefix is the module's
+			// LEGACY-NAMES sentinel, and emitting it explicitly would make a
+			// future change to what "" means silently rename — i.e. replace —
+			// every proxy that never asked for a prefix (#88).
+			if vsi.NamePrefix != "" {
+				fmt.Fprintf(w, "flp_vsi_name_prefix = %q\n", vsi.NamePrefix)
+			}
 			// The proxy's own network (#60) — a sibling of the shape settings below,
 			// not nested under any of them: opting in without also pinning a profile
 			// is the common case, and the terraform defaults cover the rest.

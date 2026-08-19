@@ -75,6 +75,29 @@ variable "existing_cluster_vpc_id" {
   default     = ""
 }
 
+# ── Resource naming ──────────────────────────────────────────────────────────
+# Every resource below used to be named with a LITERAL — "flp-vsi",
+# "flp-vsi-subnet", "flp-vsi-sg" and so on — ignoring the workspace prefix that
+# the rest of the tool honours. Two consequences, both real (#88):
+#
+#   1. A second `flp up --mode vsi` in the same region collided on the instance
+#      name whatever `prefix:` the workspace declared, so ONE account could hold
+#      only one standalone proxy. That rules out the shared-licensing topology
+#      the FLP exists for — a proxy per environment, several per account.
+#   2. `cleanup` sweeps orphans by `<prefix>-*`. "flp-vsi" matches no workspace
+#      prefix, so a failed `flp down` stranded a VSI, floating IP, subnet,
+#      security group and boot volume that the sweep could never find.
+#
+# EMPTY IS THE DEFAULT, and deliberately so: renaming a resource forces
+# terraform to REPLACE it, so defaulting this to the workspace prefix would
+# destroy and rebuild every running proxy on the next apply. Existing
+# deployments keep their names until an operator opts in.
+variable "flp_vsi_name_prefix" {
+  description = "Prefix for the FLP VSI's resource names, e.g. \"bnk-ci\" yields bnk-ci-flp-vsi. Empty (the default) keeps the legacy unprefixed names, so an existing proxy is not replaced on upgrade. Set it to run more than one standalone FLP in an account, and to make the resources visible to `roksbnkctl cleanup`."
+  type        = string
+  default     = ""
+}
+
 # ── FAR coordinates ───────────────────────────────────────────────────────────
 # This module used to spell the FAR host as the literal "repo.f5.com" in its two
 # chart pulls, and default its image host to "repo.f5.com/images" with no way to

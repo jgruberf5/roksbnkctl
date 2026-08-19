@@ -25,6 +25,7 @@ import (
 //	ROKSBNKCTL_FLP_MODE                     → bnk.flp.mode ("" | helm | vsi)
 //	ROKSBNKCTL_FLP_VSI_VPC                  → bnk.flp.vsi.vpc (existing VPC id — the
 //	                                          standalone, cluster-less appliance)
+//	ROKSBNKCTL_FLP_VSI_NAME_PREFIX          → bnk.flp.vsi.name_prefix (empty keeps the legacy unprefixed names; #88)
 //	ROKSBNKCTL_FLP_VSI_CREATE_VPC           → bnk.flp.vsi.create_vpc (bool; #60/#64)
 //	ROKSBNKCTL_FLP_VSI_VPC_NAME             → bnk.flp.vsi.vpc_name
 //	ROKSBNKCTL_FLP_VSI_SUBNET_CIDR          → bnk.flp.vsi.subnet_cidr
@@ -102,6 +103,11 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 		if b, err := strconv.ParseBool(v); err == nil {
 			flpVSI(ws).CreateVPC = b
 			applied = append(applied, "bnk.flp.vsi.create_vpc (ROKSBNKCTL_FLP_VSI_CREATE_VPC)")
+		}
+
+		if v := envValue("ROKSBNKCTL_FLP_VSI_NAME_PREFIX"); v != "" {
+			flpVSI(ws).NamePrefix = v
+			applied = append(applied, "bnk.flp.vsi.name_prefix (ROKSBNKCTL_FLP_VSI_NAME_PREFIX)")
 		}
 	}
 
