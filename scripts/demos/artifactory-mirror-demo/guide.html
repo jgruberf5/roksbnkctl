@@ -293,6 +293,23 @@ OnboardingYamlBootstrapper - Configuration reloaded</pre>
     narrow the security group: port 80 must stay open for certificate renewal, but 443 and 22 can
     be restricted to the addresses you work from.</p>
     <div class="note">
+      <span class="lbl">Generate a token first, then change the password</span>
+      <p>An access token is not derived from the account password — it is a signed
+      credential validated independently — so <strong>rotating the password does not invalidate
+      it</strong>. Verified on this deployment: after the change, the old password returned
+      <code>401</code> while the same token still returned <code>200</code> against the REST API,
+      the Docker <code>/v2/</code> endpoint and the repository catalogue, and
+      <code>registry verify</code> still passed.</p>
+      <p>That is the reason to prefer a token for the mirror: the credential you hand to a pipeline
+      keeps working when the login you use in the browser changes. Generate it with the initial
+      credentials, put it in <code>ART_TOKEN</code>, then change the password.</p>
+      <pre>curl -u admin:'&lt;password&gt;' -X POST \
+  -d username=admin -d scope=applied-permissions/user -d expires_in=0 \
+  https://artifactory.example.com/artifactory/api/security/token</pre>
+      <p><code>expires_in=0</code> issues a non-expiring token. A bare request without
+      <code>scope</code> fails with <code>Insufficient scope</code>.</p>
+    </div>
+    <div class="note">
       <span class="lbl">Why there is no dedicated mirror user</span>
       <p>Artifactory's users, groups and permission targets are licensed Pro features; on JCR their
       REST APIs answer <code>400 … only in Artifactory Pro</code> and the screens are absent. There
