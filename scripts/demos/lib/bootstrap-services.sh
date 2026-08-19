@@ -37,6 +37,24 @@ SSH_KEY_FILE="${SSH_KEY_FILE:-$BOOTSTRAP_STATE/${SSH_KEY_NAME}}"
 mkdir -p "$BOOTSTRAP_STATE"; chmod 700 "$BOOTSTRAP_STATE"
 say(){ echo "==> $*" >&2; }
 
+# IBM Cloud's VPC API is EVENTUALLY CONSISTENT: a create returns the new id
+# before the object is readable, so reading it back on the next line can 404.
+# Under `set -e` that is not a hiccup, it is the end of the bootstrap — which is
+# what happened here: `vpc-create` succeeded, the very next `ibmcloud is vpc`
+# returned not_found, and the whole run stopped with the VPC already built.
+#
+# The clean-slate path is the ONLY one that hits this (a re-run finds the
+# recorded id and skips the create), and a clean slate is exactly what a
+# recorded demo run starts from. Poll for readability instead of assuming it.
+wait_readable(){                      # wait_readable <describe-cmd...>
+  local i
+  for i in $(seq 1 30); do
+    "$@" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  "$@" >/dev/null                     # exhausted: let the real error surface
+}
+
 # ssh into the VSIs through a key ssh will accept (DrvFs cannot hold 0600).
 source "$HERE/ssh-key.sh"
 
@@ -137,6 +155,7 @@ fi
 if [[ -z "${SVC_VPC_ID:-}" ]]; then
   SVC_VPC_ID="$(ibmcloud is vpc-create "${SVC_PREFIX}-vpc" --resource-group-name "$RESOURCE_GROUP" --output json | jq -r .id)"
   echo "$SVC_VPC_ID" > "$BOOTSTRAP_STATE/svc_vpc_id"
+  wait_readable ibmcloud is vpc "$SVC_VPC_ID"
   say "created services VPC $SVC_VPC_ID"
 fi
 SVC_VPC_CRN="$(ibmcloud is vpc "$SVC_VPC_ID" --output json | jq -r .crn)"
@@ -145,6 +164,7 @@ if [[ ! -f "$BOOTSTRAP_STATE/subnet_id" ]]; then
   SUBNET_ID="$(ibmcloud is subnet-create "${SVC_PREFIX}-subnet" "$SVC_VPC_ID" --zone "$SVC_ZONE" \
       --ipv4-address-count 256 --resource-group-name "$RESOURCE_GROUP" --output json | jq -r .id)"
   echo "$SUBNET_ID" > "$BOOTSTRAP_STATE/subnet_id"
+  wait_readable ibmcloud is subnet "$SUBNET_ID"
   PGW_ID="$(ibmcloud is public-gateway-create "${SVC_PREFIX}-pgw" "$SVC_VPC_ID" "$SVC_ZONE" --output json | jq -r .id)"
   echo "$PGW_ID" > "$BOOTSTRAP_STATE/pgw_id"
   ibmcloud is subnet-update "$SUBNET_ID" --pgw "$PGW_ID" >/dev/null
