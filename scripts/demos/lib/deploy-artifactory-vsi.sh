@@ -62,6 +62,25 @@ die(){ printf '✗ %s\n' "$*" >&2; exit 1; }
 
 ic(){ ibmcloud "$@"; }
 
+# icjson — run an ibmcloud command expecting JSON, and FAIL LOUDLY when it is not.
+#
+# `ibmcloud ... --output json | jq ...` hides the real problem: ibmcloud writes
+# usage errors and API errors to STDOUT as plain text, so jq is handed
+# "Error code: not_found" and reports `Invalid numeric literal at line 1,
+# column 10` — column 10 being the width of "Error code". The actual message is
+# never shown. Every JSON call goes through here so the operator sees what IBM
+# Cloud actually said.
+icjson(){
+  local out rc=0
+  out="$(ibmcloud "$@" --output json 2>&1)" || rc=$?
+  if [[ $rc -ne 0 ]] || ! jq -e . >/dev/null 2>&1 <<<"$out"; then
+    printf '✗ ibmcloud %s failed:\n' "$1 $2" >&2
+    printf '%s\n' "$out" | head -20 >&2
+    exit 1
+  fi
+  printf '%s' "$out"
+}
+
 login(){
   # Log in WITHOUT a resource group first: -g fails the whole login when the
   # group does not exist, which is what made a wrong name look like an auth
@@ -118,20 +137,20 @@ command -v jq >/dev/null || die "jq is required"
 login
 
 say "VPC $VPC_NAME"
-VPC_ID=$(ic is vpcs --output json | jq -r --arg n "$VPC_NAME" '.[]|select(.name==$n)|.id' | head -1)
+VPC_ID=$(icjson is vpcs | jq -r --arg n "$VPC_NAME" '.[]|select(.name==$n)|.id' | head -1)
 if [[ -z "$VPC_ID" ]]; then
-  VPC_ID=$(ic is vpc-create "$VPC_NAME" --output json | jq -r .id)
+  VPC_ID=$(icjson is vpc-create "$VPC_NAME" | jq -r .id)
   ic is vpc-address-prefix-create "$P-prefix" "$VPC_ID" "$ZONE" "$VPC_CIDR" >/dev/null
 fi
 
 say "subnet + public gateway"
-SUBNET_ID=$(ic is subnets --output json | jq -r --arg n "$SUBNET_NAME" '.[]|select(.name==$n)|.id' | head -1)
+SUBNET_ID=$(icjson is subnets | jq -r --arg n "$SUBNET_NAME" '.[]|select(.name==$n)|.id' | head -1)
 if [[ -z "$SUBNET_ID" ]]; then
-  SUBNET_ID=$(ic is subnet-create "$SUBNET_NAME" "$VPC_ID" --zone "$ZONE" --ipv4-cidr-block "$VPC_CIDR" --output json | jq -r .id)
+  SUBNET_ID=$(icjson is subnet-create "$SUBNET_NAME" "$VPC_ID" --zone "$ZONE" --ipv4-cidr-block "$VPC_CIDR" | jq -r .id)
 fi
-PGW_ID=$(ic is public-gateways --output json | jq -r --arg n "$PGW_NAME" '.[]|select(.name==$n)|.id' | head -1)
+PGW_ID=$(icjson is public-gateways | jq -r --arg n "$PGW_NAME" '.[]|select(.name==$n)|.id' | head -1)
 if [[ -z "$PGW_ID" ]]; then
-  PGW_ID=$(ic is public-gateway-create "$PGW_NAME" "$VPC_ID" "$ZONE" --output json | jq -r .id)
+  PGW_ID=$(icjson is public-gateway-create "$PGW_NAME" "$VPC_ID" "$ZONE" | jq -r .id)
 fi
 ic is subnet-update "$SUBNET_ID" --public-gateway-id "$PGW_ID" >/dev/null 2>&1 || true
 
@@ -139,17 +158,25 @@ ic is subnet-update "$SUBNET_ID" --public-gateway-id "$PGW_ID" >/dev/null 2>&1 |
 # challenge, and without it the certificate never issues and every push fails
 # with a TLS error that looks like a registry problem.
 say "security group (22, 80, 443)"
-SG_ID=$(ic is security-groups --output json | jq -r --arg n "$SG_NAME" '.[]|select(.name==$n)|.id' | head -1)
+SG_ID=$(icjson is security-groups | jq -r --arg n "$SG_NAME" '.[]|select(.name==$n)|.id' | head -1)
 if [[ -z "$SG_ID" ]]; then
-  SG_ID=$(ic is security-group-create "$SG_NAME" "$VPC_ID" --output json | jq -r .id)
+  SG_ID=$(icjson is security-group-create "$SG_NAME" "$VPC_ID" | jq -r .id)
   for port in 22 80 443; do
     ic is security-group-rule-add "$SG_ID" inbound tcp --port-min "$port" --port-max "$port" --remote 0.0.0.0/0 >/dev/null
   done
-  ic is security-group-rule-add "$SG_ID" outbound all --remote 0.0.0.0/0 >/dev/null
+  ic is security-group-rule-add "$SG_ID" outbound icmp_tcp_udp --remote 0.0.0.0/0 >/dev/null
 fi
 
-IMAGE_ID=$(ic is images --visibility public --output json \
-  | jq -r '[.[]|select(.operating_system.name|test("ubuntu-24-04"))|select(.status=="available")]|sort_by(.created_at)|last|.id')
+# ARCHITECTURE, not just the OS name. IBM Cloud publishes the same Ubuntu
+# release for amd64 and s390x (IBM Z), and "newest ubuntu-24-04" can select the
+# s390x one — which instance-create then rejects with "Image OS architecture
+# s390x is not supported by the instance profile bx2-4x16". Both other demo
+# scripts filter on amd64; this one had not.
+IMAGE_ID=$(icjson is images --visibility public \
+  | jq -r '[.[]|select(.status=="available")
+              |select(.operating_system.architecture=="amd64")
+              |select(.operating_system.name|test("ubuntu-24-04"))]
+           |sort_by(.created_at)|last|.id')
 [[ -n "$IMAGE_ID" && "$IMAGE_ID" != "null" ]] || die "no Ubuntu 24.04 stock image found in $REGION"
 
 CLOUD_INIT=$(mktemp)
@@ -192,28 +219,80 @@ runcmd:
       -v /opt/artifactory/caddy-data:/data $CADDY_IMAGE
 CIEOF
 
+# The SSH key by ID, not name. --keys is documented as accepting either, but the
+# working demo scripts resolve it first and so does this one — a name that does
+# not exist otherwise fails inside instance-create, where the error is about the
+# instance rather than the key.
+KEY_ID=$(icjson is keys | jq -r --arg n "$KEY_NAME" '.[]|select(.name==$n)|.id' | head -1)
+[[ -n "$KEY_ID" ]] || die "SSH key '$KEY_NAME' not found in $REGION — set ART_SSH_KEY_NAME, or add it with 'ibmcloud is key-create'"
+
 say "VSI $VSI_NAME ($PROFILE)"
-VSI_ID=$(ic is instances --output json | jq -r --arg n "$VSI_NAME" '.[]|select(.name==$n)|.id' | head -1)
+VSI_ID=$(icjson is instances | jq -r --arg n "$VSI_NAME" '.[]|select(.name==$n)|.id' | head -1)
 if [[ -z "$VSI_ID" ]]; then
-  VSI_ID=$(ic is instance-create "$VSI_NAME" "$VPC_ID" "$ZONE" "$PROFILE" "$SUBNET_ID" \
-    --image "$IMAGE_ID" --keys "$KEY_NAME" --security-groups "$SG_ID" \
-    --user-data @"$CLOUD_INIT" --output json | jq -r .id)
+  # --metadata-service true is REQUIRED, not optional. The IBM Cloud "minimal"
+  # Ubuntu images — the only ones left — run cloud-init against the metadata
+  # service, and it is DISABLED by default. Without it the VSI boots, the SSH key
+  # never reaches authorized_keys, and none of the user-data below ever runs: no
+  # docker, no Artifactory, and nothing to indicate why.
+  #
+  # Security groups are attached AFTER creation via security-group-target-add
+  # (see below). instance-create has no --security-groups flag; passing one fails
+  # with a usage dump, which is what `--sgs` exists for but the working scripts
+  # do not use either.
+  VSI_ID=$(icjson is instance-create "$VSI_NAME" "$VPC_ID" "$ZONE" "$PROFILE" "$SUBNET_ID" \
+    --image "$IMAGE_ID" --keys "$KEY_ID" \
+    --metadata-service true \
+    --resource-group-name "$RG" \
+    --user-data @"$CLOUD_INIT" | jq -r .id)
 fi
 rm -f "$CLOUD_INIT"
+[[ -n "$VSI_ID" && "$VSI_ID" != "null" ]] || die "instance-create returned no id for $VSI_NAME"
 
 say "waiting for the VSI to run"
 for _ in $(seq 1 60); do
-  st=$(ic is instance "$VSI_ID" --output json | jq -r .status)
+  st=$(icjson is instance "$VSI_ID" | jq -r .status)
   [[ "$st" == "running" ]] && break
   sleep 10
 done
+[[ "$st" == "running" ]] || die "VSI $VSI_NAME never reached running (last status: $st)"
 
-VNI_ID=$(ic is instance "$VSI_ID" --output json | jq -r '.primary_network_interface.id')
-PRIV_IP=$(ic is instance "$VSI_ID" --output json | jq -r '.primary_network_interface.primary_ip.address')
-FIP=$(ic is floating-ips --output json | jq -r --arg n "$P-fip" '.[]|select(.name==$n)|.address' | head -1)
-if [[ -z "$FIP" ]]; then
-  FIP=$(ic is floating-ip-reserve "$P-fip" --nic "$VNI_ID" --in "$VSI_ID" --output json | jq -r .address)
+INST=$(icjson is instance "$VSI_ID")
+# A modern VSI exposes a virtual network interface (VNI) BEHIND a network
+# attachment; an older one a legacy network interface (NIC). On a VNI instance
+# .primary_network_interface.id is the ATTACHMENT id, and an attachment can
+# neither take a floating IP ("The specified target is a network attachment
+# which can not be attached to a floating ip directly") nor a security group.
+# Prefer the VNI, exactly as deploy-far-registry.sh and provision-vsi.sh do.
+VNI_ID=$(jq -r '.primary_network_attachment.virtual_network_interface.id // empty' <<<"$INST")
+NIC_ID=$(jq -r '.primary_network_interface.id // empty' <<<"$INST")
+PRIV_IP=$(jq -r '.primary_network_attachment.virtual_network_interface.primary_ip.address
+                 // .primary_network_interface.primary_ip.address // empty' <<<"$INST")
+[[ -n "$VNI_ID$NIC_ID" ]] || die "$VSI_NAME has neither a VNI nor a NIC to attach to"
+
+# Attached HERE, not at instance-create, which has no flag for it. Without this
+# the VSI carries only the VPC default group, 80 and 443 are unreachable, Caddy
+# never completes its ACME challenge, and the HTTPS wait below times out with
+# nothing to explain why. So a failure here is FATAL rather than a shrug — an
+# earlier version reported "may already be attached" while actually failing.
+say "attaching security group $SG_NAME"
+if [[ -n "$VNI_ID" ]]; then
+  ic is security-group-target-add "$SG_ID" "$VNI_ID" --trt virtual_network_interface >/dev/null 2>&1 \
+    || ic is security-group-target-add "$SG_ID" "$VNI_ID" >/dev/null 2>&1 \
+    || die "could not attach $SG_NAME to the VSI's network interface"
+else
+  ic is security-group-network-interface-add "$SG_ID" "$NIC_ID" >/dev/null 2>&1 \
+    || die "could not attach $SG_NAME to the VSI's network interface"
 fi
+
+FIP=$(icjson is floating-ips | jq -r --arg n "$P-fip" '.[]|select(.name==$n)|.address' | head -1)
+if [[ -z "$FIP" ]]; then
+  if [[ -n "$VNI_ID" ]]; then
+    FIP=$(icjson is floating-ip-reserve "$P-fip" --vni "$VNI_ID" | jq -r .address)
+  else
+    FIP=$(icjson is floating-ip-reserve "$P-fip" --nic "$NIC_ID" --in "$VSI_ID" | jq -r .address)
+  fi
+fi
+[[ -n "$FIP" && "$FIP" != "null" ]] || die "could not obtain a floating IP for $VSI_NAME"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 cat >"$STATE_FILE" <<EOF
