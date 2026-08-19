@@ -41,6 +41,17 @@ MIRROR_WS="${MIRROR_WS:-mirror}"              # workspace (on the VSI) for the r
 BNK_WS="${BNK_WS:-bnk}"                        # workspace (on the VSI) for the BNK install
 SSH_KEY_NAME="${SSH_KEY_NAME:-bnk-airgap-key}" # EXISTING IBM Cloud VPC SSH key
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/bnk-airgap-key}"  # its PRIVATE key on THIS host
+# `chmod 600` is not enough on its own. If SSH_KEY_FILE lives on a DrvFs mount
+# (/mnt/c, /mnt/d — the normal case when the repo is on a Windows drive under
+# WSL), chmod REPORTS SUCCESS and leaves the file 0777, and OpenSSH then refuses
+# it: "Permissions 0777 … are too open" followed by "Permission denied
+# (publickey)". Only the second line gets read, so it presents as a wrong key.
+#
+# lib/ssh-key.sh already solves this for the bootstrap — it stages a copy on a
+# real Linux filesystem when the mode cannot be set. This demo was still doing a
+# bare chmod, so pointing it at a key on /mnt/… failed exactly the way the helper
+# exists to prevent. Use `$(ssh_key)` in place of "$SSH_KEY_FILE" for ssh/scp.
+source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/ssh-key.sh"
 
 HARBOR_VSI_PROFILE="${HARBOR_VSI_PROFILE:-bx2-4x16}"
 # Resolved at RUN TIME, not hardcoded. IBM retires stock image names: the previous
@@ -57,7 +68,7 @@ FAR_AUTH_LOCAL_FILE="${FAR_AUTH_LOCAL_FILE:-$HOME/f5/f5-far-auth-key.tgz}"
 SUBSCRIPTION_JWT_LOCAL_FILE="${SUBSCRIPTION_JWT_LOCAL_FILE:-$HOME/f5/subscription.jwt}"
 FLP_STATUS_IMAGE_BUILD="${FLP_STATUS_IMAGE_BUILD:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/flp-status-build}"  # dir with a prebuilt flp-status linux binary + Dockerfile
 
-ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"        # LOCAL binary (v1.32.0); shipped to the VSI
+ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"        # LOCAL binary (v1.46.0); shipped to the VSI
 STATE_DIR="${STATE_DIR:-$PWD/.demo-state}"; mkdir -p "$STATE_DIR"
 TS_FILE="${TS_FILE:-$STATE_DIR/phase-timestamps.txt}"; : > "$TS_FILE"
 AUTO_ADVANCE="${AUTO_ADVANCE:-1}"              # 1 = hands-off; 0 = wait for ENTER
@@ -167,7 +178,7 @@ teardown(){
   SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
   if [[ -n "$HFIP" ]]; then
     say "Destroying the standalone FLP (roksbnkctl -w ${FLP_WS} flp down) on the operator VSI…"
-    ssh -i "$SSH_KEY_FILE" $SSH_OPTS ubuntu@"$HFIP" \
+    ssh -i "$(ssh_key)" $SSH_OPTS ubuntu@"$HFIP" \
       "export IBMCLOUD_API_KEY='$IBMCLOUD_API_KEY' PATH=\$PATH:/usr/local/bin; roksbnkctl -w ${FLP_WS} flp down --auto" 2>&1 | tail -3 || true
   fi
   ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r "$SVC_REGION" -g "$RESOURCE_GROUP" -q >/dev/null 2>&1 || die "ibmcloud login failed"
@@ -315,7 +326,7 @@ ok "Harbor VSI — private ${B}${HARBOR_PRIVATE_IP}${N}, floating ${B}${HARBOR_F
 # UserKnownHostsFile=/dev/null otherwise prints on stderr — critical because onvsi captures
 # 2>&1 into shell vars (FAR service account, CAs, FLP URL), and that warning would corrupt them.
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
-HARBOR_SSH="ssh -i $SSH_KEY_FILE $SSH_OPTS ubuntu@$HARBOR_FIP"
+HARBOR_SSH="ssh -i $(ssh_key) $SSH_OPTS ubuntu@$HARBOR_FIP"
 
 say "Waiting for Harbor to finish installing (cloud-init: Docker + offline installer; ~8–15 min)…"
 begin_long
@@ -334,10 +345,10 @@ done
 say "Put the operator ON the VSI: ship roksbnkctl + the FAR/JWT files + the SSH key,"
 say "and install terraform >= 1.10 (the floor roksbnkctl enforces) — it shells out for every apply."
 [[ "$DRY_RUN" == "1" ]] || {
-  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$(command -v "$ROKSBNKCTL_BIN")" ubuntu@"$HARBOR_FIP":/home/ubuntu/roksbnkctl >/dev/null
-  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$FAR_AUTH_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/far-auth.tgz >/dev/null
-  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$SUBSCRIPTION_JWT_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/subscription.jwt >/dev/null
-  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$SSH_KEY_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/.flpkey >/dev/null
+  scp -i "$(ssh_key)" $SSH_OPTS "$(command -v "$ROKSBNKCTL_BIN")" ubuntu@"$HARBOR_FIP":/home/ubuntu/roksbnkctl >/dev/null
+  scp -i "$(ssh_key)" $SSH_OPTS "$FAR_AUTH_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/far-auth.tgz >/dev/null
+  scp -i "$(ssh_key)" $SSH_OPTS "$SUBSCRIPTION_JWT_LOCAL_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/subscription.jwt >/dev/null
+  scp -i "$(ssh_key)" $SSH_OPTS "$SSH_KEY_FILE" ubuntu@"$HARBOR_FIP":/home/ubuntu/.flpkey >/dev/null
   onvsi "sudo install -m755 /home/ubuntu/roksbnkctl /usr/local/bin/roksbnkctl; chmod 600 /home/ubuntu/.flpkey; sudo cp /opt/harbor/certs/harbor.crt /usr/local/share/ca-certificates/harbor.crt; sudo update-ca-certificates >/dev/null 2>&1"
   onvsi "command -v terraform >/dev/null || { curl -fsSL https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip -o /tmp/tf.zip && sudo apt-get install -y unzip >/dev/null 2>&1 && sudo unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null 2>&1; }"
   # roksbnkctl also shells out to helm (chart/BOM resolution during mirror + bnk up).
@@ -360,7 +371,7 @@ if [[ -n "$FLP_STATUS_IMAGE_BUILD" && -f "$FLP_STATUS_IMAGE_BUILD/flp-status" ]]
   say "Build + push the flp-status image to Harbor's public '${HARBOR_STATUS_PROJECT}' project (podman)."
   [[ "$DRY_RUN" == "1" ]] || {
     onvsi "mkdir -p /home/ubuntu/flpimg"
-    scp -i "$SSH_KEY_FILE" $SSH_OPTS "$FLP_STATUS_IMAGE_BUILD/flp-status" "$FLP_STATUS_IMAGE_BUILD/Dockerfile" ubuntu@"$HARBOR_FIP":/home/ubuntu/flpimg/ >/dev/null
+    scp -i "$(ssh_key)" $SSH_OPTS "$FLP_STATUS_IMAGE_BUILD/flp-status" "$FLP_STATUS_IMAGE_BUILD/Dockerfile" ubuntu@"$HARBOR_FIP":/home/ubuntu/flpimg/ >/dev/null
     onvsi "sudo apt-get install -y podman >/dev/null 2>&1; sudo mkdir -p /etc/containers/certs.d/${HARBOR_PRIVATE_IP}; sudo cp /opt/harbor/certs/harbor.crt /etc/containers/certs.d/${HARBOR_PRIVATE_IP}/ca.crt; sudo podman build -t ${HARBOR_PRIVATE_IP}/${HARBOR_STATUS_PROJECT}/flp-status:v1 /home/ubuntu/flpimg >/dev/null 2>&1; echo '${HARBOR_ADMIN_PASSWORD}' | sudo podman login ${HARBOR_PRIVATE_IP} -u admin --password-stdin >/dev/null 2>&1; sudo podman push ${HARBOR_PRIVATE_IP}/${HARBOR_STATUS_PROJECT}/flp-status:v1 2>&1 | tail -1"
   }
   ok "flp-status image in Harbor (${HARBOR_STATUS_PROJECT}/flp-status:v1)"
@@ -516,7 +527,7 @@ say "bnk up gates the F5SPKVlan applies on a dry-run admission probe, so the CRs
 # the cwc never deadlocks. Remove once F5 ships f5-spk-cwc with strategy: Recreate (or an
 # RWX volume) — see cwc-guard.sh.
 [[ "$DRY_RUN" == "1" ]] || {
-  scp -i "$SSH_KEY_FILE" $SSH_OPTS "$HERE/cwc-guard.sh" ubuntu@"$HARBOR_FIP":/home/ubuntu/cwc-guard.sh >/dev/null 2>&1
+  scp -i "$(ssh_key)" $SSH_OPTS "$HERE/cwc-guard.sh" ubuntu@"$HARBOR_FIP":/home/ubuntu/cwc-guard.sh >/dev/null 2>&1
   onvsi "setsid bash /home/ubuntu/cwc-guard.sh >/home/ubuntu/cwc-guard.log 2>&1 </dev/null & echo cwc-guard-launched" >/dev/null 2>&1
 }
 begin_long

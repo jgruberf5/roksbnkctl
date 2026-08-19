@@ -336,6 +336,16 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 		return nil
 	}
 
+	// #87: partition SETTLED state. A connection still `pending` is refused with
+	// 409 invalid_state, and the old code sent swept-VPC connections straight to
+	// DELETE whatever their status — so a sweep run right after an interrupted
+	// attach failed, and said "re-run", which failed identically until IBM
+	// finished attaching. That wait is one cleanup can do itself.
+	conns, err = c.waitTGWConnectionsSettled(ctx, id, conns)
+	if err != nil {
+		return err
+	}
+
 	detach, settling, foreign := partitionTGWConnections(conns, sweptVPCs)
 	if len(foreign) > 0 {
 		// The region hint is not filler. cleanup scans only the workspace's
@@ -369,6 +379,66 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 	return c.authedDELETE(ctx, gatewayURL)
 }
 
+// tgwConnectionInFlight reports whether a connection is mid-transition. IBM
+// accepts a connection DELETE only from a settled state, so these are the
+// statuses to WAIT OUT rather than act on:
+//
+//	pending    — still attaching (#87)
+//	deleting   — already on its way out (#85)
+//	detaching  — the same, under IBM's other spelling
+//
+// Deliberately a denylist of TRANSIENT states, not an allowlist of `attached`.
+// A connection stuck in `failed` or `suspended` is not going to become
+// `attached`, but it CAN be deleted — requiring `attached` would make cleanup
+// wait out its whole timeout and then refuse to remove exactly the wreckage it
+// exists to remove.
+func tgwConnectionInFlight(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "pending", "deleting", "detaching":
+		return true
+	}
+	return false
+}
+
+// waitTGWConnectionsSettled blocks until no connection is mid-transition, and
+// returns the final listing so the caller partitions fresh state rather than
+// the stale read it started from.
+//
+// This is the #85 wait applied to the ATTACH side. #85 waited after issuing the
+// detaches; #87 showed the same race exists before them — a connection still
+// `pending` is refused with 409 invalid_state, and `cleanup` is most often
+// reached for precisely when an interrupted `up` has left one attaching.
+//
+// On timeout it returns what it has rather than failing: the DELETE that
+// follows produces IBM's own error, which beats a guess made here, and the
+// partition treats anything still in flight as settling so it is never deleted.
+func (c *Client) waitTGWConnectionsSettled(ctx context.Context, id string, conns []TGWConnection) ([]TGWConnection, error) {
+	deadline := time.Now().Add(tgwConnectionSettleTimeout)
+	for {
+		var inFlight []TGWConnection
+		for _, conn := range conns {
+			if tgwConnectionInFlight(conn.Status) {
+				inFlight = append(inFlight, conn)
+			}
+		}
+		if len(inFlight) == 0 || time.Now().After(deadline) {
+			return conns, nil
+		}
+		select {
+		case <-ctx.Done():
+			return conns, ctx.Err()
+		case <-time.After(tgwConnectionPollInterval):
+		}
+		next, err := c.ListTGWConnections(ctx, id)
+		if err != nil {
+			// Same reasoning as the cleared-wait: stop waiting and let the
+			// delete report, rather than inventing a failure here.
+			return conns, nil
+		}
+		conns = next
+	}
+}
+
 // partitionTGWConnections sorts a gateway's connections into three buckets.
 //
 //   - detach   — a VPC attachment whose VPC this sweep is also deleting. Ours to
@@ -387,7 +457,7 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 func partitionTGWConnections(conns []TGWConnection, sweptVPCs map[string]bool) (detach, settling, foreign []TGWConnection) {
 	for _, conn := range conns {
 		switch {
-		case strings.EqualFold(conn.Status, "deleting"):
+		case tgwConnectionInFlight(conn.Status):
 			settling = append(settling, conn)
 		case strings.EqualFold(conn.NetworkType, "vpc") && sweptVPCs[strings.ToLower(conn.NetworkID)]:
 			detach = append(detach, conn)
