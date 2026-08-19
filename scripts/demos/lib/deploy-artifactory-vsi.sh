@@ -229,6 +229,14 @@ write_files:
               condition: service_healthy
           ports: ["127.0.0.1:8081:8081", "127.0.0.1:8082:8082"]
           environment:
+            # JFrog Connect OFF. It is a licensed-tier service, so on JCR the
+            # frontend's entitlement fetch 404s and RETRIES ONCE A SECOND
+            # forever -- 751 failures in ten minutes on the first deployment.
+            # The API stays fast (4-51ms per request) while the UI crawls,
+            # because the frontend blocks on that retry before completing a page
+            # action, so it reads as a slow server rather than a disabled
+            # feature. The Helm chart's equivalent is jfconnect.enabled=false.
+            JF_JFCONNECT_ENABLED: "false"
             JF_SHARED_DATABASE_TYPE: postgresql
             JF_SHARED_DATABASE_DRIVER: org.postgresql.Driver
             JF_SHARED_DATABASE_URL: jdbc:postgresql://postgres:5432/artifactory
