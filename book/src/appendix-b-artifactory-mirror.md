@@ -3,7 +3,7 @@
 This appendix mirrors the F5 Artifact Repository into a **JFrog Artifactory you
 already run**. It does not cover standing Artifactory up — if you are building
 one for a demonstration, use the standalone Artifactory demo instead; this is
-for the far more common case where Artifactory is already your organisation's
+for the far more common case where Artifactory is already your organization's
 registry of record and BNK is simply one more thing that has to live in it.
 
 Nothing here needs a Kubernetes cluster. `registry replicate` copies
