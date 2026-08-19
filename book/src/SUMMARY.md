@@ -78,3 +78,4 @@
 # Appendices
 
 - [A — The four cluster topologies, end to end](./appendix-a-disconnected-roks-cluster.md)
+- [B — Replicating FAR into an existing registry](./appendix-b-artifactory-mirror.md)
