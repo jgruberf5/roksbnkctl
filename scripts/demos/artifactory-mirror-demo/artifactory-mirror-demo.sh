@@ -41,8 +41,14 @@ REGION="${REGION:-us-east}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
 
 ART_DOMAIN="${ART_DOMAIN:-}"
-ART_REPO="${ART_REPO:-bnk-mirror}"
-ART_USER="${ART_USER:-bnk-mirror-bot}"
+# docker-local, not a name of our choosing. JCR cannot create a repository over
+# REST ("400 available only in Artifactory Pro"), so the VSI bootstraps it via
+# artifactory.config.import.yml -- whose OnboardingConfiguration schema takes
+# only repoTypes and creates JFrog's DEFAULT names for each type.
+ART_REPO="${ART_REPO:-docker-local}"
+# admin: JCR has no user management at all (users, groups and permission targets
+# are Pro-only), so there is no scoped identity to create.
+ART_USER="${ART_USER:-admin}"
 ART_TOKEN="${ART_TOKEN:-}"
 
 # Where the FAR pull credential lives. The BUCKET has no usable default: COS

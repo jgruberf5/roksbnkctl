@@ -250,6 +250,30 @@ write_files:
             - /opt/artifactory/var:/var/opt/jfrog/artifactory
           ulimits:
             nofile: {soft: 32000, hard: 40000}
+  # Bootstraps Artifactory declaratively at FIRST START, which is the only way
+  # to do it on JCR: creating a repository over REST answers "400 available only
+  # in Artifactory Pro", and the EULA endpoint the UI itself calls returns 404.
+  #
+  # The schema is tiny and fixed -- read off the model classes in the running
+  # image, because it is barely documented:
+  #   EulaConfigurationYamlModel      -> accepted (Boolean)
+  #   OnboardingConfigurationYamlModel -> repoTypes (list)
+  #
+  # repoTypes creates JFrog's DEFAULT repositories for each type, so you get
+  # docker-local / docker-remote / docker, not a name of your choosing. There is
+  # no field for custom names; that is why the mirror targets docker-local.
+  - path: /opt/artifactory/artifactory.config.import.yml
+    owner: '1030:1030'
+    permissions: '0640'
+    content: |
+      version: 1
+      GeneralConfiguration:
+        eula:
+          accepted: true
+      OnboardingConfiguration:
+        repoTypes:
+          - docker
+          - helm
   - path: /opt/artifactory/Caddyfile
     content: |
       $ART_DOMAIN {
@@ -274,6 +298,10 @@ runcmd:
   - printf '%s\n' '$ART_MASTER_KEY' > /opt/artifactory/var/etc/security/master.key
   - printf '%s\n' '$ART_JOIN_KEY'   > /opt/artifactory/var/etc/security/join.key
   - chmod 600 /opt/artifactory/var/etc/security/master.key /opt/artifactory/var/etc/security/join.key
+  # The import file must be in place BEFORE the first start -- the bootstrapper
+  # runs once, during art-init, and renames the file once consumed.
+  - install -d -o 1030 -g 1030 -m 755 /opt/artifactory/var/etc/artifactory
+  - cp /opt/artifactory/artifactory.config.import.yml /opt/artifactory/var/etc/artifactory/artifactory.config.import.yml
   - chown -R 1030:1030 /opt/artifactory/var
   - docker compose -f /opt/artifactory/docker-compose.yml up -d
   - docker run -d --name artifactory-caddy --restart unless-stopped --network host
