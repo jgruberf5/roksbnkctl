@@ -4,7 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## Unreleased
+## v1.48.0 — 2026-08-19
+
+Two bugs found by **running the v1.47.0 demo**, both of which cost a full demo cycle before they were understood. Neither was reachable from CI: one needs a real OpenShift ingress operator racing a real FLO, the other needs a terraform state large enough to contain an IBM resource-group object.
 
 ### Fixed
 
