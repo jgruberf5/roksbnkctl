@@ -2,6 +2,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -129,25 +130,44 @@ func bnkStateHasResources(ctx context.Context, cctx *config.Context, tfws *tf.Wo
 	return strings.TrimSpace(out) != "", true
 }
 
-// stateFileHasResources is the on-disk half: true only when a state file in stateDir
-// carries a non-empty "resources" array. Matching on the empty forms is more robust
-// than a full parse, which would have to track state-format changes to stay correct.
-// A missing or unrecognised file is false — the caller decides what that means, which
-// depends entirely on the backend.
+// stateFileHasResources is the on-disk half: true only when a state file in
+// stateDir carries a non-empty TOP-LEVEL "resources" array.
+//
+// Decoding that one key, rather than scanning the file for it. The substring
+// version of this read a populated 221-resource state as EMPTY and refused a
+// workspace that owned its install (#100): terraform state is not the only
+// thing in the file with a key called "resources" — IBM Cloud resource-group
+// and IAM objects carry one as an ATTRIBUTE, routinely empty —
+//
+//	"resource_tags": [],
+//	"resources": [],
+//	"roles": [ ... ]
+//
+// — and a scan for `"resources": []` matched that, at any depth, in any
+// resource's attributes. The argument for scanning was that a parse "would have
+// to track state-format changes"; the opposite holds. A scan reads every
+// attribute of every resource and so is maximally exposed to unrelated content,
+// while decoding a single top-level key ignores the entire body by
+// construction. json.RawMessage keeps that true: the entries are never
+// interpreted, only counted.
+//
+// A missing or unparseable file is false — the caller decides what that means,
+// which depends entirely on the backend.
 func stateFileHasResources(stateDir string) bool {
 	for _, name := range []string{"terraform.tfstate", filepath.Join(".terraform", "terraform.tfstate")} {
 		b, err := os.ReadFile(filepath.Join(stateDir, name))
 		if err != nil || len(b) == 0 {
 			continue
 		}
-		s := string(b)
-		if !strings.Contains(s, `"resources"`) {
+		var st struct {
+			Resources []json.RawMessage `json:"resources"`
+		}
+		if err := json.Unmarshal(b, &st); err != nil {
 			continue
 		}
-		if strings.Contains(s, `"resources": []`) || strings.Contains(s, `"resources":[]`) {
-			continue
+		if len(st.Resources) > 0 {
+			return true
 		}
-		return true
 	}
 	return false
 }
