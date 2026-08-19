@@ -197,7 +197,19 @@ cluster that needs it cannot reach the internet.</p>
 export ART_DOMAIN=artifactory.example.com
 export IBMCLOUD_API_KEY=...
 
+<span class="c"># optional — defaults to region us-east, resource group "default"</span>
+export ART_REGION=us-east
+export ART_RESOURCE_GROUP=default
+
 ./scripts/demos/lib/deploy-artifactory-vsi.sh</pre>
+    <div class="note">
+      <span class="lbl">Resource group names are case-sensitive</span>
+      <p><code>default</code> is not <code>Default</code>. If the name does not
+      exist the script stops and lists the groups your account does have, with
+      the account default marked — set <code>ART_RESOURCE_GROUP</code> to one of
+      those. Run <code>ibmcloud resource groups</code> to see the same list
+      yourself.</p>
+    </div>
     <p>The script prints the floating IP as soon as it has one, then waits for Artifactory to
     answer over HTTPS. <strong>Point your DNS name at that IP while it waits.</strong></p>
     <div class="note">

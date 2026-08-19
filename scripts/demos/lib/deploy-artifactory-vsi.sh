@@ -31,9 +31,16 @@ STATE_FILE="${STATE_FILE:-$SCRIPT_DIR/../.bootstrap-state/artifactory.env}"
 : "${IBMCLOUD_API_KEY:?set IBMCLOUD_API_KEY}"
 : "${ART_DOMAIN:?set ART_DOMAIN — the public DNS name Caddy gets a certificate for}"
 
-REGION="${ART_REGION:-us-east}"
+# ART_* wins, then the demo's own REGION/RESOURCE_GROUP, then the default. The
+# guide has the reader put REGION and RESOURCE_GROUP in .env; reading only the
+# ART_* names would silently ignore what they set and deploy somewhere else.
+REGION="${ART_REGION:-${REGION:-us-east}}"
 ZONE="${ART_ZONE:-${REGION}-1}"
-RG="${ART_RESOURCE_GROUP:-Default}"
+# Lowercase "default" — the IBM Cloud account default, and what every other demo
+# here uses. Names are CASE-SENSITIVE, so the capitalised "Default" this script
+# shipped with matched nothing and failed with "Could not get resource group".
+# Override with ART_RESOURCE_GROUP.
+RG="${ART_RESOURCE_GROUP:-${RESOURCE_GROUP:-default}}"
 # Artifactory wants real memory; 4x16 is the smallest profile it runs happily on.
 # A 2x8 boots and then thrashes under the first replicate, which looks like a
 # network fault and is not one.
@@ -56,9 +63,19 @@ die(){ printf '✗ %s\n' "$*" >&2; exit 1; }
 ic(){ ibmcloud "$@"; }
 
 login(){
-  ic login --apikey "$IBMCLOUD_API_KEY" -r "$REGION" -g "$RG" --no-region >/dev/null 2>&1 \
-    || ic login --apikey "$IBMCLOUD_API_KEY" -r "$REGION" -g "$RG" >/dev/null
-  ic target -r "$REGION" -g "$RG" >/dev/null
+  # Log in WITHOUT a resource group first: -g fails the whole login when the
+  # group does not exist, which is what made a wrong name look like an auth
+  # problem. The group is targeted separately below, where it can be reported.
+  ic login --apikey "$IBMCLOUD_API_KEY" -r "$REGION" >/dev/null \
+    || die "ibmcloud login failed — check IBMCLOUD_API_KEY and that $REGION is a valid region"
+
+  if ! ic target -r "$REGION" -g "$RG" >/dev/null 2>&1; then
+    printf '✗ resource group %s not found in this account.\n\n' "$RG" >&2
+    printf '  Set ART_RESOURCE_GROUP to one of:\n' >&2
+    ic resource groups --output json 2>/dev/null \
+      | jq -r 'if type=="array" then (.[]|"    " + .name + (if (.default==true or .default=="true") then "   (account default)" else "" end)) else empty end' >&2
+    exit 1
+  fi
 }
 
 destroy(){
