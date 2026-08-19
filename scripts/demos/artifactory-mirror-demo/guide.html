@@ -272,8 +272,13 @@ OnboardingYamlBootstrapper - Configuration reloaded</pre>
       returns server errors, with no working way to clear it.</p>
       <p>The schema is small and fixed: <code>eula.accepted</code> takes a boolean, and
       <code>repoTypes</code> takes a list of package types. There is <strong>no field for
-      repository names</strong> — each type gets JFrog's defaults, which is why the mirror below
-      targets <code>docker-local</code>.</p>
+      repository names</strong>, so each type gets JFrog's defaults —
+      <code>docker-local</code>, <code>docker-remote</code>, <code>docker</code>,
+      <code>helm-local</code>, <code>helm</code>.</p>
+      <p>If you would rather mirror into a repository with a name of your choosing, create one in
+      the console (<em>Administration → Repositories → Add Repository → Local → Docker</em>) and
+      point <code>ART_REPO</code> at it. Both are one config field apart and both are verified;
+      <code>docker-local</code> is the default here only because it needs no console step.</p>
     </div>
   </div>
 </div>
@@ -360,6 +365,14 @@ echo "$ART_TOKEN" | roksbnkctl -w art registry target generic_password --passwor
 roksbnkctl -w art registry diff       <span class="c"># what is missing right now</span>
 roksbnkctl -w art registry replicate  <span class="c"># copy it, by digest</span>
 roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
+    <div class="note">
+      <span class="lbl">Gate on verify, not on diff</span>
+      <p>A workspace records what it last replicated, and that record can describe a registry that
+      has since been rebuilt or replaced. In that state <code>diff</code> has been observed
+      reporting <em>"mirror is in sync"</em> against an <strong>empty</strong> registry, while
+      <code>verify</code> correctly reported every artifact missing. If a workspace has been
+      re-pointed at a different registry, trust <code>verify</code>.</p>
+    </div>
     <p><strong>Verify is the step that means anything.</strong> <code>replicate</code> reports what
     it pushed; <code>verify</code> independently re-reads the bill of materials and checks every
     artifact against the digest it should have, so a partial copy or a tag that moved underneath you
@@ -420,7 +433,7 @@ roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
 <div class="done">
   <h3>What success looks like</h3>
   <p>Both paths end on the same two lines. The second one is the one to gate on:</p>
-  <pre>✓ mirrored 89 artifacts into artifactory.example.com/bnk-mirror
+  <pre>✓ mirrored 89 artifacts into artifactory.example.com/&lt;your-repo&gt;
 ✓ all 89 BOM artifacts present + digest-matched in the mirror</pre>
 </div>
 

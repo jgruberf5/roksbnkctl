@@ -78,10 +78,16 @@ through both with the exact menu paths.
 
 Both paths have been run end to end against a real self-hosted Artifactory:
 
-| Path | Result |
-|---|---|
-| CLI (phases 3–7) | `mirrored 89 artifacts` → `all 89 BOM artifacts present + digest-matched` |
-| Container / Argo (phase 8) | 5/5 steps, same two lines, from an emptied mirror |
+All four combinations, each reaching `mirrored 89 artifacts` →
+`all 89 BOM artifacts present + digest-matched`:
+
+| | `docker-local` | `bnk-mirror` |
+|---|---|---|
+| CLI (phases 3–7) | ✅ | ✅ |
+| Container / Argo (phase 8) | ✅ | ✅ |
+
+Every run started from an emptied registry, so each replicated all 89 rather
+than skipping.
 
 The container run authored no `config.yaml` at all — 15 fields applied from the
 environment — which is the equivalence phase 8 exists to demonstrate.
