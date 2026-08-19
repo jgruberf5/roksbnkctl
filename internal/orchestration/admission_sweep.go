@@ -253,11 +253,23 @@ func crdInstallerBlocked(obj map[string]any) bool {
 func repairCRDInstaller(ctx context.Context, dc dynamic.Interface, floNS, utilsNS string) {
 	fmt.Fprintln(os.Stderr, "  ⚠ FLO crd-installer was blocked by the gateway-api admission policy — repairing")
 
+	// The 5s sweep is already deleting these, so this looks redundant. It is
+	// not: it is an ORDERING guarantee. The sweep may have ticked a moment ago
+	// and the ingress operator may have recreated the policy since, and the
+	// recreated Job gets one attempt. Clearing immediately before the restart
+	// gives it the widest possible window rather than up to 5s of one.
 	for _, gvr := range admissionSweepGVRs {
 		_ = dc.Resource(gvr).Delete(ctx, admissionSweepName, metav1.DeleteOptions{})
 	}
+	// Background propagation, which is what `kubectl delete job` does and what
+	// the API's default (orphan) does NOT. The Job's selector is on
+	// controller-uid, so a recreated Job cannot adopt the old pod either way —
+	// but orphaning leaves a Failed crd-installer pod sitting in the namespace
+	// after a successful repair, which is precisely the debris that misleads
+	// whoever diagnoses this next.
+	bg := metav1.DeletePropagationBackground
 	if err := dc.Resource(crdInstallerJobGVR).Namespace(utilsNS).
-		Delete(ctx, "crd-installer", metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		Delete(ctx, "crd-installer", metav1.DeleteOptions{PropagationPolicy: &bg}); err != nil && !apierrors.IsNotFound(err) {
 		fmt.Fprintf(os.Stderr, "    · could not delete the failed crd-installer Job: %v\n", err)
 	}
 
