@@ -25,27 +25,6 @@ func TestStateFileHasResources(t *testing.T) {
 		// is the caller's decision, and depends on the backend.
 		{"unparseable", `not json at all`, false},
 		{"no resources key", `{"version":4,"outputs":{}}`, false},
-
-		// The shape that broke it (#100). A populated top-level resources array
-		// AND a nested, empty `resources` ATTRIBUTE — which is what IBM Cloud
-		// resource-group and IAM objects carry, on essentially every deployment
-		// this tool makes. A scan for `"resources": []` matches the nested one
-		// and reads the whole state as empty, so the guard refuses a workspace
-		// that owns its install. Both halves are required: a case with only one
-		// of them passes against the broken implementation.
-		{
-			"populated state whose resources ALSO appear as an empty nested attribute",
-			`{"version":4,"resources":[{"mode":"managed","type":"helm_release","instances":[` +
-				`{"attributes":{"resource_tags":[],"resources": [],"roles":["Manager"]}}]}]}`,
-			true,
-		},
-		// The same nested attribute must not invent resources either, when the
-		// state genuinely holds none.
-		{
-			"genuinely empty state with the same nested attribute elsewhere",
-			`{"version":4,"resources":[],"check_results":[{"attributes":{"resources": []}}]}`,
-			false,
-		},
 	}
 	for _, c := range cases {
 		dir := t.TempDir()

@@ -4,14 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -81,21 +78,9 @@ func startAdmissionPolicySweep(ctx context.Context, cctx *config.Context, tfws *
 		defer close(done)
 		runAdmissionSweepLoop(sctx, dc, 5*time.Second)
 	}()
-
-	// Watching for the LOSS runs alongside the attempt to win. Deliberately a
-	// second goroutine rather than work folded into the sweep tick: the sweep
-	// must keep its 5s cadence to be useful at all, and the repair polls a
-	// different object on a slower one (#96).
-	repairDone := make(chan struct{})
-	go func() {
-		defer close(repairDone)
-		watchAndRepairCRDInstaller(sctx, dc, floNamespaceOf(cctx), utilsNamespaceOf(cctx), 15*time.Second)
-	}()
-
 	return func() {
 		cancel()
 		<-done
-		<-repairDone
 	}
 }
 
@@ -187,159 +172,4 @@ func clusterKubeconfigBytes(ctx context.Context, cctx *config.Context, tfws *tf.
 		return nil, fmt.Errorf("fetching admin kubeconfig for cluster %q: %w", cluster, err)
 	}
 	return body, nil
-}
-
-// ── crd-installer repair (#96) ───────────────────────────────────────────────
-//
-// The sweep above is a RACE, and the happy path is probabilistic. The FLO
-// crd-installer runs for about 1.3 seconds; the ingress operator recreates the
-// admission policy roughly every minute; our delete lands every 5s. When the
-// crd-installer's ~200ms CRD create falls inside a window where the policy is
-// live, it is denied:
-//
-//	CRDInstallerAvailable=False  Gateway API CRD "backendtlspolicies…" creation
-//	blocked by platform admission policy … requires Gateway API "1.4.1 standard"
-//
-// Losing is TERMINAL without this, because the crd-installer is a Job that runs
-// ONCE and reports Complete 1/1 even when the CRD install failed. Nothing
-// retries it, so `tfx wait` burns its full 15 minutes on CNEControllerAvailable
-// and then reports the condition name rather than the cause.
-//
-// So: stop relying on winning the race, and repair the loss. This runs in the
-// same goroutine window as the sweep, which means the repair lands WHILE tfx
-// wait is still waiting — the apply then succeeds outright rather than failing
-// and needing a re-run.
-//
-// The repair is the sequence the BNK 2.4 install guide prescribes for OCP >=
-// 4.19, and which was confirmed by hand on a cluster in this state: clear the
-// policy, drop the failed Job, restart FLO so the Job is recreated.
-var (
-	crdInstallerJobGVR = schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "jobs"}
-	deploymentGVR      = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-	cneInstanceGVR     = schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}
-)
-
-// crdInstallerBlocked reports whether the CNEInstance is stuck specifically on
-// the gateway-api admission policy — not merely un-Available, which is the
-// normal state for most of an install. Matching the MESSAGE is deliberate: a
-// broad "CRDInstallerAvailable=False" would fire during ordinary startup and
-// bounce FLO for no reason.
-func crdInstallerBlocked(obj map[string]any) bool {
-	conds, found, _ := unstructured.NestedSlice(obj, "status", "conditions")
-	if !found {
-		return false
-	}
-	for _, c := range conds {
-		m, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		if t, _ := m["type"].(string); t != "CRDInstallerAvailable" {
-			continue
-		}
-		if s, _ := m["status"].(string); s != "False" {
-			return false
-		}
-		msg, _ := m["message"].(string)
-		return strings.Contains(msg, "admission policy")
-	}
-	return false
-}
-
-// repairCRDInstaller clears the admission policy, deletes the failed Job and
-// restarts FLO so the Job is recreated. Best-effort throughout: every step is
-// reported, and a failure to do one does not stop the others — a partial repair
-// still improves the odds, and the apply's own error remains the source of truth.
-func repairCRDInstaller(ctx context.Context, dc dynamic.Interface, floNS, utilsNS string) {
-	fmt.Fprintln(os.Stderr, "  ⚠ FLO crd-installer was blocked by the gateway-api admission policy — repairing")
-
-	// The 5s sweep is already deleting these, so this looks redundant. It is
-	// not: it is an ORDERING guarantee. The sweep may have ticked a moment ago
-	// and the ingress operator may have recreated the policy since, and the
-	// recreated Job gets one attempt. Clearing immediately before the restart
-	// gives it the widest possible window rather than up to 5s of one.
-	for _, gvr := range admissionSweepGVRs {
-		_ = dc.Resource(gvr).Delete(ctx, admissionSweepName, metav1.DeleteOptions{})
-	}
-	// Background propagation, which is what `kubectl delete job` does and what
-	// the API's default (orphan) does NOT. The Job's selector is on
-	// controller-uid, so a recreated Job cannot adopt the old pod either way —
-	// but orphaning leaves a Failed crd-installer pod sitting in the namespace
-	// after a successful repair, which is precisely the debris that misleads
-	// whoever diagnoses this next.
-	bg := metav1.DeletePropagationBackground
-	if err := dc.Resource(crdInstallerJobGVR).Namespace(utilsNS).
-		Delete(ctx, "crd-installer", metav1.DeleteOptions{PropagationPolicy: &bg}); err != nil && !apierrors.IsNotFound(err) {
-		fmt.Fprintf(os.Stderr, "    · could not delete the failed crd-installer Job: %v\n", err)
-	}
-
-	// The same thing `kubectl rollout restart` does: stamp the pod template so
-	// the Deployment rolls, which makes FLO recreate the crd-installer Job.
-	//
-	// A JSON merge patch, not the strategic merge `kubectl` uses. RFC 7386
-	// merges nested objects recursively, so this adds the one annotation and
-	// leaves the rest of the pod template alone — identical effect here, and
-	// unlike strategic merge it needs no Go struct, so it works against
-	// unstructured objects on both the real API and the fake client in tests.
-	patch := fmt.Sprintf(
-		`{"spec":{"template":{"metadata":{"annotations":{"roksbnkctl/crd-installer-repair":%q}}}}}`,
-		time.Now().UTC().Format(time.RFC3339))
-	if _, err := dc.Resource(deploymentGVR).Namespace(floNS).Patch(
-		ctx, "flo-f5-lifecycle-operator", types.MergePatchType, []byte(patch), metav1.PatchOptions{},
-	); err != nil {
-		fmt.Fprintf(os.Stderr, "    · could not restart flo-f5-lifecycle-operator: %v\n", err)
-		fmt.Fprintln(os.Stderr, "      → repair it by hand: oc rollout restart deployment flo-f5-lifecycle-operator -n "+floNS)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "  → restarted flo-f5-lifecycle-operator; the crd-installer will run again")
-}
-
-// floNamespaceOf / utilsNamespaceOf resolve the install namespaces, defaulting
-// the way the terraform module does. Both are configurable (bnk.flo_namespace /
-// bnk.flo_utils_namespace) and may be the SAME namespace — a supported
-// single-namespace install — so neither is assumed distinct.
-func floNamespaceOf(cctx *config.Context) string {
-	if cctx != nil && cctx.Workspace != nil {
-		if ns := strings.TrimSpace(cctx.Workspace.BNK.FLONamespace); ns != "" {
-			return ns
-		}
-	}
-	return "f5-bnk"
-}
-
-func utilsNamespaceOf(cctx *config.Context) string {
-	if cctx != nil && cctx.Workspace != nil {
-		if ns := strings.TrimSpace(cctx.Workspace.BNK.FLOUtilsNamespace); ns != "" {
-			return ns
-		}
-	}
-	return "f5-utils"
-}
-
-// watchAndRepairCRDInstaller polls the CNEInstance and repairs the crd-installer
-// the first time it reports the admission block.
-//
-// ONCE, not on every tick: the repair restarts FLO, and a loop that fires
-// repeatedly would bounce the operator while it is trying to converge — turning
-// a recoverable race into a crash loop of our own making. If one restart does
-// not clear it, the cause is not the race and the apply's error should stand.
-func watchAndRepairCRDInstaller(ctx context.Context, dc dynamic.Interface, floNS, utilsNS string, interval time.Duration) {
-	name := floNS + "-f5-cne-controller"
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-		u, err := dc.Resource(cneInstanceGVR).Namespace(floNS).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			continue // not created yet, or unreachable — nothing to judge
-		}
-		if crdInstallerBlocked(u.Object) {
-			repairCRDInstaller(ctx, dc, floNS, utilsNS)
-			return
-		}
-	}
 }

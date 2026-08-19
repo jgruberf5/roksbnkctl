@@ -1,0 +1,117 @@
+# wf-artifactory-mirror.yaml — replicate the F5 Artifact Repository into a
+# self-hosted JFrog Artifactory, as an unattended container step.
+#
+# THE POINT: there is no config.yaml anywhere. The same binary and the same verbs
+# the operator ran interactively are driven entirely by environment variables, so
+# this works from a CI runner that has no shell, no prompts, and nowhere to stage
+# a file. `init --non-interactive --override-from-env` builds the whole workspace
+# from the environment.
+#
+# NO CLUSTER IS INVOLVED — not even this one, beyond running the pod. `registry
+# replicate` is a registry-to-registry copy from FAR to Artifactory, so this can
+# be the very first thing a pipeline does, long before a cluster exists.
+# ROKSBNKCTL_CLUSTER_CREATE=false says so explicitly.
+#
+# Deliberately SELF-CONTAINED: it reads one Secret it defines itself rather than
+# the bnk-env/bnk-secrets pair the CI demo uses, so it can be applied to any
+# cluster running Argo Workflows without the rest of that scaffolding.
+#
+#   kubectl -n bnk-ci create secret generic artifactory-mirror \
+#     --from-literal=host=artifactory.example.com \
+#     --from-literal=repo=bnk-mirror \
+#     --from-literal=username=bnk-mirror-bot \
+#     --from-file=password=/dev/stdin        # token on stdin, never in argv
+#
+#   argo submit -n bnk-ci --wait wf-artifactory-mirror.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: bnk-artifactory-mirror-
+  namespace: bnk-ci
+spec:
+  entrypoint: mirror
+  serviceAccountName: bnk-runner
+  arguments:
+    parameters:
+      - name: runner-image
+        value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.47.0
+      - name: bnk-version
+        value: 2.3.0-3.2598.3-0.0.170
+  # No onExit teardown: a failed replicate should leave the workspace on the PVC
+  # so the next run RESUMES. `registry replicate` is idempotent — an artifact
+  # already present at the right digest is skipped — so a re-run costs only the
+  # artifacts that did not land, not the whole mirror again.
+  volumes:
+    - name: work
+      persistentVolumeClaim: { claimName: bnk-work }
+  templates:
+    - name: mirror
+      steps:
+        # 1. Build the workspace from the environment alone.
+        - - name: init
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "init -w art --non-interactive --override-from-env" }]
+        # 2. Show what the environment produced. Not required, but it is the step
+        #    that makes the run auditable: the mirror settings init derived from
+        #    env alone, with the password redacted by roksbnkctl itself.
+        - - name: show-target
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w art registry target" }]
+        # 3. The bill of materials, built offline from the F5 manifest. Fails
+        #    early and clearly if the FAR credential cannot be resolved — before
+        #    any copying starts, which is the cheap place to find out.
+        - - name: registry-bom
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w art registry bom" }]
+        # 4. The copy: pulled by digest from FAR, pushed to Artifactory.
+        - - name: registry-replicate
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w art registry replicate --target generic" }]
+        # 5. Proof rather than assertion. verify re-reads the BOM and confirms
+        #    every artifact is present AND digest-matched. THIS is what a
+        #    pipeline should gate on — replicate succeeding only means the pushes
+        #    returned, not that the mirror is complete.
+        - - name: registry-verify
+            template: rbk
+            arguments:
+              parameters: [{ name: cmd, value: "-w art registry verify" }]
+
+    - name: rbk
+      inputs:
+        parameters:
+          - name: cmd
+      container:
+        image: "{{workflow.parameters.runner-image}}"
+        command: [sh, -ec]
+        args: ["roksbnkctl {{inputs.parameters.cmd}}"]
+        workingDir: /work
+        env:
+          - { name: ROKSBNKCTL_CLUSTER_CREATE,  value: "false" }
+          - { name: ROKSBNKCTL_CLUSTER_NAME,    value: "none" }
+          - { name: ROKSBNKCTL_REGISTRY_TARGET, value: "generic" }
+          - { name: ROKSBNKCTL_MANIFEST_VERSION, value: "{{workflow.parameters.bnk-version}}" }
+          # The four fields that select Artifactory, from the Secret. These are
+          # the exact env equivalents of the `registry target` verbs the operator
+          # ran by hand — same fields, different delivery.
+          - name: ROKSBNKCTL_GENERIC_HOST
+            valueFrom: { secretKeyRef: { name: artifactory-mirror, key: host } }
+          - name: ROKSBNKCTL_GENERIC_REPO_PREFIX
+            valueFrom: { secretKeyRef: { name: artifactory-mirror, key: repo } }
+          - name: ROKSBNKCTL_GENERIC_USERNAME
+            valueFrom: { secretKeyRef: { name: artifactory-mirror, key: username } }
+          # ROKSBNKCTL_GENERIC_PASSWORD takes the RAW token; roksbnkctl base64s it
+          # into generic_password_b64 itself. Do not pre-encode it here.
+          - name: ROKSBNKCTL_GENERIC_PASSWORD
+            valueFrom: { secretKeyRef: { name: artifactory-mirror, key: password } }
+          - name: IBMCLOUD_API_KEY
+            valueFrom: { secretKeyRef: { name: artifactory-mirror, key: ibmcloud-api-key, optional: true } }
+          # The workspace lives on the PVC so a later run — or `registry delete` —
+          # sees the same mirror record.
+          - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
+          - { name: HOME,            value: "/home/runner" }
+        volumeMounts:
+          - { name: work, mountPath: /work }

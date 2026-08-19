@@ -1,6 +1,6 @@
 # roksbnkctl demonstrations
 
-Six self-contained, reproducible demos of `roksbnkctl`. Every one of them **runs on
+Seven self-contained, reproducible demos of `roksbnkctl`. Every one of them **runs on
 this host** (Linux / WSL), drives real IBM Cloud infrastructure, and records itself
 to an MP4 with the same tooling — so they differ only in *what* they demonstrate,
 never in how they look.
@@ -12,6 +12,7 @@ never in how they look.
 | [`far-replication-demo`](far-replication-demo/) | **Mirroring the F5 Artifact Repository** into a private OCI registry — the FAR credential read from COS, `registry bom` → `target` → `diff` → `replicate` → `verify` → `list`. **No cluster is built**, so it is the fast one. |
 | [`shared-licensing-cli-demo`](shared-licensing-cli-demo/) | **A shared licensing cluster** — one cluster runs the F5 License Proxy and holds the only egress to F5; a second, air-gapped cluster installs BNK entirely from a private registry and licenses *through that proxy*. Both clusters are **adopted, not created**, so `teardown` removes only the FLP and BNK. |
 | [`shared-licensing-ci-demo`](shared-licensing-ci-demo/) | The same shared-licensing story as **two CI jobs** — every step a `docker run`, the whole workspace from **environment variables**, and the cross-job handoff (the proxy's URL + its CA) as two of them. |
+| [`artifactory-mirror-demo`](artifactory-mirror-demo/) | **Mirroring FAR into a self-hosted JFrog Artifactory** on a single IBM Cloud VSI — the same supply-chain story as `far-replication-demo`, told against Artifactory, and run **twice**: interactively through the CLI, then unattended as a container driven by an Argo workflow. **No cluster is built.** Ships a customer-facing `guide.html` covering the Artifactory UI prerequisites. |
 | [`disconnected-cluster-cli-demo`](disconnected-cluster-cli-demo/) | A **fully disconnected** BNK install onto an existing private cluster over a Transit Gateway (the Appendix A topology) — a Harbor mirror VSI that is also the operator host, a standalone FLP VSI, then `bnk up` in one pass. |
 
 `disconnected-cluster-ci-demo/` is a placeholder for the same disconnected story
