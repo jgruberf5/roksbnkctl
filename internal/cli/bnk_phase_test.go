@@ -34,9 +34,17 @@ func stageWorkspaceShape(t *testing.T, shape config.WorkspaceShape) string {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	const ws = "bnk-test"
 
+	// Every shape is an INITIALISED workspace. `init` always writes config.yaml,
+	// so a workspace holding tfstate but no config does not occur in practice —
+	// and staging one conflated two states that mean opposite things to a `down`
+	// command: "initialised, nothing left to destroy" (success) versus "no such
+	// workspace" (an error, because a mistyped -w must not report a teardown
+	// that never happened). See TestPhaseDownsRejectAnUninitialisedWorkspace.
+	writeWorkspaceConfigForTest(t, ws)
+
 	switch shape {
 	case config.ShapeEmpty:
-		// No files.
+		// Initialised, but no state.
 	case config.ShapeClusterOnly:
 		writeStateForTest(t, ws, "", "tfstate_cluster_only.json")
 	case config.ShapeSplit:
@@ -45,6 +53,26 @@ func stageWorkspaceShape(t *testing.T, shape config.WorkspaceShape) string {
 		t.Fatalf("unsupported test shape %v", shape)
 	}
 	return ws
+}
+
+// writeWorkspaceConfigForTest writes the minimal config.yaml that makes a
+// workspace INITIALISED. The values are inert — no command under test reaches
+// IBM Cloud — but the file's presence is what distinguishes "empty" from
+// "absent".
+func writeWorkspaceConfigForTest(t *testing.T, workspace string) {
+	t.Helper()
+	dir, err := config.WorkspaceDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const cfg = "ibmcloud:\n  region: us-south\n  resource_group: default\n" +
+		"  api_key_b64: dGVzdA==\nprefix: bnk-test\ncluster:\n  create: false\n  name: none\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // writeStateForTest copies the named fixtures from

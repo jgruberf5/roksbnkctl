@@ -568,6 +568,11 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// Same distinction as `cluster down`: an uninitialised workspace is an
+	// error, an existing-but-empty one is success (#89).
+	if cctx.Workspace == nil {
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
+	}
 	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)

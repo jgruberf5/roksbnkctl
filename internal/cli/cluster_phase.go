@@ -502,6 +502,15 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// An UNINITIALISED workspace is an error, not "nothing to do". Both look
+	// identical to DetectPresence — it reports all-false either way — but they
+	// mean opposite things to an operator. `-w prdo down` (a typo for prod)
+	// reporting success while destroying nothing is how someone concludes prod
+	// was torn down when it is still running. Only an EXISTING, empty workspace
+	// is the no-op success case (#89).
+	if cctx0.Workspace == nil {
+		return config.WorkspaceNotReady(cctx0.WorkspaceName)
+	}
 	pres, err := config.DetectPresence(cctx0.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)

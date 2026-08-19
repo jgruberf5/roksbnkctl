@@ -71,3 +71,39 @@ func buildTestBinary(t *testing.T) string {
 	}
 	return bin
 }
+
+// The other half of the distinction, and the reason it matters.
+//
+// DetectPresence reports all-false for an UNINITIALISED workspace exactly as it
+// does for an empty one — they are indistinguishable to it, and mean opposite
+// things. Making "empty" a success without this guard turned `-w prdo down` (a
+// typo for prod) into a silent success that destroyed nothing, which is how
+// someone concludes a teardown happened that did not. Caught reviewing the #89
+// fix; the same hole already existed in `bnk down` and `tgw disconnect`.
+func TestPhaseDownsRejectAnUninitialisedWorkspace(t *testing.T) {
+	bin := buildTestBinary(t)
+	home := t.TempDir() // no workspace created inside it
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bnk down", []string{"-w", "no-such-ws", "bnk", "down", "--auto"}},
+		{"tgw disconnect", []string{"-w", "no-such-ws", "tgw", "disconnect", "--auto"}},
+		{"cluster down", []string{"-w", "no-such-ws", "cluster", "down", "--auto"}},
+		{"down", []string{"-w", "no-such-ws", "down", "--auto"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bin, tc.args...)
+			cmd.Env = append(os.Environ(), "ROKSBNKCTL_HOME="+filepath.Join(home, ".roksbnkctl"), "HOME="+home)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("%s must REFUSE a workspace that does not exist — reporting success "+
+					"for a mistyped -w is indistinguishable from a teardown that worked.\noutput:\n%s", tc.name, out)
+			}
+			if !strings.Contains(string(out), "not initialised") {
+				t.Errorf("%s should name the cause; got:\n%s", tc.name, out)
+			}
+		})
+	}
+}

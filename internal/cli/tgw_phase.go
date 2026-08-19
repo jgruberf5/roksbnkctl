@@ -120,6 +120,12 @@ func runTGWDisconnect(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// An UNINITIALISED workspace is an error, not "nothing to do" — see the same
+	// guard on `cluster down`. A typo'd -w reporting success while destroying
+	// nothing is how an operator concludes a teardown happened that did not.
+	if cctx.Workspace == nil {
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
+	}
 	pres, err := config.DetectPresence(cctx.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
