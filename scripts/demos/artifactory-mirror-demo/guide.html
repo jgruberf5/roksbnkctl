@@ -216,7 +216,10 @@ export ART_RESOURCE_GROUP=default
       <span class="lbl">If it never finishes</span>
       <p>By far the most common cause is DNS: Caddy cannot obtain a certificate until the name
       resolves to the server, and inbound port 80 must be open for the ACME challenge. Confirm with
-      <code>dig +short $ART_DOMAIN</code> — it must return the floating IP the script printed.</p>
+      <code>getent hosts $ART_DOMAIN</code> — it must return the floating IP the
+      script printed. (<code>dig</code> is not installed everywhere; when it is
+      missing it fails with <em>command not found</em>, which looks just like a
+      name that does not resolve.)</p>
     </div>
   </div>
 </div>

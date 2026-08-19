@@ -179,19 +179,61 @@ IMAGE_ID=$(icjson is images --visibility public \
            |sort_by(.created_at)|last|.id')
 [[ -n "$IMAGE_ID" && "$IMAGE_ID" != "null" ]] || die "no Ubuntu 24.04 stock image found in $REGION"
 
+# Artifactory needs three secrets before it will start, and none of them are
+# self-generated in a plain docker-compose deployment. Created here so they are
+# baked into cloud-init and the FIRST boot succeeds.
+ART_DB_PASSWORD="${ART_DB_PASSWORD:-$(openssl rand -hex 16)}"
+ART_MASTER_KEY="${ART_MASTER_KEY:-$(openssl rand -hex 32)}"
+ART_JOIN_KEY="${ART_JOIN_KEY:-$(openssl rand -hex 32)}"
+
 CLOUD_INIT=$(mktemp)
 cat >"$CLOUD_INIT" <<CIEOF
 #cloud-config
 package_update: true
 write_files:
   - path: /opt/artifactory/docker-compose.yml
+    permissions: '0600'
     content: |
+      # POSTGRESQL IS MANDATORY. Artifactory's Access service refuses to start
+      # against the embedded Derby database -- "DB Type derby is not allowed:
+      # Cannot start the application with a database other than PostgreSQL" --
+      # so a single-container deployment can never work, however long you wait.
+      # The failure surfaces late and indirectly: Artifactory's own API answers
+      # on 8081 while Access never binds 8046, and every other service sits in a
+      # "Cluster join: Retry N" loop that reads like slow startup.
       services:
+        postgres:
+          image: postgres:16-alpine
+          container_name: artifactory-db
+          restart: unless-stopped
+          environment:
+            POSTGRES_DB: artifactory
+            POSTGRES_USER: artifactory
+            POSTGRES_PASSWORD: $ART_DB_PASSWORD
+          volumes:
+            - /opt/artifactory/pgdata:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U artifactory -d artifactory"]
+            interval: 10s
+            timeout: 5s
+            retries: 20
+
         artifactory:
           image: $ARTIFACTORY_IMAGE
           container_name: artifactory
           restart: unless-stopped
+          # Gated on the healthcheck, not just on the container existing:
+          # Artifactory fails its schema creation if postgres is still starting.
+          depends_on:
+            postgres:
+              condition: service_healthy
           ports: ["127.0.0.1:8081:8081", "127.0.0.1:8082:8082"]
+          environment:
+            JF_SHARED_DATABASE_TYPE: postgresql
+            JF_SHARED_DATABASE_DRIVER: org.postgresql.Driver
+            JF_SHARED_DATABASE_URL: jdbc:postgresql://postgres:5432/artifactory
+            JF_SHARED_DATABASE_USERNAME: artifactory
+            JF_SHARED_DATABASE_PASSWORD: $ART_DB_PASSWORD
           volumes:
             - /opt/artifactory/var:/var/opt/jfrog/artifactory
           ulimits:
@@ -212,7 +254,15 @@ runcmd:
   - systemctl enable --now docker
   # Artifactory runs as uid 1030 inside the image and will not start if it
   # cannot write its own data directory.
-  - mkdir -p /opt/artifactory/var/etc && chown -R 1030:1030 /opt/artifactory/var
+  # The keys must exist BEFORE the first start. Booting without them does not
+  # merely delay startup: the router fatals, the half-built database is left
+  # inconsistent, and a later boot WITH the keys then fails on
+  # accessJdbcHelperImpl -- recoverable only by discarding the data directory.
+  - install -d -o 1030 -g 1030 -m 755 /opt/artifactory/var/etc/security
+  - printf '%s\n' '$ART_MASTER_KEY' > /opt/artifactory/var/etc/security/master.key
+  - printf '%s\n' '$ART_JOIN_KEY'   > /opt/artifactory/var/etc/security/join.key
+  - chmod 600 /opt/artifactory/var/etc/security/master.key /opt/artifactory/var/etc/security/join.key
+  - chown -R 1030:1030 /opt/artifactory/var
   - docker compose -f /opt/artifactory/docker-compose.yml up -d
   - docker run -d --name artifactory-caddy --restart unless-stopped --network host
       -v /opt/artifactory/Caddyfile:/etc/caddy/Caddyfile:ro
@@ -314,7 +364,12 @@ for i in $(seq 1 120); do
   # A DNS name that does not resolve to $FIP is by far the most common reason
   # this loop never finishes, and it is invisible from the error alone.
   if [[ $i -eq 30 ]]; then
-    say "still waiting — confirm: dig +short $ART_DOMAIN  ==  $FIP"
+    # getent, not dig: dig ships in dnsutils/bind-utils and is absent on plenty
+    # of hosts (including a default WSL install), where it fails with "command
+    # not found" -- which reads exactly like "the name does not resolve" and
+    # sends the operator to fix DNS that was never broken.
+    say "still waiting — confirm the name resolves to $FIP:"
+    say "    getent hosts $ART_DOMAIN     # or: dig +short $ART_DOMAIN"
   fi
   sleep 10
 done
