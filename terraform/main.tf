@@ -351,6 +351,7 @@ module "flp_vsi" {
   ibmcloud_cluster_region = var.ibmcloud_cluster_region
   ibmcloud_resource_group = var.ibmcloud_resource_group
   existing_cluster_vpc_id = var.existing_cluster_vpc_id
+  flp_vsi_name_prefix     = var.flp_vsi_name_prefix
   flp_vsi_create_vpc      = var.flp_vsi_create_vpc
   flp_vsi_vpc_name        = var.flp_vsi_vpc_name
   flp_vsi_subnet_cidr     = var.flp_vsi_subnet_cidr

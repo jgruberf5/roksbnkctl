@@ -127,6 +127,7 @@ Source: `terraform/variables.tf`
 | `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
 | `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
 | `flp_vsi_create_vpc` | `bool` | `false` | Build the F5 License Proxy its own VPC instead of placing it in an existing one. | no |
+| `flp_vsi_name_prefix` | `string` | `""` | Prefix for the standalone FLP VSI's resource names (e.g. bnk-ci → bnk-ci-flp-vsi). Empty (the default) keeps the legacy unprefixed names so an existing proxy is NOT replaced on upgrade. Set it to run more than one FLP in an account, and to bring the resources into `roksbnkctl cleanup`'s `<prefix>`-* sweep. | no |
 | `flp_vsi_vpc_name` | `string` | `""` | Name for the VPC created when flp_vsi_create_vpc = true. | no |
 | `flp_vsi_subnet_cidr` | `string` | `"10.250.0.0/24"` | Address prefix for the VPC created when flp_vsi_create_vpc = true. | no |
 | `cluster_network_mode` | `string` | `"single-nic"` | How the cluster's worker nodes are attached: single-nic (default) or multi-nic. | no |
@@ -288,6 +289,7 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway). | no |
 | `flp_vsi_allowed_cidrs` | `list(string)` | `[]` | DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply. | no |
 | `existing_cluster_vpc_id` | `string` | `""` | The cluster VPC id (from cluster-outputs.json) the FLP VSI joins so the CWC reaches it directly. | no |
+| `flp_vsi_name_prefix` | `string` | `""` | Prefix for the FLP VSI's resource names, e.g. \"bnk-ci\" yields bnk-ci-flp-vsi. Empty (the default) keeps the legacy unprefixed names, so an existing proxy is not replaced on upgrade. Set it to run more than one standalone FLP in an account, and to make the resources visible to `roksbnkctl cleanup`. | no |
 | `far_repo_url` | `string` | `"repo.f5.com"` | FAR repository host for the FLP chart pulls. Same value as the root far_repo_url. | no |
 | `flp_image_registry` | `string` | `""` | FAR image host prefix. Empty (the default) derives `<far_repo_url>`/images, so the image host follows the chart host instead of pinning repo.f5.com independently. | no |
 | `f5_bigip_k8s_manifest_version` | `string` | _required_ | BNK manifest version — the f5-license-proxy chart/image tag is resolved from it (like the helm path) when flp_chart_version is empty. | no |

@@ -25,6 +25,14 @@ locals {
   # Deriving the image host rather than defaulting it separately is what keeps the
   # two from drifting: a workspace pointing at an alternate FAR gets its charts and
   # its images from the same registry, which is the only combination that works.
+  # Every FLP resource name derives from here. Empty prefix reproduces the legacy
+  # literals byte for byte, so an existing deployment plans clean (#88); a set
+  # prefix makes the names workspace-scoped, which is what lets two proxies
+  # coexist in one account AND what makes them visible to `cleanup`'s
+  # `<prefix>-*` sweep. Deriving them in ONE place is the point: the old code
+  # spelled the literal in eight resources, and a ninth would have forgotten.
+  flp_name = var.flp_vsi_name_prefix != "" ? "${var.flp_vsi_name_prefix}-flp-vsi" : "flp-vsi"
+
   far_host           = var.far_repo_url != "" ? var.far_repo_url : "repo.f5.com"
   flp_image_registry = var.flp_image_registry != "" ? var.flp_image_registry : "${local.far_host}/images"
 }
@@ -67,14 +75,14 @@ locals {
 # (there is no other tenant to inherit one from). The adopt path is unchanged.
 resource "ibm_is_vpc" "flp" {
   count                     = local.enabled && var.flp_vsi_create_vpc ? 1 : 0
-  name                      = var.flp_vsi_vpc_name != "" ? var.flp_vsi_vpc_name : "flp-vsi-vpc"
+  name                      = var.flp_vsi_vpc_name != "" ? var.flp_vsi_vpc_name : "${local.flp_name}-vpc"
   resource_group            = data.ibm_resource_group.rg[0].id
   address_prefix_management = "manual"
 }
 
 resource "ibm_is_vpc_address_prefix" "flp" {
   count = local.enabled && var.flp_vsi_create_vpc ? 1 : 0
-  name  = "flp-vsi-prefix"
+  name  = "${local.flp_name}-prefix"
   vpc   = ibm_is_vpc.flp[0].id
   zone  = local.zone
   cidr  = var.flp_vsi_subnet_cidr
@@ -114,7 +122,7 @@ locals {
 }
 resource "ibm_is_public_gateway" "egress" {
   count          = local.create_pgw ? 1 : 0
-  name           = "flp-vsi-egress"
+  name           = "${local.flp_name}-egress"
   vpc            = local.flp_vpc_id
   zone           = local.zone
   resource_group = data.ibm_resource_group.rg[0].id
@@ -122,7 +130,7 @@ resource "ibm_is_public_gateway" "egress" {
 resource "ibm_is_subnet" "flp" {
   count                    = local.enabled ? 1 : 0
   depends_on               = [ibm_is_vpc_address_prefix.flp]
-  name                     = "flp-vsi-subnet"
+  name                     = "${local.flp_name}-subnet"
   vpc                      = local.flp_vpc_id
   zone                     = local.zone
   total_ipv4_address_count = 16
@@ -131,7 +139,7 @@ resource "ibm_is_subnet" "flp" {
 }
 resource "ibm_is_security_group" "flp" {
   count          = local.enabled ? 1 : 0
-  name           = "flp-vsi-sg"
+  name           = "${local.flp_name}-sg"
   vpc            = local.flp_vpc_id
   resource_group = data.ibm_resource_group.rg[0].id
 }
@@ -204,7 +212,7 @@ resource "ibm_is_security_group_rule" "egress" {
 # allowed_cidrs to the operator's public IP to reach it from outside the VPC.
 resource "ibm_is_floating_ip" "flp" {
   count          = local.enabled && var.flp_vsi_floating_ip ? 1 : 0
-  name           = "flp-vsi-fip"
+  name           = "${local.flp_name}-fip"
   zone           = local.zone
   resource_group = data.ibm_resource_group.rg[0].id
 }
@@ -404,7 +412,7 @@ data "ibm_is_ssh_key" "flp" {
 
 resource "ibm_is_instance" "flp" {
   count          = local.enabled ? 1 : 0
-  name           = "flp-vsi"
+  name           = local.flp_name
   vpc            = local.flp_vpc_id
   zone           = local.zone
   profile        = var.flp_vsi_profile
@@ -417,7 +425,7 @@ resource "ibm_is_instance" "flp" {
     security_groups = [ibm_is_security_group.flp[0].id]
   }
   boot_volume {
-    name = "flp-vsi-boot"
+    name = "${local.flp_name}-boot"
     size = var.flp_vsi_boot_size_gb
   }
   user_data = local.cloud_init

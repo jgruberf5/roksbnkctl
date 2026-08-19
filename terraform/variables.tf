@@ -912,6 +912,12 @@ variable "flp_vsi_create_vpc" {
   default     = false
 }
 
+variable "flp_vsi_name_prefix" {
+  description = "Prefix for the standalone FLP VSI's resource names (e.g. bnk-ci → bnk-ci-flp-vsi). Empty (the default) keeps the legacy unprefixed names so an existing proxy is NOT replaced on upgrade. Set it to run more than one FLP in an account, and to bring the resources into `roksbnkctl cleanup`'s <prefix>-* sweep."
+  type        = string
+  default     = ""
+}
+
 variable "flp_vsi_vpc_name" {
   description = "Name for the VPC created when flp_vsi_create_vpc = true."
   type        = string

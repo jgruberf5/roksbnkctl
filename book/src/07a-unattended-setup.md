@@ -141,6 +141,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_FLP_EXTERNAL_URL` | `bnk.flp.external.url` | verbatim — license against a proxy in **another** cluster |
 | `ROKSBNKCTL_FLP_ROOT_CA_B64` | `bnk.flp.external.root_ca_b64` | **verbatim; already base64** — re-encoding it hands the CWC a corrupt CA |
 | `ROKSBNKCTL_FLP_MODE` | `bnk.flp.mode` | `helm` (default) \| `vsi` — how the FLP phase deploys the proxy |
+| `ROKSBNKCTL_FLP_VSI_NAME_PREFIX` | `bnk.flp.vsi.name_prefix` | Prefixes the FLP VSI's resource names. **Blank keeps the legacy unprefixed names** — setting it *replaces* a running proxy. Needed to run more than one FLP in an account, and to make the proxy's resources visible to `cleanup`'s `<prefix>-*` sweep. |
 | `ROKSBNKCTL_FLP_VSI_VPC` | `bnk.flp.vsi.vpc` | an **existing VPC id**. With `_MODE=vsi` this arms the **standalone, cluster-less** appliance — as does `_CREATE_VPC=true`, which builds one instead. Mutually exclusive. |
 | `ROKSBNKCTL_FLP_VSI_ZONE` | `bnk.flp.vsi.zone` | e.g. `us-south-1`; blank → the region's first zone |
 | `ROKSBNKCTL_FLP_VSI_PROFILE` | `bnk.flp.vsi.profile` | VSI instance profile; blank → `bx2-4x16` (the FLP's 4 vCPU / 8 GB floor) |
