@@ -502,6 +502,15 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// An UNINITIALISED workspace is an error, not "nothing to do". Both look
+	// identical to DetectPresence — it reports all-false either way — but they
+	// mean opposite things to an operator. `-w prdo down` (a typo for prod)
+	// reporting success while destroying nothing is how someone concludes prod
+	// was torn down when it is still running. Only an EXISTING, empty workspace
+	// is the no-op success case (#89).
+	if cctx0.Workspace == nil {
+		return config.WorkspaceNotReady(cctx0.WorkspaceName)
+	}
 	pres, err := config.DetectPresence(cctx0.WorkspaceName)
 	if err != nil {
 		return fmt.Errorf("detecting workspace presence: %w", err)
@@ -534,8 +543,23 @@ func runClusterDown(cmd *cobra.Command, _ []string) error {
 	}
 	// Resumable: proceed if the cluster resource is present OR the phase has
 	// residual managed resources (network left by a partially-failed destroy).
+	//
+	// Neither present is a NO-OP SUCCESS, not an error — the same rule `bnk down`
+	// and `tgw disconnect` already follow. An orchestrated teardown runs the
+	// phases unconditionally (the demos' `teardown`, `roksbnkctl down`, a BNK
+	// Forge reverse-order module chain), so a non-zero exit for having nothing
+	// left to do fails a teardown that in fact succeeded. Re-running one to
+	// confirm it finished is ordinary, and used to report failure (#89).
+	//
+	// This is NOT the #79 skip. That one stepped over a cluster that was gone
+	// while its resources lived on, and orphaned three account-level IAM
+	// objects. The guard here is the difference: no cluster resource AND no
+	// residual managed resources means there is, by construction, nothing left
+	// to orphan. Keep that condition strict — it is what makes returning success
+	// safe.
 	if !pres.Cluster && !pres.ClusterResidual {
-		return errors.New("nothing to destroy in this workspace")
+		fmt.Fprintln(os.Stderr, "✓ No cluster state to destroy in this workspace — nothing to do.")
+		return nil
 	}
 
 	// Shared-VPC guard: if this workspace OWNS the cluster VPC and other clusters'

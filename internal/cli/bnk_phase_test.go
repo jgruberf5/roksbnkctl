@@ -34,9 +34,17 @@ func stageWorkspaceShape(t *testing.T, shape config.WorkspaceShape) string {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	const ws = "bnk-test"
 
+	// Every shape is an INITIALISED workspace. `init` always writes config.yaml,
+	// so a workspace holding tfstate but no config does not occur in practice —
+	// and staging one conflated two states that mean opposite things to a `down`
+	// command: "initialised, nothing left to destroy" (success) versus "no such
+	// workspace" (an error, because a mistyped -w must not report a teardown
+	// that never happened). See TestPhaseDownsRejectAnUninitialisedWorkspace.
+	writeWorkspaceConfigForTest(t, ws)
+
 	switch shape {
 	case config.ShapeEmpty:
-		// No files.
+		// Initialised, but no state.
 	case config.ShapeClusterOnly:
 		writeStateForTest(t, ws, "", "tfstate_cluster_only.json")
 	case config.ShapeSplit:
@@ -45,6 +53,26 @@ func stageWorkspaceShape(t *testing.T, shape config.WorkspaceShape) string {
 		t.Fatalf("unsupported test shape %v", shape)
 	}
 	return ws
+}
+
+// writeWorkspaceConfigForTest writes the minimal config.yaml that makes a
+// workspace INITIALISED. The values are inert — no command under test reaches
+// IBM Cloud — but the file's presence is what distinguishes "empty" from
+// "absent".
+func writeWorkspaceConfigForTest(t *testing.T, workspace string) {
+	t.Helper()
+	dir, err := config.WorkspaceDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const cfg = "ibmcloud:\n  region: us-south\n  resource_group: default\n" +
+		"  api_key_b64: dGVzdA==\nprefix: bnk-test\ncluster:\n  create: false\n  name: none\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // writeStateForTest copies the named fixtures from
@@ -176,34 +204,31 @@ func TestClusterDown_SplitRefuses(t *testing.T) {
 	}
 }
 
-// TestClusterDown_EmptyRefuses — nothing to destroy.
-func TestClusterDown_EmptyRefuses(t *testing.T) {
+// TestClusterDown_EmptySucceeds — nothing to destroy is a NO-OP SUCCESS.
+//
+// This test previously asserted a refusal, per PRD 06's original dispatch
+// table. That table was written when `down` was something a human typed; an
+// orchestrated teardown runs every phase unconditionally, so refusing "nothing
+// left to do" fails a teardown that worked (#89). `bnk down` was moved to no-op
+// success first for that reason and `tgw disconnect` followed — this completes
+// the set. PRD 06 §"Empty is success, not an error" records the supersession.
+func TestClusterDown_EmptySucceeds(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeEmpty)
 	pointWorkspaceFlag(t, ws)
 
-	err := runClusterDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected refusal, got nil")
-	}
-	want := "nothing to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("refusal message missing %q\n  got: %v", want, err)
+	if err := runClusterDown(newCmd(), nil); err != nil {
+		t.Fatalf("an empty workspace has nothing to destroy — that is success: %v", err)
 	}
 }
 
-// TestRunDown_EmptyRefuses — composite `down` on empty errors with
-// "nothing to destroy", per PRD 06 dispatch table. Pinned here because
-// the composite is a new code path in Sprint 8.
-func TestRunDown_EmptyRefuses(t *testing.T) {
+// TestRunDown_EmptySucceeds — the composite agrees with the phase commands.
+// Same supersession as TestClusterDown_EmptySucceeds (#89); the composite is
+// the one an automated teardown reaches for most often.
+func TestRunDown_EmptySucceeds(t *testing.T) {
 	ws := stageWorkspaceShape(t, config.ShapeEmpty)
 	pointWorkspaceFlag(t, ws)
 
-	err := runDown(newCmd(), nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	want := "nothing to destroy"
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("error message missing %q\n  got: %v", want, err)
+	if err := runDown(newCmd(), nil); err != nil {
+		t.Fatalf("an empty workspace has nothing to destroy — that is success: %v", err)
 	}
 }

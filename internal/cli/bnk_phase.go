@@ -115,7 +115,7 @@ func runBnkUp(cmd *cobra.Command, _ []string) error {
 // leaving the cluster phase in place. Dispatch per PRD 06 §"Dispatch
 // table":
 //
-//   - Empty/ClusterOnly → refuse (no trial state to destroy).
+//   - Empty/ClusterOnly → no-op success (no trial state to destroy; #89).
 //   - Split             → trial down.
 func runBnkDown(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("bnk down"); err != nil {
@@ -125,6 +125,12 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
+	}
+	// An UNINITIALISED workspace is an error, not "nothing to do" — see the same
+	// guard on `cluster down`. A typo'd -w reporting success while destroying
+	// nothing is how an operator concludes a teardown happened that did not.
+	if cctx.Workspace == nil {
+		return config.WorkspaceNotReady(cctx.WorkspaceName)
 	}
 	shape, err := config.DetectShape(cctx.WorkspaceName)
 	if err != nil {
