@@ -233,6 +233,23 @@ data "http" "jwt_download" {
 #
 # The retry in applyWithRetry stays as the backstop; this just stops it being
 # the normal path.
+#
+# WHY THIS CANNOT MAKE THINGS WORSE, which is the first thing to check about a
+# gate that has not been run against a live cluster:
+#
+#   - If the dry-run DOES exercise quota admission (it should — dry-run runs the
+#     full admission chain), the probe blocks until the quota controller has
+#     observed the CRD, and the apply then lands first time.
+#   - If it does NOT, the probe returns 2xx immediately, the gate is a no-op, and
+#     applyWithRetry handles the 403 exactly as it does today.
+#
+# Either way the apply is not worse off, which is what makes the non-fatal
+# timeout above the right choice rather than a hedge.
+#
+# It also cannot CONSUME the quota it waits on — the failure that would have the
+# gate cause the refusal it prevents. Two independent reasons: dry-run persists
+# nothing, and the probe addresses the SAME object name as the real License
+# ("bnk-license"), so a quota counting objects sees one object either way.
 resource "null_resource" "license_quota_ready" {
   count = local.use_kubectl ? 1 : 0
 
