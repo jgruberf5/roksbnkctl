@@ -366,6 +366,22 @@ func (c *Client) deleteTransitGateway(ctx context.Context, id, name string, swep
 		return foreignTGWConnectionError(name, id, foreign)
 	}
 
+	// Anything still ARRIVING here outlasted the settle wait. Say so and stop,
+	// rather than falling through: nothing was detachable, so the cleared-wait
+	// below would burn a second full timeout on connections we never deleted and
+	// then report "waiting for connections to detach" — which is not what
+	// happened. Halves the worst case and names the actual obstacle.
+	var stillArriving []TGWConnection
+	for _, conn := range settling {
+		if tgwConnectionArriving(conn.Status) {
+			stillArriving = append(stillArriving, conn)
+		}
+	}
+	if len(stillArriving) > 0 && len(detach) == 0 {
+		return fmt.Errorf("transit gateway %s still has a connection attaching after %s: %s — IBM refuses a DELETE from `pending`, so this has to finish before the gateway can go. Re-run once it reports `attached`",
+			displayTGW(name, id), tgwConnectionSettleTimeout, describeTGWConnections(stillArriving))
+	}
+
 	for _, conn := range detach {
 		delURL := fmt.Sprintf("%s/v1/transit_gateways/%s/connections/%s?version=%s", transitGatewayHost, id, conn.ID, vpcAPIVersion)
 		if err := c.authedDELETE(ctx, delURL); err != nil {

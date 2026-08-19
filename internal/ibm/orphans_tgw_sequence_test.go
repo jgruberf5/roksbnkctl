@@ -396,3 +396,74 @@ func TestDeleteTransitGateway_ForeignPendingIsRefusedWithoutWaiting(t *testing.T
 		t.Errorf("refused after %d listings — ownership is knowable from the first, so the refusal must not wait", gets)
 	}
 }
+
+// A connection that never leaves `pending` must fail with a message naming the
+// actual obstacle, not fall through to the cleared-wait. Falling through would
+// burn a SECOND full timeout on connections that were never deleted and then
+// report "waiting for connections to detach" — which is not what happened.
+func TestDeleteTransitGateway_StuckPendingFailsWithTheRealReason(t *testing.T) {
+	prevPoll, prevTimeout := tgwConnectionPollInterval, tgwConnectionSettleTimeout
+	tgwConnectionPollInterval, tgwConnectionSettleTimeout = time.Millisecond, 15*time.Millisecond
+	defer func() { tgwConnectionPollInterval, tgwConnectionSettleTimeout = prevPoll, prevTimeout }()
+
+	deletes := 0
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/connections") {
+			// Never settles.
+			return jsonResp(200, `{"connections":[{"id":"c1","name":"stuck","network_type":"vpc","network_id":"`+sweptVPCCRN+`","status":"pending"}]}`), nil
+		}
+		deletes++
+		return jsonResp(204, ""), nil
+	})
+
+	err := c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweepWithVPC(sweptVPCCRN)))
+	if err == nil {
+		t.Fatal("a connection stuck attaching must fail, not silently proceed")
+	}
+	for _, want := range []string{"still has a connection attaching", "pending", "stuck"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should name the real obstacle (%q); got: %v", want, err)
+		}
+	}
+	if deletes != 0 {
+		t.Errorf("nothing was deletable, so no DELETE should have been issued (got %d)", deletes)
+	}
+}
+
+// The stuck-pending guard must NOT fire when there is work to do. A gateway with
+// one connection attaching and another ready to detach should still detach the
+// second — the settle wait covers the first, and refusing outright would strand
+// a gateway that is making progress.
+func TestDeleteTransitGateway_PendingAlongsideDetachableStillProceeds(t *testing.T) {
+	prevPoll, prevTimeout := tgwConnectionPollInterval, tgwConnectionSettleTimeout
+	tgwConnectionPollInterval, tgwConnectionSettleTimeout = time.Millisecond, 15*time.Millisecond
+	defer func() { tgwConnectionPollInterval, tgwConnectionSettleTimeout = prevPoll, prevTimeout }()
+
+	second := "crn:v1:bluemix:public:is:us-east:a/acct::vpc:r014-second"
+	sweep := append(sweepWithVPC(sweptVPCCRN),
+		OrphanResource{Kind: "vpc", ID: "r014-second", Name: "f5orph-vpc-2", Region: "us-east", CRN: second})
+
+	deletes := 0
+	c := newTestClient(func(r *http.Request) (*http.Response, error) {
+		if isIAM(r) {
+			return jsonResp(200, iamToken), nil
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/connections") {
+			return jsonResp(200, `{"connections":[
+				{"id":"c1","name":"stuck","network_type":"vpc","network_id":"`+sweptVPCCRN+`","status":"pending"},
+				{"id":"c2","name":"ready","network_type":"vpc","network_id":"`+second+`","status":"attached"}]}`), nil
+		}
+		deletes++
+		return jsonResp(204, ""), nil
+	})
+
+	// It will not fully succeed (the stuck one never clears), but it must have
+	// tried the detachable connection rather than refusing up front.
+	_ = c.deleteTransitGateway(context.Background(), "gw-1", "f5orph-tgw", sweptVPCCRNs(sweep))
+	if deletes == 0 {
+		t.Error("the detachable connection should still have been detached; the guard is too broad")
+	}
+}
