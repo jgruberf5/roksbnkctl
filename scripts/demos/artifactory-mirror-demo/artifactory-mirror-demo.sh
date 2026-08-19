@@ -45,6 +45,15 @@ ART_REPO="${ART_REPO:-bnk-mirror}"
 ART_USER="${ART_USER:-bnk-mirror-bot}"
 ART_TOKEN="${ART_TOKEN:-}"
 
+# Where the FAR pull credential lives. The BUCKET has no usable default: COS
+# bucket names are globally unique, so every account's is suffixed
+# (bnk-artifacts-<hex>), and the built-in "bnk-artifacts" belongs to somebody
+# else. Getting it wrong fails with AccessDenied rather than NotFound, which
+# reads like a credentials problem and sends you looking in the wrong place.
+COS_INSTANCE="${COS_INSTANCE:-bnk-supply-chain}"
+COS_BUCKET="${COS_BUCKET:-}"
+COS_REGION="${COS_REGION:-us-south}"
+
 RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.0}"
 ARGO_NS="${ARGO_NS:-bnk-ci}"
 
@@ -58,6 +67,7 @@ need jq; need curl; need "$RBK"
 
 [[ -n "$ART_DOMAIN" ]] || die "set ART_DOMAIN (the Artifactory host) — see .env.example"
 [[ -n "$ART_TOKEN"  ]] || die "set ART_TOKEN (an Artifactory access token) — see .env.example"
+[[ -n "$COS_BUCKET" ]] || die "set COS_BUCKET — the COS bucket holding the FAR credential (globally unique, e.g. bnk-artifacts-<hex>); \`ibmcloud cos buckets\` lists yours"
 
 teardown(){
   banner "TEARDOWN — empty the mirror, keep Artifactory"
@@ -92,14 +102,23 @@ repositories, which is exactly what a FAR mirror needs."
 phase 2 "A MIRROR-ONLY WORKSPACE"
 say "No cluster is involved anywhere in this demo, so the workspace says so."
 SEED="$(mktemp)"; trap 'rm -f "$SEED"' EXIT
+# prefix and tf_source.type are REQUIRED by init --non-interactive; without them
+# it refuses the file rather than defaulting. cluster.name: none goes with
+# create: false to say plainly that no cluster is ever involved. far_auth_file
+# NAMES the FAR credential in COS rather than embedding it, which is what keeps
+# this seed safe to show on screen.
 cat >"$SEED" <<YAML
-ibmcloud:
-  region: $REGION
-  resource_group: $RESOURCE_GROUP
-cluster:
-  create: false
+ibmcloud: { region: $REGION, resource_group: $RESOURCE_GROUP }
+prefix: $WS
+tf_source: { type: embedded }
+cluster: { create: false, name: none }
 bnk:
   manifest_version: $BNK_VERSION
+  far_auth_file: ${FAR_AUTH_FILE:-f5-far-auth-key.tgz}
+cos:
+  instance: ${COS_INSTANCE:-bnk-supply-chain}
+  bucket: $COS_BUCKET
+  region: ${COS_REGION:-us-south}
 YAML
 show_file "$SEED"
 run "$RBK" -w "$WS" init --config-file "$SEED" --non-interactive
