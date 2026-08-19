@@ -106,7 +106,18 @@ COPY --from=roksbnkctl-build /out/roksbnkctl /usr/local/bin/roksbnkctl
 # directory survives image rebuilds because it's part of the image
 # layer; per-Pod state still works because $HOME is read-write for
 # the running user inside the container.
-RUN install -d -m 0755 -o 1000 -g 0 /home/runner
+#
+# GROUP-WRITABLE, gid 0 — not 0755 (#104). USER 1000 above is a
+# FLOOR for admission, not a promise about the uid that actually
+# runs: runAsJob deliberately leaves RunAsUser unset (internal/exec/
+# k8s.go) so a cluster's own admission may assign one, and OpenShift's
+# SCC assigns an arbitrary high uid from the namespace range, in gid
+# 0. At 0755 only uid 1000 could write, so on OpenShift — which is
+# what ROKS is — `ibmcloud --version` died with `mkdir
+# /home/runner/.bluemix: permission denied`. 0775 + gid 0 is the
+# OpenShift image convention and is what tools/docker/runner already
+# does; this image had simply not been brought in line.
+RUN install -d -m 0775 -o 1000 -g 0 /home/runner
 ENV HOME=/home/runner
 USER 1000
 WORKDIR /home/runner
