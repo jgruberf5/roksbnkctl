@@ -107,9 +107,14 @@ destroy(){
   say "destroyed"
 }
 
+# BEFORE the --destroy dispatch, not after. destroy() resolves every resource id
+# through jq, so without it each lookup yields an empty string, every delete is
+# skipped, and the script reports "destroyed" with everything still running and
+# still billable. A teardown that lies is worse than one that refuses.
+command -v jq >/dev/null || die "jq is required"
+
 [[ "${1:-}" == "--destroy" ]] && { destroy; exit 0; }
 
-command -v jq >/dev/null || die "jq is required"
 login
 
 say "VPC $VPC_NAME"
