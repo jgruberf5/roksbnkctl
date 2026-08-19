@@ -39,16 +39,26 @@ func TestRenderFixtures_BackendAndRoutes(t *testing.T) {
 		kind, _ := obj["kind"].(string)
 		kinds[kind] = true
 	}
-	for _, want := range []string{"Deployment", "Service", "HTTPRoute", "Secret", "TCPRoute"} {
+	for _, want := range []string{"Deployment", "Service", "HTTPRoute", "Secret", "L4Route"} {
 		if !kinds[want] {
 			t.Errorf("rendered fixtures missing kind %q (got %v)", want, kinds)
 		}
 	}
-	if !strings.Contains(out, "kind: TCPRoute") || !strings.Contains(out, "gateway.networking.k8s.io/v1alpha2") {
-		t.Error("TCPRoute should use the v1alpha2 API")
+	// The L4 fixture must be BNK's OWN CRD. This assertion previously demanded
+	// `gateway.networking.k8s.io/v1alpha2 TCPRoute` — a kind BNK never installs,
+	// so the test pinned the exact bug it should have caught. BNK 2.3 requires
+	// Gateway API 1.4.1 STANDARD, which has no TCPRoute.
+	if !strings.Contains(out, "kind: L4Route") || !strings.Contains(out, "gateway.k8s.f5net.com/v1") {
+		t.Error("the L4 fixture must render an L4Route on gateway.k8s.f5net.com/v1")
+	}
+	if strings.Contains(out, "kind: TCPRoute") {
+		t.Error("TCPRoute is not in the Gateway API standard channel BNK installs; it can never be created")
+	}
+	if !strings.Contains(out, "protocol: TCP") {
+		t.Error("L4Route must set spec.protocol")
 	}
 	if !strings.Contains(out, "sectionName: tcp") {
-		t.Error("TCPRoute should attach to the named tcp listener section")
+		t.Error("the L4Route should attach to the named tcp listener section")
 	}
 }
 

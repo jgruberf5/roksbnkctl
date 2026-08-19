@@ -19,7 +19,7 @@ The runner turns each cell into a tool command and runs it from wherever you poi
 
 ### `iperf3` — TCP throughput
 
-iperf3 measures plain TCP throughput against a `host:port` target (a TCPRoute VIP). The `length` field sets the TCP block size, which stands in for message size: `"128"` for tiny messages, `"512K"` for bulk transfer. The other knobs map straight to iperf3 flags:
+iperf3 measures plain TCP throughput against a `host:port` target (an `L4Route` VIP — BNK's own L4 CRD, `gateway.k8s.f5net.com/v1`; the Gateway API *standard* channel BNK installs has no `TCPRoute`). The `length` field sets the TCP block size, which stands in for message size: `"128"` for tiny messages, `"512K"` for bulk transfer. The other knobs map straight to iperf3 flags:
 
 | Cell field | iperf3 flag | Meaning |
 |---|---|---|

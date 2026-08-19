@@ -30,7 +30,7 @@ already-deployed cluster + BNK. It reads a matrix.yaml describing cells
 like the BNK-on-ROKS perf plan.
 
 Two families:
-  iperf3  — L4 TCP throughput over a TCPRoute VIP, with content-size knobs
+  iperf3  — L4 TCP throughput over an L4Route VIP, with content-size knobs
             (length: "128" vs "512K") — the L4 analog of the plan's
             128 B / 512 KB payload axis.
   l7      — h2load against an HTTPRoute, http and https (TLS terminate at
@@ -44,7 +44,7 @@ preinstalls both generators (iperf3 + h2load/nghttp2-client) on every
 jumphost, so the ssh runs need no --bootstrap.
 
 This command provisions only ephemeral, runner-owned fixtures (an iperf3
-server, an HTTP file backend, and optional TCPRoute/HTTPRoute/TLS objects
+server, an HTTP file backend, and optional L4Route/HTTPRoute/TLS objects
 that attach to the EXISTING Gateway by name) and tears them down after
 (unless --keep). It never touches Terraform or the gateway-phase objects.
 
