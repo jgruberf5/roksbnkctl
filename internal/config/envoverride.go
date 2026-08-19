@@ -62,6 +62,8 @@ import (
 //	ROKSBNKCTL_FLO_UTILS_NAMESPACE  → bnk.flo_utils_namespace   single shared namespace)
 //	ROKSBNKCTL_GATEWAY_CLASS_NAME   → gateway.class_name (GatewayClass is cluster-scoped)
 //	ROKSBNKCTL_GATEWAY_CONTROLLER_NAME → gateway.controller_name (empty derives it from the FLO namespace)
+//	ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES → gateway.route_examples (comma-separated: GRPCRoute,L4Route)
+//	ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT → gateway.l4_listener_port
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
 //	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
@@ -404,6 +406,29 @@ func OverrideFromEnv(ws *Workspace) []string {
 	if v := envValue("ROKSBNKCTL_GATEWAY_CONTROLLER_NAME"); v != "" {
 		ws.Gateway.ControllerName = v
 		applied = append(applied, "gateway.controller_name (ROKSBNKCTL_GATEWAY_CONTROLLER_NAME)")
+	}
+	// Comma-separated, matching ROKSBNKCTL_TRUSTED_PROFILE_ROLES — the one other
+	// list-valued override — so a caller does not have to learn a second
+	// convention. Validation is terraform's: which kinds are valid depends on
+	// the Gateway API channel the BNK line installs, and that is knowledge the
+	// terraform already holds.
+	if v := envValue("ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES"); v != "" {
+		kinds := []string{}
+		for _, k := range strings.Split(v, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				kinds = append(kinds, k)
+			}
+		}
+		if len(kinds) > 0 {
+			ws.Gateway.RouteExamples = kinds
+			applied = append(applied, "gateway.route_examples (ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES)")
+		}
+	}
+	if v := envValue("ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			ws.Gateway.L4ListenerPort = n
+			applied = append(applied, "gateway.l4_listener_port (ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT)")
+		}
 	}
 
 	// The foreign-proxy handoff (the "shared licensing cluster" topology). These

@@ -282,6 +282,10 @@ gateway:
   backend_service: nginx-service
   backend_port: 80
 
+  # Extra route kinds to create working examples of (default: none).
+  route_examples: [GRPCRoute, L4Route]
+  l4_listener_port: 8080
+
   # Egress.
   egress_mode: both                # snatpool | automap | both
   vxlan_port: 6789
@@ -296,10 +300,22 @@ gateway:
 | `app_namespace` | string | `f5-app` | Namespace the sample Gateway, HTTPRoute and application live in. Created by the phase. |
 | `backend_service` | string | `nginx-service` | Service the HTTPRoute forwards to. |
 | `backend_port` | int | `80` | Its port. |
+| `route_examples` | list(string) | `[]` | Extra route kinds to create **working examples** of, alongside the HTTPRoute the phase always creates. On BNK 2.3 the accepted values are `GRPCRoute` and `L4Route`; anything else is refused at plan time. See the note below — the valid set is a property of the Gateway API channel BNK installs, not of this tool. |
+| `l4_listener_port` | int | `8080` | Port for the TCP listener that `L4Route` requires. Only used when `route_examples` includes `L4Route`. |
 | `egress_mode` | string | `both` | Which egress CRs to apply: `automap` (SNAT to the TMM self-IP), `snatpool` (SNAT from a pool), or `both`. |
 | `vxlan_port` | int | `6789` | Egress VXLAN UDP port. Also opened inbound on the cluster's worker security group — the tunnel does not form without that rule. |
 | `client_subnet_local` | list(string) | `[]` | Client subnets **in the cluster's own VPC** that need a return route through TMM. One static route per subnet per zone. |
 | `client_subnet_remote` | list(string) | `[]` | The same for subnets reached across a Transit Gateway. |
+
+> **Why `TCPRoute` is not on that list.** BNK 2.3 requires Gateway API **1.4.1
+> standard** and refuses to install against anything else. The standard channel
+> contains `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, `ReferenceGrant`
+> and `BackendTLSPolicy` — and *not* `TCPRoute`, `TLSRoute` or `UDPRoute`, which
+> live only in the experimental channel. BNK closes that gap with its own CRD,
+> `L4Route` (`gateway.k8s.f5net.com/v1`), which is what `route_examples` uses for
+> TCP. Requesting `L4Route` also adds a **TCP listener** to the Gateway, because
+> an `L4Route` cannot attach to an HTTP one; without it the route would be
+> created and never accepted.
 
 > **`controller_name` fails silently when wrong.** A `controllerName` no
 > controller matches leaves the GatewayClass with `ACCEPTED=<none>` and the

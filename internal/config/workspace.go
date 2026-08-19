@@ -776,6 +776,23 @@ type GatewayCfg struct {
 	ClientSubnetLocal  []string `yaml:"client_subnet_local,omitempty"`
 	ClientSubnetRemote []string `yaml:"client_subnet_remote,omitempty"`
 	VXLANPort          int      `yaml:"vxlan_port,omitempty"`
+
+	// RouteExamples names extra route kinds to create WORKING examples of,
+	// alongside the HTTPRoute the gateway phase already creates. Empty (the
+	// default) leaves an existing deployment byte-identical.
+	//
+	// What is valid here is a property of the Gateway API channel BNK installs,
+	// not of this tool. BNK 2.3 pins Gateway API 1.4.1 STANDARD, which contains
+	// no TCPRoute/TLSRoute/UDPRoute — BNK ships L4Route
+	// (gateway.k8s.f5net.com/v1) for TCP instead. So on 2.3 the accepted values
+	// are GRPCRoute and L4Route; terraform rejects anything else at plan time
+	// rather than creating an object no controller will ever claim.
+	//
+	// Requesting L4Route also adds a TCP listener to the Gateway, because an
+	// L4Route cannot attach to an HTTP listener.
+	RouteExamples []string `yaml:"route_examples,omitempty"`
+	// L4ListenerPort is the port for that TCP listener. 0 → terraform's 8080.
+	L4ListenerPort int `yaml:"l4_listener_port,omitempty"`
 }
 
 // RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which

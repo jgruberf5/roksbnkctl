@@ -380,6 +380,12 @@ func renderGatewayFields(w io.Writer, ws *config.Workspace) {
 	if g.VXLANPort != 0 {
 		fmt.Fprintf(w, "gateway_vxlan_port = %d\n", g.VXLANPort)
 	}
+	if len(g.RouteExamples) > 0 {
+		fmt.Fprintf(w, "gateway_route_examples = %s\n", hclStringList(g.RouteExamples))
+	}
+	if g.L4ListenerPort != 0 {
+		fmt.Fprintf(w, "gateway_l4_listener_port = %d\n", g.L4ListenerPort)
+	}
 }
 
 // hclStringList renders a string slice as an HCL list literal: ["a", "b"].

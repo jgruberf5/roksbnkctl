@@ -684,6 +684,28 @@ variable "gateway_class_name" {
   default     = "gateway-class"
 }
 
+variable "gateway_route_examples" {
+  description = "Extra route kinds to create working examples of, alongside the default HTTPRoute. Valid on BNK 2.3: GRPCRoute, L4Route. Empty (default) leaves an existing deployment byte-identical. L4Route also adds a TCP listener to the Gateway, because an L4Route cannot attach to an HTTP one."
+  type        = list(string)
+  default     = []
+  # Validated HERE as well as in the module so a bad value fails at the point the
+  # user set it, with the root variable's name in the error, rather than surfacing
+  # from inside a module the user did not write. The module keeps its own copy so
+  # it stays correct when applied directly.
+  validation {
+    condition = alltrue([
+      for k in var.gateway_route_examples : contains(["GRPCRoute", "L4Route"], k)
+    ])
+    error_message = "gateway_route_examples accepts only GRPCRoute and L4Route on BNK 2.3 (Gateway API 1.4.1 standard installs no TCPRoute/TLSRoute/UDPRoute; BNK provides L4Route for TCP)."
+  }
+}
+
+variable "gateway_l4_listener_port" {
+  description = "Port for the TCP listener added when gateway_route_examples includes L4Route"
+  type        = number
+  default     = 8080
+}
+
 variable "gateway_controller_name" {
   description = "GatewayClass controllerName. Empty → derived as f5.com/<flo_namespace>-f5-cne-controller, which is the value the CNE controller answers to. Set it only to point the GatewayClass at a controller this deployment did not install; a wrong value fails silently (the GatewayClass is never Accepted and the apply still succeeds)."
   type        = string

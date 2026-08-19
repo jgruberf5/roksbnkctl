@@ -175,6 +175,37 @@ variable "gateway_backend_port" {
   default     = 80
 }
 
+variable "gateway_route_examples" {
+  description = <<-EOT
+    Extra route kinds to create WORKING examples of, alongside the default
+    HTTPRoute. Empty (the default) changes nothing about an existing deployment.
+
+    Valid on BNK 2.3: GRPCRoute, L4Route. What is valid is a property of the
+    Gateway API channel BNK installs, not of this tool — 2.3 pins Gateway API
+    1.4.1 STANDARD, which has no TCPRoute/TLSRoute/UDPRoute, and BNK supplies
+    L4Route (gateway.k8s.f5net.com/v1) for TCP instead. An unknown kind is
+    rejected at plan time rather than producing an object no controller claims.
+
+    Requesting L4Route also adds a TCP listener to the Gateway: an L4Route
+    cannot attach to an HTTP listener, so without one the route would be created
+    and never accepted.
+  EOT
+  type        = list(string)
+  default     = []
+  validation {
+    condition = alltrue([
+      for k in var.gateway_route_examples : contains(["GRPCRoute", "L4Route"], k)
+    ])
+    error_message = "gateway_route_examples accepts only GRPCRoute and L4Route on BNK 2.3 (Gateway API 1.4.1 standard installs no TCPRoute/TLSRoute/UDPRoute; BNK provides L4Route for TCP)."
+  }
+}
+
+variable "gateway_l4_listener_port" {
+  description = "Port for the TCP listener added when gateway_route_examples includes L4Route"
+  type        = number
+  default     = 8080
+}
+
 # ── Egress / SnatPool ────────────────────────────────────────────────────────
 variable "gateway_egress_mode" {
   description = "Egress SNAT strategy: snatpool (default; creates the SnatPool + snatpool Egress), automap (automap Egress only), or both."
