@@ -43,6 +43,12 @@ unattended.
 | `.env.example` | copy to `.env` and fill in |
 | `../lib/deploy-artifactory-vsi.sh` | stands the Artifactory VSI up (and tears it down) |
 
+The VSI runs **three** containers: Artifactory, PostgreSQL, and Caddy for TLS.
+The database is not optional — Artifactory's Access service refuses to start
+against the embedded Derby database (`DB Type derby is not allowed`), and the
+resulting failure looks like slow startup rather than a database problem:
+Artifactory's own API answers on `8081` while Access never binds `8046`.
+
 ## Prerequisites
 
 **A DNS name you control.** Artifactory is served over HTTPS by Caddy, which
@@ -73,7 +79,7 @@ through both with the exact menu paths.
 ```bash
 export ART_DOMAIN=artifactory.example.com
 export IBMCLOUD_API_KEY=...
-../lib/deploy-artifactory-vsi.sh          # ~10 min, waits for HTTPS
+../lib/deploy-artifactory-vsi.sh          # ~15 min, waits for HTTPS
 
 # ... now do the two UI steps, then:
 cp .env.example .env && $EDITOR .env
