@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28314693.js";
+            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -1497,6 +1497,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code></td><td><code>helm</code> (default) | <code>vsi</code> — how the FLP phase deploys the proxy</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_NAME_PREFIX</code></td><td><code>bnk.flp.vsi.name_prefix</code></td><td>Prefixes the FLP VSI’s resource names. <strong>Blank keeps the legacy unprefixed names</strong> — setting it <em>replaces</em> a running proxy. Needed to run more than one FLP in an account, and to make the proxy’s resources visible to <code>cleanup</code>’s <code>&lt;prefix&gt;-*</code> sweep.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this arms the <strong>standalone, cluster-less</strong> appliance — as does <code>_CREATE_VPC=true</code>, which builds one instead. Mutually exclusive.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code></td><td><code>bnk.flp.vsi.zone</code></td><td>e.g. <code>us-south-1</code>; blank → the region’s first zone</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>
@@ -2834,7 +2835,7 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <p>Destroys the trial only. The cluster phase keeps running.</p>
 <ul>
 <li>On a <strong>split</strong> workspace (cluster + trial both present), <code>bnk down</code> runs <code>terraform destroy</code> against the trial state — ~41 resources, the same as the trial half of a full <code>down</code>.</li>
-<li>On an <strong>empty</strong> or <strong>cluster-only</strong> workspace, <code>bnk down</code> refuses: there’s no trial to destroy.</li>
+<li>On an <strong>empty</strong> or <strong>cluster-only</strong> workspace, <code>bnk down</code> is a <strong>no-op success</strong> (exit 0): there’s no trial to destroy, and an orchestrated teardown runs every phase unconditionally, so failing for having nothing to do would fail a teardown that worked.</li>
 </ul>
 <p>Sample output against a split workspace:</p>
 <pre><code>$ roksbnkctl bnk down --auto
@@ -2857,11 +2858,11 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 </thead>
 <tbody>
 <tr><td><code>up</code></td><td><code>cluster up</code> → trial up</td><td>trial up</td><td><code>cluster up</code> (refresh) → trial up</td></tr>
-<tr><td><code>down</code></td><td>error: nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td></tr>
+<tr><td><code>down</code></td><td>no-op (exit 0): nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td></tr>
 <tr><td><code>bnk up</code></td><td>confirm + <code>cluster up</code> → trial up</td><td>trial up</td><td>trial up</td></tr>
 <tr><td><code>bnk down</code></td><td>no-op (exit 0): no trial</td><td>no-op (exit 0): no trial</td><td>trial down</td></tr>
 <tr><td><code>cluster up</code></td><td><code>cluster up</code></td><td><code>cluster up</code> (refresh)</td><td><code>cluster up</code> (refresh)</td></tr>
-<tr><td><code>cluster down</code></td><td>refuse: nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td></tr>
+<tr><td><code>cluster down</code></td><td>no-op (exit 0): nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td></tr>
 </tbody>
 </table>
 </div>
@@ -3856,7 +3857,7 @@ I want to tear down only the cluster (no trial currently deployed):
 <tbody>
 <tr><td>Split (cluster + trial)</td><td>trial destroy → cluster destroy</td></tr>
 <tr><td>ClusterOnly (only cluster applied)</td><td>cluster destroy</td></tr>
-<tr><td>Empty</td><td>error: <code>nothing to destroy in this workspace</code></td></tr>
+<tr><td>Empty</td><td>no-op success: <code>✓ Nothing to destroy in this workspace — no phase has any state.</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -3950,7 +3951,26 @@ you must delete all attached connections.
 <li>A connection to a <strong>VPC this same sweep is deleting</strong> is yours; <code>cleanup</code> removes it.</li>
 <li><strong>Anything else</strong> — a VPC under a different prefix, another account’s network, a Direct Link or GRE attachment — belongs to someone else. <code>cleanup</code> <strong>refuses the gateway</strong> and names what is attached, rather than quietly disconnecting a shared gateway’s other tenants.</li>
 </ul>
-<p>Connections already in <code>deleting</code> — someone else’s detach, or a cascade from a cluster delete this same sweep kicked off — are a third case: waited for, never deleted again. Re-issuing a <code>DELETE</code> against one is rejected, and that rejection would abort a gateway delete that was seconds from succeeding.</p>
+<p>Connections <strong>mid-transition</strong> are a third case, and the two directions are not the same:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>status</th><th>meaning</th><th>what <code>cleanup</code> does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deleting</code> / <code>detaching</code></td><td><strong>departing</strong> — going away</td><td>waited for, whoever started it. It will be gone either way, so it is never a reason to refuse the gateway</td></tr>
+<tr><td><code>pending</code></td><td><strong>arriving</strong> — still attaching</td><td>ownership decides: <strong>yours</strong> is waited for; <strong>someone else’s</strong> is refused straight away</td></tr>
+</tbody>
+</table>
+</div>
+<p>IBM accepts a connection <code>DELETE</code> only from a settled state, so acting on either would fail with <code>409 invalid_state</code>. The <code>pending</code> case matters more than it sounds: <code>cleanup</code> is most often reached for right after an interrupted <code>up</code>, which is exactly when a connection is still attaching. Sweeping then used to fail and advise a re-run that failed identically until IBM finished attaching — a wait the sweep now does itself.</p>
+<p>Ownership is checked <strong>before</strong> that wait, because it cannot change as a connection settles. A gateway attached to a network outside the sweep is refused on the first listing rather than after the timeout.</p>
+<p>If a connection never finishes attaching, the sweep says so rather than timing out twice on something it never had a chance to delete:</p>
+<pre><code>transit gateway f5orph-tgw still has a connection attaching after 5m0s:
+conn-1 [vpc crn:…, pending] — IBM refuses a DELETE from `pending`, so this
+has to finish before the gateway can go. Re-run once it reports `attached`
+</code></pre>
+<p>States that are <em>settled</em> — including <code>failed</code> and <code>suspended</code> — are detached normally. Waiting for <code>attached</code> specifically would mean a broken connection was never cleaned up, which is the opposite of what a sweep is for.</p>
 <p>A refusal is not a transient, and an identical re-run will not clear it. <strong>Check the region first</strong>: <code>cleanup</code> scans only the workspace’s cluster and client regions by default, so the commonest reason a VPC looks foreign is that it is yours and simply was not scanned. Re-run with <code>--all-regions</code> (or <code>--region &lt;name&gt;</code>) and it comes into scope. If the network really is someone else’s, detach it yourself (<code>ibmcloud tg connection-delete &lt;gateway-id&gt; &lt;connection-id&gt;</code>) or delete it, then sweep again.</p>
 <p>This matters most for the shared-gateway topology in <a href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway</a>, where one gateway deliberately outlives the clusters attached to it.</p>
 <h3 id="which-regions-it-scans"><a class="header" href="#which-regions-it-scans">Which regions it scans</a></h3>
@@ -3981,8 +4001,9 @@ roksbnkctl up --auto           # rebuild clean
 <tr><td><code>testing down</code> with <strong>no jumphosts</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No testing jumphost state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the testing phase is optional, so <code>down</code> returns cleanly when nothing was provisioned.</td></tr>
 <tr><td><code>gateway down</code> with <strong>no gateway state</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No gateway phase state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the gateway phase is opt-in, so <code>down</code> returns cleanly when it was never applied.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
-<tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>
-<tr><td><code>down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the workspace has no state.</td></tr>
+<tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No cluster state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the cluster hasn’t been provisioned.</td></tr>
+<tr><td><code>down</code> on <strong>Empty</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ Nothing to destroy in this workspace — no phase has any state.</code></td><td>No-op success — no phase has any state.</td></tr>
+<tr><td>any <code>down</code> on an <strong>uninitialised workspace</strong></td><td><code>workspace "&lt;name&gt;" is not initialised; run `roksbnkctl init` first</code></td><td>A <strong>real error</strong>, unlike the empty case above. The two are indistinguishable to the state check but mean opposite things: a mistyped <code>-w</code> reporting a successful teardown is how someone concludes a cluster came down while it is still running.</td></tr>
 </tbody>
 </table>
 </div>
@@ -12540,6 +12561,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="#licensing-bnk-with-the-f5-license-proxy-flp">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
 <tr><td><code>bnk.flp.vsi.vpc</code></td><td>string</td><td>(empty)</td><td><strong>Adopt</strong> an existing VPC for the standalone proxy VSI. Mutually exclusive with <code>create_vpc</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.name_prefix</code></td><td>string</td><td>(empty)</td><td>Prefixes the FLP VSI’s IBM Cloud resource names (instance, subnet, security group, floating IP, boot volume, and its VPC when created). <strong>Empty keeps the legacy unprefixed names</strong>, because renaming a terraform resource <em>replaces</em> it — so an existing proxy is not destroyed and rebuilt on upgrade. Set it on a new deployment for either of two things the literals prevented: more than one standalone FLP per account (they otherwise all collide on <code>flp-vsi</code>), and visibility to <a href="#tearing-down-1"><code>cleanup</code></a>, which sweeps by <code>&lt;prefix&gt;-*</code> and cannot see unprefixed proxy resources.</td></tr>
 <tr><td><code>bnk.flp.vsi.create_vpc</code></td><td>bool</td><td><code>false</code></td><td>Build the proxy its <strong>own</strong> VPC, address prefix and public gateway. The proxy is the one component needing egress to F5, which makes it a natural <em>first</em> deployment in an air-gapped estate — without this something else has to have created a VPC, in practice coupling licensing to a registry it is otherwise unrelated to.</td></tr>
 <tr><td><code>bnk.flp.vsi.vpc_name</code></td><td>string</td><td><code>flp-vsi-vpc</code></td><td>Name for the VPC created by <code>create_vpc</code>.</td></tr>
 <tr><td><code>bnk.flp.vsi.subnet_cidr</code></td><td>string</td><td><code>10.250.0.0/24</code></td><td>Address prefix for that VPC. <strong>Must not overlap</strong> anything the consuming clusters can already route to — a transit gateway cannot route to two VPCs with overlapping prefixes and silently blackholes one.</td></tr>
@@ -12765,6 +12787,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>use_existing_cluster_subnets</code></td><td><code>bool</code></td><td><code>false</code></td><td>Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC.</td><td>no</td></tr>
 <tr><td><code>existing_cluster_subnet_ids</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_create_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Build the F5 License Proxy its own VPC instead of placing it in an existing one.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_name_prefix</code></td><td><code>string</code></td><td><code>""</code></td><td>Prefix for the standalone FLP VSI’s resource names (e.g. bnk-ci → bnk-ci-flp-vsi). Empty (the default) keeps the legacy unprefixed names so an existing proxy is NOT replaced on upgrade. Set it to run more than one FLP in an account, and to bring the resources into <code>roksbnkctl cleanup</code>’s <code>&lt;prefix&gt;</code>-* sweep.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_vpc_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_subnet_cidr</code></td><td><code>string</code></td><td><code>"10.250.0.0/24"</code></td><td>Address prefix for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
 <tr><td><code>cluster_network_mode</code></td><td><code>string</code></td><td><code>"single-nic"</code></td><td>How the cluster’s worker nodes are attached: single-nic (default) or multi-nic.</td><td>no</td></tr>
@@ -12946,6 +12969,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>flp_vsi_licensing_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>DEPRECATED — legacy single list. When set, seeds BOTH flp_vsi_management_allowed_cidrs and flp_vsi_licensing_allowed_cidrs. Prefer the two per-plane variables. Empty → the per-plane defaults apply.</td><td>no</td></tr>
 <tr><td><code>existing_cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>The cluster VPC id (from cluster-outputs.json) the FLP VSI joins so the CWC reaches it directly.</td><td>no</td></tr>
+<tr><td><code>flp_vsi_name_prefix</code></td><td><code>string</code></td><td><code>""</code></td><td>Prefix for the FLP VSI’s resource names, e.g. "bnk-ci" yields bnk-ci-flp-vsi. Empty (the default) keeps the legacy unprefixed names, so an existing proxy is not replaced on upgrade. Set it to run more than one standalone FLP in an account, and to make the resources visible to <code>roksbnkctl cleanup</code>.</td><td>no</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td><code>"repo.f5.com"</code></td><td>FAR repository host for the FLP chart pulls. Same value as the root far_repo_url.</td><td>no</td></tr>
 <tr><td><code>flp_image_registry</code></td><td><code>string</code></td><td><code>""</code></td><td>FAR image host prefix. Empty (the default) derives <code>&lt;far_repo_url&gt;</code>/images, so the image host follows the chart host instead of pinning repo.f5.com independently.</td><td>no</td></tr>
 <tr><td><code>f5_bigip_k8s_manifest_version</code></td><td><code>string</code></td><td><em>required</em></td><td>BNK manifest version — the f5-license-proxy chart/image tag is resolved from it (like the helm path) when flp_chart_version is empty.</td><td>no</td></tr>

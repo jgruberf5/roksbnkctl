@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28314693.js";
+            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -216,7 +216,7 @@ I want to tear down only the cluster (no trial currently deployed):
 <tbody>
 <tr><td>Split (cluster + trial)</td><td>trial destroy → cluster destroy</td></tr>
 <tr><td>ClusterOnly (only cluster applied)</td><td>cluster destroy</td></tr>
-<tr><td>Empty</td><td>error: <code>nothing to destroy in this workspace</code></td></tr>
+<tr><td>Empty</td><td>no-op success: <code>✓ Nothing to destroy in this workspace — no phase has any state.</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -310,7 +310,26 @@ you must delete all attached connections.
 <li>A connection to a <strong>VPC this same sweep is deleting</strong> is yours; <code>cleanup</code> removes it.</li>
 <li><strong>Anything else</strong> — a VPC under a different prefix, another account’s network, a Direct Link or GRE attachment — belongs to someone else. <code>cleanup</code> <strong>refuses the gateway</strong> and names what is attached, rather than quietly disconnecting a shared gateway’s other tenants.</li>
 </ul>
-<p>Connections already in <code>deleting</code> — someone else’s detach, or a cascade from a cluster delete this same sweep kicked off — are a third case: waited for, never deleted again. Re-issuing a <code>DELETE</code> against one is rejected, and that rejection would abort a gateway delete that was seconds from succeeding.</p>
+<p>Connections <strong>mid-transition</strong> are a third case, and the two directions are not the same:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>status</th><th>meaning</th><th>what <code>cleanup</code> does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>deleting</code> / <code>detaching</code></td><td><strong>departing</strong> — going away</td><td>waited for, whoever started it. It will be gone either way, so it is never a reason to refuse the gateway</td></tr>
+<tr><td><code>pending</code></td><td><strong>arriving</strong> — still attaching</td><td>ownership decides: <strong>yours</strong> is waited for; <strong>someone else’s</strong> is refused straight away</td></tr>
+</tbody>
+</table>
+</div>
+<p>IBM accepts a connection <code>DELETE</code> only from a settled state, so acting on either would fail with <code>409 invalid_state</code>. The <code>pending</code> case matters more than it sounds: <code>cleanup</code> is most often reached for right after an interrupted <code>up</code>, which is exactly when a connection is still attaching. Sweeping then used to fail and advise a re-run that failed identically until IBM finished attaching — a wait the sweep now does itself.</p>
+<p>Ownership is checked <strong>before</strong> that wait, because it cannot change as a connection settles. A gateway attached to a network outside the sweep is refused on the first listing rather than after the timeout.</p>
+<p>If a connection never finishes attaching, the sweep says so rather than timing out twice on something it never had a chance to delete:</p>
+<pre><code>transit gateway f5orph-tgw still has a connection attaching after 5m0s:
+conn-1 [vpc crn:…, pending] — IBM refuses a DELETE from `pending`, so this
+has to finish before the gateway can go. Re-run once it reports `attached`
+</code></pre>
+<p>States that are <em>settled</em> — including <code>failed</code> and <code>suspended</code> — are detached normally. Waiting for <code>attached</code> specifically would mean a broken connection was never cleaned up, which is the opposite of what a sweep is for.</p>
 <p>A refusal is not a transient, and an identical re-run will not clear it. <strong>Check the region first</strong>: <code>cleanup</code> scans only the workspace’s cluster and client regions by default, so the commonest reason a VPC looks foreign is that it is yours and simply was not scanned. Re-run with <code>--all-regions</code> (or <code>--region &lt;name&gt;</code>) and it comes into scope. If the network really is someone else’s, detach it yourself (<code>ibmcloud tg connection-delete &lt;gateway-id&gt; &lt;connection-id&gt;</code>) or delete it, then sweep again.</p>
 <p>This matters most for the shared-gateway topology in <a href="./09a-transit-gateway-sharing.html">Sharing a Transit Gateway</a>, where one gateway deliberately outlives the clusters attached to it.</p>
 <h3 id="which-regions-it-scans"><a class="header" href="#which-regions-it-scans">Which regions it scans</a></h3>
@@ -341,8 +360,9 @@ roksbnkctl up --auto           # rebuild clean
 <tr><td><code>testing down</code> with <strong>no jumphosts</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No testing jumphost state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the testing phase is optional, so <code>down</code> returns cleanly when nothing was provisioned.</td></tr>
 <tr><td><code>gateway down</code> with <strong>no gateway state</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No gateway phase state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the gateway phase is opt-in, so <code>down</code> returns cleanly when it was never applied.</td></tr>
 <tr><td><code>cluster down</code> on <strong>Split</strong></td><td><code>BNK trial state exists in this workspace; run `roksbnkctl bnk down` first (or `roksbnkctl down` to tear down both phases)</code></td><td>Run <code>bnk down</code> first to remove the trial, then <code>cluster down</code> for the cluster — or <code>roksbnkctl down</code> to do both in one shot.</td></tr>
-<tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the cluster hasn’t been provisioned.</td></tr>
-<tr><td><code>down</code> on <strong>Empty</strong></td><td><code>nothing to destroy in this workspace</code></td><td>Nothing to do — the workspace has no state.</td></tr>
+<tr><td><code>cluster down</code> on <strong>Empty</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ No cluster state to destroy in this workspace — nothing to do.</code></td><td>No-op success — the cluster hasn’t been provisioned.</td></tr>
+<tr><td><code>down</code> on <strong>Empty</strong></td><td><em>(not a refusal — exits 0)</em> <code>✓ Nothing to destroy in this workspace — no phase has any state.</code></td><td>No-op success — no phase has any state.</td></tr>
+<tr><td>any <code>down</code> on an <strong>uninitialised workspace</strong></td><td><code>workspace "&lt;name&gt;" is not initialised; run `roksbnkctl init` first</code></td><td>A <strong>real error</strong>, unlike the empty case above. The two are indistinguishable to the state check but mean opposite things: a mistyped <code>-w</code> reporting a successful teardown is how someone concludes a cluster came down while it is still running.</td></tr>
 </tbody>
 </table>
 </div>

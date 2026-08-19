@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28314693.js";
+            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -908,6 +908,7 @@ values. The resulting block looks like:</p>
 <tr><td><code>bnk.license_mode</code></td><td>string</td><td>(empty ⇒ <code>connected</code>)</td><td><code>connected</code> | <code>disconnected</code> | <code>f5licenseproxy</code>. Rendered as the <code>license_mode</code> tfvar. <code>f5licenseproxy</code> licenses BNK via the <a href="./10c-flp-licensing.html">F5 License Proxy</a> — either one this workspace deployed (<code>roksbnkctl flp up</code>) or one in <strong>another</strong> cluster (<code>bnk.flp.external</code>). Empty/omitted keeps the JWT/connected default.</td></tr>
 <tr><td><code>bnk.flp.namespace</code></td><td>string</td><td><code>f5-license-proxy</code></td><td>Namespace the FLP phase installs into (FLP mode only).</td></tr>
 <tr><td><code>bnk.flp.vsi.vpc</code></td><td>string</td><td>(empty)</td><td><strong>Adopt</strong> an existing VPC for the standalone proxy VSI. Mutually exclusive with <code>create_vpc</code>.</td></tr>
+<tr><td><code>bnk.flp.vsi.name_prefix</code></td><td>string</td><td>(empty)</td><td>Prefixes the FLP VSI’s IBM Cloud resource names (instance, subnet, security group, floating IP, boot volume, and its VPC when created). <strong>Empty keeps the legacy unprefixed names</strong>, because renaming a terraform resource <em>replaces</em> it — so an existing proxy is not destroyed and rebuilt on upgrade. Set it on a new deployment for either of two things the literals prevented: more than one standalone FLP per account (they otherwise all collide on <code>flp-vsi</code>), and visibility to <a href="./11-tearing-down.html"><code>cleanup</code></a>, which sweeps by <code>&lt;prefix&gt;-*</code> and cannot see unprefixed proxy resources.</td></tr>
 <tr><td><code>bnk.flp.vsi.create_vpc</code></td><td>bool</td><td><code>false</code></td><td>Build the proxy its <strong>own</strong> VPC, address prefix and public gateway. The proxy is the one component needing egress to F5, which makes it a natural <em>first</em> deployment in an air-gapped estate — without this something else has to have created a VPC, in practice coupling licensing to a registry it is otherwise unrelated to.</td></tr>
 <tr><td><code>bnk.flp.vsi.vpc_name</code></td><td>string</td><td><code>flp-vsi-vpc</code></td><td>Name for the VPC created by <code>create_vpc</code>.</td></tr>
 <tr><td><code>bnk.flp.vsi.subnet_cidr</code></td><td>string</td><td><code>10.250.0.0/24</code></td><td>Address prefix for that VPC. <strong>Must not overlap</strong> anything the consuming clusters can already route to — a transit gateway cannot route to two VPCs with overlapping prefixes and silently blackholes one.</td></tr>

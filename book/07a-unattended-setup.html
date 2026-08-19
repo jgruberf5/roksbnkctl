@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28314693.js";
+            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -313,6 +313,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLP_EXTERNAL_URL</code></td><td><code>bnk.flp.external.url</code></td><td>verbatim — license against a proxy in <strong>another</strong> cluster</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_ROOT_CA_B64</code></td><td><code>bnk.flp.external.root_ca_b64</code></td><td><strong>verbatim; already base64</strong> — re-encoding it hands the CWC a corrupt CA</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_MODE</code></td><td><code>bnk.flp.mode</code></td><td><code>helm</code> (default) | <code>vsi</code> — how the FLP phase deploys the proxy</td></tr>
+<tr><td><code>ROKSBNKCTL_FLP_VSI_NAME_PREFIX</code></td><td><code>bnk.flp.vsi.name_prefix</code></td><td>Prefixes the FLP VSI’s resource names. <strong>Blank keeps the legacy unprefixed names</strong> — setting it <em>replaces</em> a running proxy. Needed to run more than one FLP in an account, and to make the proxy’s resources visible to <code>cleanup</code>’s <code>&lt;prefix&gt;-*</code> sweep.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_VPC</code></td><td><code>bnk.flp.vsi.vpc</code></td><td>an <strong>existing VPC id</strong>. With <code>_MODE=vsi</code> this arms the <strong>standalone, cluster-less</strong> appliance — as does <code>_CREATE_VPC=true</code>, which builds one instead. Mutually exclusive.</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_ZONE</code></td><td><code>bnk.flp.vsi.zone</code></td><td>e.g. <code>us-south-1</code>; blank → the region’s first zone</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>

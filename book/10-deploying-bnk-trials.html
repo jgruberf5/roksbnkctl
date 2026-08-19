@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28314693.js";
+            window.path_to_searchindex_js = "searchindex-a7fa7b60.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ecec3061.js"></script>
@@ -382,7 +382,7 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 <p>Destroys the trial only. The cluster phase keeps running.</p>
 <ul>
 <li>On a <strong>split</strong> workspace (cluster + trial both present), <code>bnk down</code> runs <code>terraform destroy</code> against the trial state — ~41 resources, the same as the trial half of a full <code>down</code>.</li>
-<li>On an <strong>empty</strong> or <strong>cluster-only</strong> workspace, <code>bnk down</code> refuses: there’s no trial to destroy.</li>
+<li>On an <strong>empty</strong> or <strong>cluster-only</strong> workspace, <code>bnk down</code> is a <strong>no-op success</strong> (exit 0): there’s no trial to destroy, and an orchestrated teardown runs every phase unconditionally, so failing for having nothing to do would fail a teardown that worked.</li>
 </ul>
 <p>Sample output against a split workspace:</p>
 <pre><code>$ roksbnkctl bnk down --auto
@@ -405,11 +405,11 @@ Apply complete! Resources: 41 added, 0 changed, 0 destroyed.
 </thead>
 <tbody>
 <tr><td><code>up</code></td><td><code>cluster up</code> → trial up</td><td>trial up</td><td><code>cluster up</code> (refresh) → trial up</td></tr>
-<tr><td><code>down</code></td><td>error: nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td></tr>
+<tr><td><code>down</code></td><td>no-op (exit 0): nothing to destroy</td><td><code>cluster down</code></td><td>trial down → <code>cluster down</code></td></tr>
 <tr><td><code>bnk up</code></td><td>confirm + <code>cluster up</code> → trial up</td><td>trial up</td><td>trial up</td></tr>
 <tr><td><code>bnk down</code></td><td>no-op (exit 0): no trial</td><td>no-op (exit 0): no trial</td><td>trial down</td></tr>
 <tr><td><code>cluster up</code></td><td><code>cluster up</code></td><td><code>cluster up</code> (refresh)</td><td><code>cluster up</code> (refresh)</td></tr>
-<tr><td><code>cluster down</code></td><td>refuse: nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td></tr>
+<tr><td><code>cluster down</code></td><td>no-op (exit 0): nothing to destroy</td><td><code>cluster down</code></td><td><strong>refuse</strong>: trial exists</td></tr>
 </tbody>
 </table>
 </div>
