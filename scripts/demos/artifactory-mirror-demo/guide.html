@@ -1,0 +1,371 @@
+<title>Mirroring FAR into Artifactory</title>
+<style>
+:root{
+  --paper:#f6f7f7; --card:#ffffff; --ink:#141b1f; --ink-soft:#4a585f;
+  --rule:#dce1e3; --accent:#0f6e63; --accent-soft:#e3f0ee;
+  --warn:#8a5a00; --warn-soft:#fbf1dd; --warn-rule:#e6cf9f;
+  --code-bg:#101619; --code-ink:#dbe4e6; --code-dim:#7d8f95;
+  --tag-ui:#5b3fa8; --tag-ui-soft:#efeafb;
+  --tag-cli:#0f6e63; --tag-cli-soft:#e3f0ee;
+  --tag-ctr:#1d5a91; --tag-ctr-soft:#e4eef7;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e1417; --card:#141c20; --ink:#dfe6e8; --ink-soft:#96a6ac;
+    --rule:#263237; --accent:#54c3b1; --accent-soft:#14312e;
+    --warn:#e0b365; --warn-soft:#2c2416; --warn-rule:#5a4728;
+    --code-bg:#080c0e; --code-ink:#d3dee0; --code-dim:#6d7f85;
+    --tag-ui:#b49ef0; --tag-ui-soft:#231c38;
+    --tag-cli:#54c3b1; --tag-cli-soft:#14312e;
+    --tag-ctr:#7db4e6; --tag-ctr-soft:#152634;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0e1417; --card:#141c20; --ink:#dfe6e8; --ink-soft:#96a6ac;
+  --rule:#263237; --accent:#54c3b1; --accent-soft:#14312e;
+  --warn:#e0b365; --warn-soft:#2c2416; --warn-rule:#5a4728;
+  --code-bg:#080c0e; --code-ink:#d3dee0; --code-dim:#6d7f85;
+  --tag-ui:#b49ef0; --tag-ui-soft:#231c38;
+  --tag-cli:#54c3b1; --tag-cli-soft:#14312e;
+  --tag-ctr:#7db4e6; --tag-ctr-soft:#152634;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1020px; margin:0 auto; padding:56px 24px 96px}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+
+header.top{border-bottom:2px solid var(--ink); padding-bottom:28px; margin-bottom:8px}
+.eyebrow{
+  font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--accent); font-weight:650; margin:0 0 14px
+}
+h1{
+  font-size:clamp(30px,5vw,46px); line-height:1.08; margin:0 0 16px;
+  letter-spacing:-.024em; font-weight:700; text-wrap:balance; max-width:16ch
+}
+.standfirst{font-size:18px; color:var(--ink-soft); margin:0; max-width:62ch}
+
+.facts{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px; background:var(--rule); border:1px solid var(--rule);
+  margin:36px 0 8px
+}
+.fact{background:var(--card); padding:14px 16px}
+.fact dt{
+  font-size:10.5px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--ink-soft); margin:0 0 5px; font-weight:650
+}
+.fact dd{margin:0; font-size:15px; font-weight:600; font-variant-numeric:tabular-nums}
+
+h2.sec{
+  font-size:12px; letter-spacing:.15em; text-transform:uppercase; font-weight:700;
+  color:var(--ink-soft); margin:52px 0 0; padding-bottom:10px;
+  border-bottom:1px solid var(--rule)
+}
+
+.step{
+  display:grid; grid-template-columns:64px 1fr; gap:0 24px;
+  padding:30px 0; border-bottom:1px solid var(--rule); align-items:start
+}
+.step:last-of-type{border-bottom:none}
+.num{
+  font-size:13px; font-weight:700; color:var(--accent);
+  font-variant-numeric:tabular-nums; padding-top:4px;
+  border-top:2px solid var(--accent); letter-spacing:.04em
+}
+.body h3{font-size:21px; margin:0 0 6px; letter-spacing:-.012em; font-weight:660; text-wrap:balance}
+.body p{margin:0 0 14px; max-width:64ch; color:var(--ink-soft)}
+.body p strong{color:var(--ink); font-weight:620}
+.body>*:last-child{margin-bottom:0}
+
+.tag{
+  display:inline-block; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  font-weight:700; padding:3px 8px; border-radius:2px; margin-bottom:10px
+}
+.tag-ui{color:var(--tag-ui); background:var(--tag-ui-soft)}
+.tag-cli{color:var(--tag-cli); background:var(--tag-cli-soft)}
+.tag-ctr{color:var(--tag-ctr); background:var(--tag-ctr-soft)}
+
+pre{
+  background:var(--code-bg); color:var(--code-ink); padding:16px 18px;
+  border-radius:3px; overflow-x:auto; font-size:13.5px; line-height:1.65;
+  margin:0 0 14px
+}
+pre .c{color:var(--code-dim)}
+:not(pre)>code{
+  background:var(--accent-soft); color:var(--accent); padding:1.5px 5px;
+  border-radius:2px; font-size:.9em; font-weight:600
+}
+
+.note{
+  border-left:3px solid var(--warn); background:var(--warn-soft);
+  padding:14px 18px; margin:0 0 14px; border-radius:0 3px 3px 0
+}
+.note p{color:var(--ink); margin:0}
+.note p+p{margin-top:9px}
+.note .lbl{
+  font-size:10.5px; letter-spacing:.13em; text-transform:uppercase;
+  font-weight:700; color:var(--warn); display:block; margin-bottom:5px
+}
+
+table{border-collapse:collapse; width:100%; font-size:14.5px; margin:0 0 14px}
+.scroll{overflow-x:auto; margin:0 0 14px}
+th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--rule); vertical-align:top}
+th{
+  font-size:10.5px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--ink-soft); font-weight:700; border-bottom:1.5px solid var(--rule)
+}
+td code{white-space:nowrap}
+
+.done{
+  border:2px solid var(--accent); background:var(--accent-soft);
+  padding:22px 24px; margin-top:44px; border-radius:3px
+}
+.done h3{margin:0 0 10px; font-size:19px; color:var(--accent); font-weight:680}
+.done p{margin:0 0 10px; color:var(--ink)}
+.done pre{margin-top:14px; margin-bottom:0}
+
+footer{margin-top:56px; padding-top:20px; border-top:1px solid var(--rule);
+  font-size:13.5px; color:var(--ink-soft)}
+a{color:var(--accent); text-underline-offset:2px}
+a:focus-visible,summary:focus-visible{outline:2px solid var(--accent); outline-offset:3px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+@media (max-width:620px){
+  .step{grid-template-columns:1fr; gap:0}
+  .num{margin-bottom:12px; display:inline-block; padding-top:6px}
+  .wrap{padding:40px 18px 72px}
+}
+</style>
+
+<div class="wrap">
+<header class="top">
+  <p class="eyebrow">F5 BIG-IP Next for Kubernetes · Supply chain</p>
+  <h1>Mirroring FAR into Artifactory</h1>
+  <p class="standfirst">A self-hosted JFrog Artifactory on a single IBM Cloud virtual server, holding
+  a complete, digest-verified copy of everything a BNK install pulls — so an air-gapped cluster
+  installs from a registry you control.</p>
+</header>
+
+<dl class="facts">
+  <div class="fact"><dt>Artifacts</dt><dd>89</dd></div>
+  <div class="fact"><dt>Time</dt><dd>~45 min</dd></div>
+  <div class="fact"><dt>Servers</dt><dd>1 VSI</dd></div>
+  <div class="fact"><dt>Clusters</dt><dd>None</dd></div>
+</dl>
+
+<p style="color:var(--ink-soft);max-width:64ch;margin:22px 0 0">
+No Kubernetes cluster is involved. <code>registry replicate</code> copies registry-to-registry,
+so the mirror can be filled long before any cluster exists — which is the point, because the
+cluster that needs it cannot reach the internet.</p>
+
+<h2 class="sec">Before you start</h2>
+
+<div class="step">
+  <div class="num">01</div>
+  <div class="body">
+    <span class="tag tag-cli">Your workstation</span>
+    <h3>What you need to hand</h3>
+    <p>An IBM Cloud API key with permission to create VPC resources, a DNS name you can point at
+    a new floating IP, and the <code>roksbnkctl</code> binary. The API key is used for exactly one
+    thing here — resolving the F5 pull credential — and no IBM Cloud resource is modified by the
+    mirror itself.</p>
+    <div class="scroll"><table>
+      <tr><th>Requirement</th><th>Why</th></tr>
+      <tr><td><code>ibmcloud</code> CLI + <code>vpc-infrastructure</code> plugin</td><td>Creates the server</td></tr>
+      <tr><td><code>jq</code>, <code>curl</code></td><td>Used by the provisioning script</td></tr>
+      <tr><td>A DNS name you control</td><td>Artifactory needs a real certificate; a Docker client will not talk to an untrusted registry</td></tr>
+    </table></div>
+  </div>
+</div>
+
+<h2 class="sec">Stand up Artifactory</h2>
+
+<div class="step">
+  <div class="num">02</div>
+  <div class="body">
+    <span class="tag tag-cli">Your workstation</span>
+    <h3>Create the server</h3>
+    <p>One script creates an isolated VPC, a subnet, a public gateway, a security group, and a
+    single virtual server running Artifactory behind Caddy for TLS. Nothing outside that VPC is
+    touched.</p>
+    <pre><span class="c"># point this at a DNS name you can update</span>
+export ART_DOMAIN=artifactory.example.com
+export IBMCLOUD_API_KEY=...
+
+./scripts/demos/lib/deploy-artifactory-vsi.sh</pre>
+    <p>The script prints the floating IP as soon as it has one, then waits for Artifactory to
+    answer over HTTPS. <strong>Point your DNS name at that IP while it waits.</strong></p>
+    <div class="note">
+      <span class="lbl">If it never finishes</span>
+      <p>By far the most common cause is DNS: Caddy cannot obtain a certificate until the name
+      resolves to the server, and inbound port 80 must be open for the ACME challenge. Confirm with
+      <code>dig +short $ART_DOMAIN</code> — it must return the floating IP the script printed.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">03</div>
+  <div class="body">
+    <span class="tag tag-ui">Artifactory console</span>
+    <h3>Set the administrator password</h3>
+    <p>Open <code>https://artifactory.example.com</code> and sign in with the initial credentials
+    <code>admin</code> / <code>password</code>. Artifactory requires you to change the password
+    immediately. This step is deliberately not automated — it is the point at which the instance
+    becomes yours.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">04</div>
+  <div class="body">
+    <span class="tag tag-ui">Artifactory console</span>
+    <h3>Create the Docker repository</h3>
+    <p>Go to <strong>Administration → Repositories → Repositories</strong>, choose
+    <strong>Add Repository → Local Repository</strong>, and select <strong>Docker</strong>.
+    Give it the repository key <code>bnk-mirror</code> and save.</p>
+    <p>It must be a <strong>local</strong> repository. A remote repository is a read-through cache
+    of an upstream and cannot be pushed to; a virtual repository can only accept a push if it has
+    a local deployment target, so pointing at the local repository directly is simpler and fails
+    more clearly when permissions are wrong.</p>
+    <div class="note">
+      <span class="lbl">Artifactory OSS cannot do this</span>
+      <p>Docker repository support is a licensed feature. An OSS instance has no Docker repository
+      type at all, so there is nothing to create and nothing to point at.</p>
+      <p>The server built in step 2 runs <strong>JFrog Container Registry</strong>, the free edition
+      built specifically around Docker and Helm repositories — which is exactly what this needs, and
+      requires no licence key. If you hold an Artifactory Pro or Enterprise licence, set
+      <code>ARTIFACTORY_IMAGE</code> to the Pro image instead; nothing downstream changes, because
+      <code>roksbnkctl</code> only ever speaks the OCI registry API.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">05</div>
+  <div class="body">
+    <span class="tag tag-ui">Artifactory console</span>
+    <h3>Create a user and an access token</h3>
+    <p>Under <strong>Administration → User Management</strong>, create a user such as
+    <code>bnk-mirror-bot</code> with <strong>Deploy/Cache</strong> and <strong>Read</strong>
+    permission on <code>bnk-mirror</code>. Then generate an <strong>access token</strong> for it.</p>
+    <p>Use a token rather than the account password. It is scoped to what it can do and can be
+    revoked on its own, which matters here because you are about to hand it to an automated
+    pipeline.</p>
+  </div>
+</div>
+
+<h2 class="sec">Mirror it — interactively</h2>
+
+<div class="step">
+  <div class="num">06</div>
+  <div class="body">
+    <span class="tag tag-cli">roksbnkctl</span>
+    <h3>Point a workspace at the repository</h3>
+    <p>Create a mirror-only workspace — <code>cluster.create: false</code> means no cluster is ever
+    built — then set the four fields that select the target.</p>
+    <pre>roksbnkctl -w art registry target generic
+roksbnkctl -w art registry target generic_host        artifactory.example.com
+roksbnkctl -w art registry target generic_repo_prefix bnk-mirror
+roksbnkctl -w art registry target generic_username    bnk-mirror-bot
+
+<span class="c"># the token on stdin — never as an argument</span>
+echo "$ART_TOKEN" | roksbnkctl -w art registry target generic_password --password-stdin</pre>
+    <p>An argument is visible in <code>ps</code> output, in shell history, and in a terminal
+    recording. <code>--password-stdin</code> exists so the token is in none of them.</p>
+    <div class="note">
+      <span class="lbl">Addressing</span>
+      <p><code>roksbnkctl</code> composes references as
+      <code>&lt;host&gt;/&lt;prefix&gt;/&lt;image&gt;</code>, which is Artifactory's
+      <strong>repository-path</strong> method. If your instance is configured for the
+      <strong>subdomain</strong> method instead, put the full subdomain in <code>generic_host</code>
+      and leave <code>generic_repo_prefix</code> empty. Getting this wrong produces a
+      <code>404</code> that reads like a bad prefix and sends you looking in the wrong place.</p>
+    </div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">07</div>
+  <div class="body">
+    <span class="tag tag-cli">roksbnkctl</span>
+    <h3>Replicate, then verify</h3>
+    <pre>roksbnkctl -w art registry bom        <span class="c"># what BNK needs — offline</span>
+roksbnkctl -w art registry diff       <span class="c"># what is missing right now</span>
+roksbnkctl -w art registry replicate  <span class="c"># copy it, by digest</span>
+roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
+    <p><strong>Verify is the step that means anything.</strong> <code>replicate</code> reports what
+    it pushed; <code>verify</code> independently re-reads the bill of materials and checks every
+    artifact against the digest it should have, so a partial copy or a tag that moved underneath you
+    is caught here rather than at install time.</p>
+    <div class="note">
+      <span class="lbl">If replicate stops partway</span>
+      <p>The copy is per-artifact, so it fails partway rather than cleanly — usually a repository
+      quota or a filestore near capacity. Run <code>diff</code> to see what actually landed, then
+      <code>replicate</code> again; it copies only what is missing.</p>
+    </div>
+  </div>
+</div>
+
+<h2 class="sec">Mirror it — unattended</h2>
+
+<div class="step">
+  <div class="num">08</div>
+  <div class="body">
+    <span class="tag tag-ctr">Container</span>
+    <h3>The same work, with no config file</h3>
+    <p>Steps 6 and 7 are the interactive path an operator uses to test a mirror. In a pipeline the
+    same binary runs the same verbs in a container, with no <code>config.yaml</code> anywhere —
+    every setting arrives as an environment variable, because a CI runner has no shell, no prompts,
+    and nowhere to stage a file.</p>
+    <p>Each field maps one-to-one onto the command you just ran by hand:</p>
+    <div class="scroll"><table>
+      <tr><th>Interactive</th><th>Unattended</th></tr>
+      <tr><td><code>registry target generic_host</code></td><td><code>ROKSBNKCTL_GENERIC_HOST</code></td></tr>
+      <tr><td><code>registry target generic_repo_prefix</code></td><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td></tr>
+      <tr><td><code>registry target generic_username</code></td><td><code>ROKSBNKCTL_GENERIC_USERNAME</code></td></tr>
+      <tr><td><code>registry target generic_password</code></td><td><code>ROKSBNKCTL_GENERIC_PASSWORD</code></td></tr>
+    </table></div>
+    <p>Put them in a secret, keeping the token off the command line here too:</p>
+    <pre>printf '%s' "$ART_TOKEN" | kubectl -n bnk-ci create secret generic artifactory-mirror \
+  --from-literal=host=artifactory.example.com \
+  --from-literal=repo=bnk-mirror \
+  --from-literal=username=bnk-mirror-bot \
+  --from-file=password=/dev/stdin</pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">09</div>
+  <div class="body">
+    <span class="tag tag-ctr">Argo Workflows</span>
+    <h3>Run it as a workflow</h3>
+    <p>The supplied workflow runs the same five verbs as pipeline steps, and gates on
+    <code>verify</code> rather than on <code>replicate</code>.</p>
+    <pre>argo submit -n bnk-ci --wait wf-artifactory-mirror.yaml</pre>
+    <p>It is deliberately self-contained: it reads the one secret above rather than any wider
+    configuration, so it can be applied to any cluster already running Argo Workflows. There is no
+    teardown on failure — a failed run leaves its workspace in place so the next one resumes, and
+    because <code>replicate</code> skips artifacts already present at the right digest, a re-run
+    costs only what did not land.</p>
+  </div>
+</div>
+
+<div class="done">
+  <h3>What success looks like</h3>
+  <p>Both paths end on the same two lines. The second one is the one to gate on:</p>
+  <pre>✓ mirrored 89 artifacts into artifactory.example.com/bnk-mirror
+✓ all 89 BOM artifacts present + digest-matched in the mirror</pre>
+</div>
+
+<footer>
+  Browse the result at <code>https://artifactory.example.com/ui/repos/tree/General/bnk-mirror</code>.
+  To empty the mirror without touching the server, run
+  <code>roksbnkctl -w art registry delete</code>.
+</footer>
+</div>

@@ -4,16 +4,6 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## v1.48.0 — 2026-08-19
-
-Two bugs found by **running the v1.47.0 demo**, both of which cost a full demo cycle before they were understood. Neither was reachable from CI: one needs a real OpenShift ingress operator racing a real FLO, the other needs a terraform state large enough to contain an IBM resource-group object.
-
-### Fixed
-
-- **`bnk up` now recovers when FLO's crd-installer loses the gateway-api admission-policy race, instead of failing the whole apply.** The sweep goroutine deletes OpenShift's `openshift-ingress-operator-gatewayapi-crd-admission` policy every 5s for the duration of the apply, but it is a **race**, not a deterministic block: the ingress operator can recreate the policy in the window between a sweep tick and FLO's CRD create, and a single denied `backendtlspolicies` create leaves the crd-installer Job failed and `CRDInstallerAvailable=False` **permanently** — FLO does not retry it. The apply then burned the full CNEInstance timeout and failed, and the only fix was by hand: delete the policy, delete the failed Job, `rollout restart` the operator. That sequence now runs automatically, while `tfx wait` is still waiting, so the apply converges rather than needing a re-run.
-
-  Deliberately narrow in three ways, because the repair restarts FLO and a false positive would bounce the operator mid-install: it matches the condition **message** (`admission policy`) and not merely `CRDInstallerAvailable=False` — which is the normal state for much of an install — so an unrelated installer failure (an `ImagePullBackOff`, say) is left alone to report its own error; it fires **once** per apply, since if one restart does not clear it the cause is not the race; and it is best-effort throughout, so a partial repair still improves the odds and the apply's own error remains the source of truth. (#96)
-
 ## v1.47.0 — 2026-08-19
 
 Everything here was found by **running the two demos end to end** against v1.46.0, in an account where every prior resource had been cleaned up. Nothing in this release was found by reading code or by CI — each bug needed a real cluster, a real Transit Gateway, or a genuinely clean slate to appear at all.
