@@ -78,7 +78,7 @@ need jq; need curl; need "$RBK"
 teardown(){
   banner "TEARDOWN — empty the mirror, keep Artifactory"
   say "The Artifactory host itself is left alone: this demo did not build it."
-  run "$RBK" -w "$WS" registry delete --auto || true
+  run "$RBK" -w "$WS" registry delete --force || true
   ok "mirror emptied"
   exit 0
 }

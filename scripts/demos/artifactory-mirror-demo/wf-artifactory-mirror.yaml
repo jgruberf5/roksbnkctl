@@ -37,6 +37,19 @@ spec:
         value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.0
       - name: bnk-version
         value: 2.3.0-3.2598.3-0.0.170
+      # No default for the bucket: it is account-specific (bnk-artifacts-<hex>).
+      - name: cos-instance
+        value: bnk-supply-chain
+      - name: cos-bucket
+        value: ""
+      - name: cos-region
+        value: us-south
+      - name: region
+        value: us-east
+      - name: resource-group
+        value: default
+      - name: prefix
+        value: art-mirror
   # No onExit teardown: a failed replicate should leave the workspace on the PVC
   # so the next run RESUMES. `registry replicate` is idempotent — an artifact
   # already present at the right digest is skipped — so a re-run costs only the
@@ -90,10 +103,26 @@ spec:
         args: ["roksbnkctl {{inputs.parameters.cmd}}"]
         workingDir: /work
         env:
+          # init --non-interactive REQUIRES these three; without them it refuses
+          # with "missing required field(s): ibmcloud.region, ibmcloud.resource_group,
+          # prefix" before any registry work starts. They are not defaulted, and
+          # the workflow shipped without them.
+          - { name: ROKSBNKCTL_REGION,         value: "{{workflow.parameters.region}}" }
+          - { name: ROKSBNKCTL_RESOURCE_GROUP, value: "{{workflow.parameters.resource-group}}" }
+          - { name: ROKSBNKCTL_PREFIX,         value: "{{workflow.parameters.prefix}}" }
           - { name: ROKSBNKCTL_CLUSTER_CREATE,  value: "false" }
           - { name: ROKSBNKCTL_CLUSTER_NAME,    value: "none" }
           - { name: ROKSBNKCTL_REGISTRY_TARGET, value: "generic" }
           - { name: ROKSBNKCTL_MANIFEST_VERSION, value: "{{workflow.parameters.bnk-version}}" }
+          # Where the FAR pull credential lives. REQUIRED: `registry bom` resolves
+          # the F5 service account out of COS, and the built-in default bucket
+          # ("bnk-artifacts") belongs to somebody else -- COS bucket names are
+          # globally unique, so every account's is suffixed. Getting this wrong
+          # fails with AccessDenied rather than NotFound, which reads like a bad
+          # API key and sends you to check the wrong credential.
+          - { name: ROKSBNKCTL_COS_INSTANCE, value: "{{workflow.parameters.cos-instance}}" }
+          - { name: ROKSBNKCTL_COS_BUCKET,   value: "{{workflow.parameters.cos-bucket}}" }
+          - { name: ROKSBNKCTL_COS_REGION,   value: "{{workflow.parameters.cos-region}}" }
           # The four fields that select Artifactory, from the Secret. These are
           # the exact env equivalents of the `registry target` verbs the operator
           # ran by hand — same fields, different delivery.
