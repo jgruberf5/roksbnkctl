@@ -262,8 +262,12 @@ write_files:
   # repoTypes creates JFrog's DEFAULT repositories for each type, so you get
   # docker-local / docker-remote / docker, not a name of your choosing. There is
   # no field for custom names; that is why the mirror targets docker-local.
+  # NO `owner:` here. cloud-init's write_files resolves owner through getpwnam,
+  # so a NUMERIC uid fails with "Unknown user or group: 1030" -- and the failure
+  # aborts the whole write_files MODULE, silently dropping every entry after it
+  # (which cost this script its Caddyfile, and therefore all TLS). Ownership is
+  # set in runcmd below, where numeric ids are fine.
   - path: /opt/artifactory/artifactory.config.import.yml
-    owner: '1030:1030'
     permissions: '0640'
     content: |
       version: 1
