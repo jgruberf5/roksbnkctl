@@ -421,7 +421,13 @@ roksbnkctl -w art registry verify     <span class="c"># prove it</span></pre>
     <h3>Run it as a workflow</h3>
     <p>The supplied workflow runs the same five verbs as pipeline steps, and gates on
     <code>verify</code> rather than on <code>replicate</code>.</p>
-    <pre>argo submit -n bnk-ci --wait wf-artifactory-mirror.yaml</pre>
+    <pre>argo submit -n bnk-ci --wait wf-artifactory-mirror.yaml \
+  -p cos-bucket=bnk-artifacts-&lt;hex&gt;</pre>
+    <p>The workflow ships alongside this guide as
+    <code>scripts/demos/artifactory-mirror-demo/wf-artifactory-mirror.yaml</code>, and the same
+    YAML is reproduced in full in the handbook appendix
+    <em>"Replicating FAR into a JFrog Artifactory"</em> if you would rather read it than open the
+    file.</p>
     <p>It is deliberately self-contained: it reads the one secret above rather than any wider
     configuration, so it can be applied to any cluster already running Argo Workflows. There is no
     teardown on failure — a failed run leaves its workspace in place so the next one resumes, and
