@@ -123,12 +123,23 @@ Reports whether the workspace tree is owner-only, and tightens it if not.
 
 `config.yaml` can hold `ibmcloud.api_key_b64` and `registry.generic_password_b64`; `state/terraform.tfstate` holds whatever those resolve to. All of it is base64 at most, which is obfuscation and not encryption — the file mode is the only protection, so `config.yaml` is `0600` and the directories are `0700`.
 
-- `✓ owner-only` — nothing to do.
-- `⚠ was readable by other users; tightened N path(s)` — the workspace was written by a release before v1.50.0, which used `0644`/`0755`. The mode is fixed from here on. **The exposure that already happened is not undone**: on a host you share with another account, rotate the API key.
-- `✗ readable by other users and could not be tightened` — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (the `.bootstrap-state` directory on a WSL DrvFs mount hits this). Move the workspace onto a filesystem that can hold `0600`, or use the keychain or env-var credential paths so nothing sensitive lands in the file.
-- `– not applicable on Windows` — Go's `Chmod` on Windows only toggles the read-only bit, so there is no owner-only mode to assert.
+The check is **read-only**. Loading a workspace already tightens what it can, so anything still loose by the time `doctor` looks is something the repair could *not* fix — which is exactly what is worth reporting.
 
-Reading a workspace tightens it too, so this check usually reports `✓` even on a tree that was loose a moment ago; the warning row is the one that tells you rotation is worth considering.
+- `✓ owner-only` — nothing to do.
+- `✗ <path> readable by other users and could not be tightened (N path(s))` — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (a WSL DrvFs mount without metadata, an SMB share). Move the workspace onto a filesystem that can hold `0600`, or use the keychain or env-var credential paths so nothing sensitive lands in the file at all.
+
+The row is **absent on Windows**: Go's `Chmod` there only toggles the read-only bit, so there is no owner-only mode to assert and a permanent unactionable warning would be worse than no row.
+
+The scope is the workspace directory and its immediate children: `config.yaml`, `registry-mirror.json`, `cluster-outputs.json`, `ssh/`, and every `state-*` tree. Children are enumerated rather than matched against a list of known names, so a state tree added by a future phase is covered the day it appears. Owner-only on a state directory makes everything inside it unreachable regardless of those files' own modes, which is why the check does not walk deeper.
+
+The **repair** happens on load, not here, and announces itself once:
+
+```
+⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+```
+
+Workspaces written by a release before v1.50.0 are `0644`/`0755` on disk and will produce that line the first time they are read. **The exposure that already happened is not undone** — on a shared host, rotate the API key.
 
 ### `ibmcloud api key`
 

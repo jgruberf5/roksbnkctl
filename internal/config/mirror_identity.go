@@ -42,14 +42,28 @@ func (m MirrorIdentity) HostPath() string {
 // MirrorTargetKind resolves the configured backend: override (the `--target`
 // flag, "" when unset) > registry.target > "icr", the default.
 func MirrorTargetKind(ws *Workspace, override string) string {
-	kind := "icr"
-	if ws != nil && ws.Registry != nil && ws.Registry.Target != "" {
-		kind = ws.Registry.Target
-	}
-	if override != "" {
-		kind = override
-	}
+	kind, _ := configuredTargetKind(ws, override)
 	return kind
+}
+
+// configuredTargetKind additionally reports whether the kind was actually
+// STATED — by the flag or by registry.target — as opposed to falling through to
+// the "icr" default.
+//
+// The distinction matters when judging a record. `registry replicate --target
+// generic` is a supported way to mirror without putting `target: generic` in
+// config.yaml (two shipped demos do exactly that), so a workspace can hold a
+// record for a generic mirror while its config states no target at all.
+// Treating the unstated default as an assertion would call that a mismatch and
+// refuse every subsequent `bnk up`.
+func configuredTargetKind(ws *Workspace, override string) (string, bool) {
+	if override != "" {
+		return override, true
+	}
+	if ws != nil && ws.Registry != nil && ws.Registry.Target != "" {
+		return ws.Registry.Target, true
+	}
+	return "icr", false
 }
 
 // ResolveMirrorIdentity resolves the mirror the workspace config points at.
@@ -114,11 +128,20 @@ func MirrorRecordMismatch(ws *Workspace, rec *RegistryMirror, override string) s
 	if rec == nil || ws == nil {
 		return ""
 	}
-	kind := MirrorTargetKind(ws, override)
-	if rec.Target != "" && rec.Target != kind {
+	kind, stated := configuredTargetKind(ws, override)
+	if stated && rec.Target != "" && rec.Target != kind {
 		return fmt.Sprintf("it was written for target %q, the configured target is %q", rec.Target, kind)
 	}
-	id, ok := ResolveMirrorIdentity(ws, override)
+	// With no target stated anywhere, the "icr" default is a fallback and not a
+	// claim about this workspace's mirror — so check the record's host and
+	// repository against the config read through the record's OWN kind. A record
+	// for a mirror the config cannot describe at all resolves to "cannot tell"
+	// below and is left alone.
+	resolveAs := override
+	if !stated && rec.Target != "" {
+		resolveAs = rec.Target
+	}
+	id, ok := ResolveMirrorIdentity(ws, resolveAs)
 	if !ok {
 		return "" // cannot resolve the configured mirror — say nothing rather than guess
 	}

@@ -126,6 +126,89 @@ func TestMirrorAndClusterRecordsAreOwnerOnly(t *testing.T) {
 	}
 }
 
+// The workspace grows a state tree per phase (state-cluster, state-testing,
+// state-gateway, …). A hand-maintained list of directory names is one new phase
+// away from silently missing one, so the repair enumerates the workspace's
+// children instead — and this pins that, by planting a directory no list would
+// have contained.
+func TestRepairCoversEveryStateTreeNotJustTheOnesItKnows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go's Chmod on Windows only toggles the read-only bit")
+	}
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	if err := SaveWorkspace("phases", &Workspace{Prefix: "phases"}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := WorkspaceDir("phases")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Every state tree holds a terraform.tfstate, which holds whatever the
+	// credentials resolve to. "state-future" stands in for the next phase.
+	planted := []string{"state-cluster", "state-testing", "state-gateway", "state-future", "ssh"}
+	for _, sub := range planted {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfvars.user"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadWorkspace("phases"); err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	for _, sub := range append(planted, "terraform.tfvars.user") {
+		p := filepath.Join(dir, sub)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got&0o077 != 0 {
+			t.Errorf("%s is mode %#o — still reachable by other users", p, got)
+		}
+	}
+}
+
+// Tightening masks the group and other bits rather than forcing a flat
+// 0600/0700, because it runs over entries the workspace layout does not
+// enumerate. Clearing an owner-execute bit from something executable would
+// break it, and a repair that removes access must not also remove function.
+func TestTighteningPreservesTheOwnersExecuteBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go's Chmod on Windows only toggles the read-only bit")
+	}
+	t.Setenv(ROKSBNKCTLHomeEnv, t.TempDir())
+	if err := SaveWorkspace("exec", &Workspace{Prefix: "exec"}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := WorkspaceDir("exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "a-binary")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SecureWorkspacePerms("exec"); err != nil {
+		t.Fatalf("SecureWorkspacePerms: %v", err)
+	}
+
+	info, err := os.Stat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Errorf("%s is mode %#o, want 0700 — owner execute must survive the repair", bin, got)
+	}
+}
+
 // A tree that cannot be tightened must not take the command down with it — the
 // demos run against .bootstrap-state on a DrvFs mount that cannot hold 0600,
 // and a hard failure there would break every run.

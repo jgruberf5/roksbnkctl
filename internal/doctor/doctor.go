@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"text/tabwriter"
@@ -129,7 +130,13 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	}
 	out = append(out, checkWorkspace(cctx))
 	if cctx.Workspace != nil {
-		out = append(out, checkWorkspacePerms(cctx))
+		// Not on Windows: Go's Chmod there only toggles the read-only bit, so
+		// there is no owner-only mode to assert. A skipped row would render as ⚠
+		// (symbolFor) and sit there permanently, unactionable — better to have no
+		// row than a warning nobody can clear.
+		if runtime.GOOS != "windows" {
+			out = append(out, checkWorkspacePerms(cctx))
+		}
 		out = append(out, checkAPIKey(cctx))
 		out = append(out, checkIBMAuth(ctx, cctx))
 		out = append(out, checkQuota(ctx, cctx))
@@ -264,19 +271,19 @@ func checkWorkspace(cctx *config.Context) withWhy {
 func checkWorkspacePerms(cctx *config.Context) withWhy {
 	const why = "credentials in the workspace are protected by file mode alone"
 	c := Check{Name: "workspace permissions"}
-	if runtime.GOOS == "windows" {
-		c.Status = StatusSkipped
-		c.Detail = "not applicable on Windows (no POSIX file modes)"
-		return withWhy{Check: c, Why: why}
-	}
-	fixed, err := config.SecureWorkspacePerms(cctx.WorkspaceName)
+	// Read-only on purpose: loading the workspace has already repaired what it
+	// could, so anything still loose here is something the repair could NOT fix
+	// — a read-only mount, a filesystem with no POSIX modes. A doctor check that
+	// also mutated would report the state it had just created.
+	loose, err := config.LooseWorkspacePaths(cctx.WorkspaceName)
 	switch {
 	case err != nil:
 		c.Status = StatusError
-		c.Detail = fmt.Sprintf("readable by other users and could not be tightened: %v", err)
-	case len(fixed) > 0:
-		c.Status = StatusWarning
-		c.Detail = fmt.Sprintf("was readable by other users; tightened %d path(s) — rotate the API key if this host is shared", len(fixed))
+		c.Detail = err.Error()
+	case len(loose) > 0:
+		c.Status = StatusError
+		c.Detail = fmt.Sprintf("%s readable by other users and could not be tightened (%d path(s)) — move the workspace to a filesystem that can hold 0600, or keep credentials out of config.yaml",
+			filepath.Base(loose[0]), len(loose))
 	default:
 		c.Status = StatusOK
 		c.Detail = "owner-only"

@@ -160,3 +160,67 @@ func TestMirrorIdentityHostPath(t *testing.T) {
 		}
 	}
 }
+
+// `registry replicate --target generic` is a supported way to mirror without
+// putting `target: generic` in config.yaml — scripts/demos/far-replication-demo
+// and shared-licensing-cli-demo both do exactly that, passing the flag and never
+// setting ROKSBNKCTL_REGISTRY_TARGET.
+//
+// Those workspaces end up holding a record for a generic mirror while their
+// config states no target at all. Reading the unstated "icr" default as an
+// assertion would call that a mismatch and refuse every subsequent `bnk up` —
+// breaking two shipped demos for a mirror that is perfectly correct.
+func TestAnUnstatedTargetIsADefaultNotAnAssertion(t *testing.T) {
+	// Exactly what the demos leave behind: generic_host + prefix configured,
+	// `target:` never set, record written under `--target generic`.
+	ws := &Workspace{Registry: &RegistryCfg{
+		GenericHost:       "far.example.com",
+		GenericRepoPrefix: "bnk-mirror",
+	}}
+	rec := &RegistryMirror{
+		Target:    "generic",
+		Namespace: "bnk-mirror",
+		ChartHost: "far.example.com/bnk-mirror",
+		ImageHost: "far.example.com/bnk-mirror",
+	}
+
+	if why := MirrorRecordMismatch(ws, rec, ""); why != "" {
+		t.Fatalf("a flag-driven generic mirror must survive a later `bnk up`, got: %s", why)
+	}
+	if err := MirrorRecordMismatchError("demo", ws, rec); err != nil {
+		t.Fatalf("the demo path must not be refused: %v", err)
+	}
+
+	// The real drift is still caught in the same configuration: same unstated
+	// target, record written for a different repository.
+	stale := &RegistryMirror{
+		Target:    "generic",
+		Namespace: "docker-local",
+		ImageHost: "far.example.com/docker-local",
+	}
+	why := MirrorRecordMismatch(ws, stale, "")
+	if why == "" {
+		t.Fatal("an unstated target must not disable the repository check")
+	}
+	if !strings.Contains(why, "docker-local") || !strings.Contains(why, "bnk-mirror") {
+		t.Errorf("the reason should name both repositories, got: %s", why)
+	}
+}
+
+// Stating the target explicitly keeps it authoritative: config that says icr
+// must not silently accept a record written for generic.
+func TestAStatedTargetIsAuthoritative(t *testing.T) {
+	ws := &Workspace{
+		Prefix:   "bnkci",
+		IBMCloud: IBMCloudCfg{Region: "us-south"},
+		Registry: &RegistryCfg{Target: "icr", GenericHost: "far.example.com"},
+	}
+	rec := &RegistryMirror{Target: "generic", Namespace: "bnkci"}
+	why := MirrorRecordMismatch(ws, rec, "")
+	if why == "" {
+		t.Fatal("config stating target: icr must not trust a record written for generic")
+	}
+	if !strings.Contains(why, "generic") || !strings.Contains(why, "icr") {
+		t.Errorf("the reason should name both targets, got: %s", why)
+	}
+}
