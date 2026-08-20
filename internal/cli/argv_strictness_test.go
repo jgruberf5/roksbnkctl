@@ -24,9 +24,8 @@
 //     before any RunE — no subprocess needed, no preflight
 //     involvement.
 //
-// Sub-test → acceptance-criterion map (where validator-Issue-1 AC
-// refers to issues/issue_sprint21_validator.md, staff-Issue-1 AC
-// refers to issues/issue_sprint21_staff.md):
+// Sub-test → acceptance-criterion map (the "validator AC" numbers below
+// are the validator's; the "staff AC" numbers are the staff review's):
 //
 //	StuckTogether_WS_RejectedWithActionableError
 //	    → validator AC1 (stuck-together rejected; stderr names
@@ -55,8 +54,7 @@
 //
 //	NoArgs_Sweep/<cmd> → validator AC6 (one sub-test per command
 //	    staff added `cobra.NoArgs` to, per the audit table in
-//	    issues/issue_sprint21_staff.md §"Closure — staff,
-//	    2026-05-21")
+//	    the 2026-05-21 review closure)
 //
 // Discipline:
 //   - One new file only; no edits to any pre-existing _test.go.
@@ -223,7 +221,7 @@ func runRoksbnkctlBin(t *testing.T, home string, argv ...string) (stdout, stderr
 // <fixture>`. Maps to validator AC1 + staff AC1/AC2.
 //
 // Asserted contract per the staff smoke transcript at
-// issues/issue_sprint21_staff.md §"Closure — staff, 2026-05-21" Shape 1:
+// Shape 1 of the 2026-05-21 review closure:
 //   - non-zero exit
 //   - stderr names the literal offending token `-ws`
 //   - stderr names BOTH acceptable forms (substring `-w s` AND `-w=s`)
@@ -409,7 +407,7 @@ func TestArgvStrictness_NoArgs_Init_StrayPositional(t *testing.T) {
 
 // TestArgvStrictness_NoArgs_Sweep runs one sub-test per command staff
 // added `cobra.NoArgs` to (verified against the audit table at
-// issues/issue_sprint21_staff.md §"Closure — staff, 2026-05-21"). Each
+// the 2026-05-21 review closure). Each
 // sub-test drives a stray-positional invocation and asserts the error.
 // Maps to validator AC6.
 //

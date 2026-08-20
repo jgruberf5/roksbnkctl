@@ -1,7 +1,7 @@
 package naming
 
 // Sprint 26 validator Issue 1 — hermetic coverage for the prefix-driven
-// naming package (issues/issue_sprint26_validator.md). Additive new file.
+// naming package. Additive new file.
 //
 // Three surfaces under test, against staff's shipped API
 // (internal/naming/naming.go):

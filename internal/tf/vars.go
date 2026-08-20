@@ -72,8 +72,8 @@ func WriteTFVarsForWorkspace(path, workspaceName string, ws *config.Workspace, k
 //
 //   - ws.Prefix == "" (legacy config): the SPARSE render — only the fields
 //     the user explicitly set in config.yaml are emitted; every resource
-//     name falls through to the upstream TF module defaults. This path is
-//     byte-identical to pre-Sprint-26 and is what an un-migrated
+//     name falls through to the upstream TF module defaults. This path
+//     is unchanged from before prefixes existed, and is what an un-migrated
 //     config.yaml renders.
 //   - ws.Prefix != "" (Sprint 26 prefix-driven config): the FULL render —
 //     every account-scoped resource NAME is derived from the prefix via
@@ -161,7 +161,7 @@ func renderTFVars(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirr
 
 // renderSparseBody is the legacy (empty-Prefix) render body: only fields the
 // user explicitly set in config.yaml are emitted; resource names fall
-// through to the upstream module defaults. Byte-identical to pre-Sprint-26.
+// through to the upstream module defaults.
 func renderSparseBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	// IBM Cloud
 	if ws.IBMCloud.Region != "" {

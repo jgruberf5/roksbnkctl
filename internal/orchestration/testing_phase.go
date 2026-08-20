@@ -12,7 +12,7 @@ package orchestration
 // This file owns: openTestingTF (the state-testing/ workspace opener),
 // RunTestingUp / RunTestingDown (mirrors RunTrialUp / RunTrialDown), the
 // jumphost SSH-target seeding (moved here from the BNK/trial phase —
-// tryAutoJumphost / tryAutoClusterJumphosts), the pre-Sprint-28 jumphost
+// tryAutoJumphost / tryAutoClusterJumphosts), the original jumphost
 // migration (evict module.testing.* from state/ into state-testing/), and
 // the prefix-writer + errgroup helpers the parallel BNK ∥ Testing up/down
 // in lifecycle.go uses.

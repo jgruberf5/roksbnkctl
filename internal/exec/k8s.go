@@ -258,7 +258,7 @@ func (b *K8sBackend) runOnOpsPod(ctx context.Context, cs kubernetes.Interface, c
 	// through verbatim — `["ibmcloud", "iam", "oauth-tokens"]` runs
 	// `ibmcloud iam oauth-tokens` in the pod, no entrypoint double-up.
 	//
-	// Sprint 4 validator Issue 7 carry-over (interim resolution):
+	// Interim resolution:
 	// the original concern was that argv[0] would double up against
 	// the image's ENTRYPOINT. Verified that exec doesn't prepend
 	// ENTRYPOINT, so this is a no-op risk for the long-lived path.
@@ -566,7 +566,7 @@ func buildJobSpec(ns string, jobName, image string, cmd []string, opts RunOpts, 
 // keep the legacy "image ENTRYPOINT picks the binary" shape, pass
 // args=nil.
 //
-// Sprint 4 validator Issue 7 carry-over: the dns-probe Job sets
+// The dns-probe Job sets
 // `cmd=["/usr/local/bin/roksbnkctl"]` + `args=["test","dns",...]` so
 // the tools image's `ibmcloud` ENTRYPOINT doesn't override the binary
 // the dns probe wants to run. PRD 03 §"DNS probe" §"K8s shape".
@@ -621,8 +621,8 @@ func buildJobSpecWithArgs(ns string, jobName, image string, cmd, args []string, 
 						// 1000680000-1000689999); pinning 65532 collides
 						// and the Job is rejected at admission with
 						// "Invalid value: 65532: must be in the ranges
-						// [...]" — see PRD 05 §"Risks" + Sprint 5 staff
-						// Issue 2 carry-over. Leaving RunAsUser unset
+						// [...]" — see PRD 05 §"Risks".
+						// Leaving RunAsUser unset
 						// lets the SCC mutating-admission webhook pick
 						// a valid UID per namespace.
 						SeccompProfile: &corev1.SeccompProfile{

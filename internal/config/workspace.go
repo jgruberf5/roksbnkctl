@@ -30,8 +30,8 @@ type Workspace struct {
 	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
 	Agent    *AgentCfg            `yaml:"agent,omitempty"`
 
-	// Prefix is the workspace's account-scoped resource-name base
-	// (Sprint 26, issues/issue_sprint26_staff.md). When non-empty, the
+	// Prefix is the workspace's account-scoped resource-name base.
+	// When non-empty, the
 	// tfvars render derives every IBM Cloud resource name from it via
 	// internal/naming.Derive and emits the full name set, so two
 	// workspaces that both create infra no longer collide on the upstream
@@ -771,7 +771,7 @@ type BNKNetworkCfg struct {
 // toggle here.
 // StateCfg selects where terraform state lives (PRD 16). Backend "" or
 // "local" (the default) keeps per-phase local tfstate under the workspace
-// dir — byte-identical to pre-Sprint-31. "s3" stores each phase's state in
+// dir — the original behaviour. "s3" stores each phase's state in
 // an S3-compatible bucket (IBM COS), so a stateless runner / parallel CI
 // needs no shared volume, with native lockfile locking (terraform >= 1.10).
 // Additive + omitempty — an absent `state:` block loads as the local default.

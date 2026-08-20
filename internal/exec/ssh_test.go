@@ -434,7 +434,7 @@ func TestSSHBackend_BootstrapNonUbuntuFails(t *testing.T) {
 // real ctx-cancel behaviour against a real sshd; this unit test guards
 // against a regression where the backend never even tries to cancel.
 func TestSSHBackend_ContextCancel(t *testing.T) {
-	t.Skip("ctx-cancel timing is dependent on gliderlabs handler scheduling; covered at integration tier — see issues/issue_sprint4_validator.md roadmap entry")
+	t.Skip("ctx-cancel timing is dependent on gliderlabs handler scheduling; covered at integration tier")
 	b := resolveSSH(t)
 
 	f := startFakeSSHD(t, fakeSSHDOpts{

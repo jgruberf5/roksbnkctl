@@ -679,7 +679,7 @@ func persistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.W
 		Region:          info.Region,
 		ResourceGroupID: info.ResourceGroupID,
 		VPCID:           info.VPCID(),
-		// Sprint 28: the Testing phase looks the TGW up by NAME, so carry
+		// The Testing phase looks the TGW up by NAME, so carry
 		// it in the handoff (roks_transit_gateway_name root output). Empty
 		// on flows that don't emit it (the testing phase then falls back to
 		// the config.yaml-rendered testing_transit_gateway_name).

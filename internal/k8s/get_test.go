@@ -13,9 +13,8 @@
 // Validator note: the original brief assumed a fake-clientset-friendly
 // surface; staff's chosen design (cli-runtime resource.Builder) is the
 // kubectl-byte-equivalent path PRD 02 requires, but trades unit
-// testability for output fidelity. We document this in
-// issues/issue_sprint2_validator.md as informational and rely on the
-// golden tests for end-to-end coverage.
+// testability for output fidelity. We document that trade-off as
+// informational and rely on the golden tests for end-to-end coverage.
 
 package k8s
 

@@ -30,7 +30,7 @@ const iamTokenURL = "https://iam.cloud.ibm.com/identity/token"
 // against the home region + 301/Location parse, or a probe across the
 // public region list). Tests wire it to an in-memory fake. nil is
 // acceptable on the Client and falls back to the workspace's home
-// region (preserves pre-Sprint-18 behaviour for same-region buckets).
+// region (unchanged for same-region buckets).
 type BucketRegionResolver func(ctx context.Context, instanceCRN, bucket string) (string, error)
 
 // newCallCount is incremented every time New / NewWithResolver build a
@@ -91,7 +91,7 @@ type Client struct {
 	bucketRegions sync.Map // map[string]string
 
 	// resolver is the seam that maps (instanceCRN, bucket) → region.
-	// nil resolver = fall back to home region (preserves pre-Sprint-18
+	// nil resolver = fall back to home region (the original
 	// behaviour for workspaces where the bucket and the cluster share
 	// a region). Tests inject a fake.
 	resolver BucketRegionResolver
@@ -120,8 +120,8 @@ func New(apiKey, region, instanceCRN string) (*Client, error) {
 // the test can prove the per-bucket S3 client is built against the
 // resolved region, not the workspace's home region.
 //
-// resolver may be nil; nil → home-region fallback (same shape as
-// pre-Sprint-18 behaviour).
+// resolver may be nil; nil → home-region fallback — the original
+// behaviour, unchanged for same-region buckets.
 func NewWithResolver(apiKey, region, instanceCRN string, resolver BucketRegionResolver) (*Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("api key is empty")
@@ -179,7 +179,7 @@ func (c *Client) WithResolver(r BucketRegionResolver) *Client {
 }
 
 // Region returns the home region the Client was constructed with.
-// Sprint 18: kept stable so the existing bucket.go callsite
+// Kept stable so the existing bucket.go callsite
 // (LocationConstraint composition in CreateBucket) keeps compiling
 // without an edit to that file.
 func (c *Client) Region() string { return c.region }
@@ -195,7 +195,7 @@ func (c *Client) InstanceCRN() string { return c.instanceCRN }
 // the in-memory cache and never make a lookup round-trip.
 //
 // If the resolver is nil OR returns "" without an error, the home
-// region is used as a safe fallback (preserves pre-Sprint-18 behaviour
+// region is used as a safe fallback (the original behaviour
 // for workspaces where bucket and cluster share a region).
 //
 // Errors from the resolver are wrapped with a hint that names the

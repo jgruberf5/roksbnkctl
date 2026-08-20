@@ -51,7 +51,7 @@ type ClusterOutputs struct {
 	SubnetIDs        []string `json:"subnet_ids"`
 	TransitGatewayID string   `json:"transit_gateway_id,omitempty"`
 	// TransitGatewayName is the cluster's transit gateway NAME (not id).
-	// Sprint 28: the Testing phase's `module.testing` looks the gateway up
+	// The Testing phase's `module.testing` looks the gateway up
 	// by name (data.ibm_tg_gateway.transit_gateway, name = var
 	// testing_transit_gateway_name), so the standalone testing-phase run
 	// needs the name in the handoff. Populated from the cluster phase's

@@ -484,7 +484,7 @@ func TestRenderTFVars_FullPrefixRender_ExistingResources(t *testing.T) {
 }
 
 // TestRenderTFVars_LegacySparse_ByteUnchanged is the backward-compat pin:
-// an empty-Prefix (pre-Sprint-26) workspace must render the OLD sparse body
+// an empty-Prefix (legacy) workspace must render the OLD sparse body
 // byte-for-byte, so existing workspaces are unaffected by the full-render
 // addition. The expected bytes are spelled out literally (not regenerated
 // from the renderer) so a regression in the sparse path is caught against a

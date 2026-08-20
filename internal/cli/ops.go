@@ -151,7 +151,7 @@ func init() {
 // binary's version (e.g., :v0.10.0) on tagged builds; falls back to
 // :dev for development builds where Version == "dev".
 //
-// PRD 03 §"K8s" + Sprint 4 polish carry-over 5b — same logic the
+// PRD 03 §"K8s" — same logic the
 // docker backend's toolImages uses post-fix.
 func opsImage() string {
 	tag := Version

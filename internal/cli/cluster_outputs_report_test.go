@@ -72,14 +72,16 @@ func TestTheOutputsWriteWarningNamesTheRecoveryCommand(t *testing.T) {
 	}
 }
 
-// The three comments citing prompts/ pointed at a directory removed from the
-// repo at v1.12.0 (#120). One of them was the package comment on the binary's
-// entrypoint — the first thing a reader opens, opening with a dead end.
+// Comments citing prompts/ pointed at a directory removed at v1.12.0 (#120) —
+// one was the package comment on the binary's entrypoint, the first thing a
+// reader opens, opening with a dead end. #111 found a second family:
+// issues/issue_sprintNN_*.md, per-sprint review trackers that were never in the
+// repo at all, cited from 33 places.
 //
 // Scans every package, including tests: the sweep that filed #120 looked only
 // at non-test Go and missed a fourth citation in internal/cred/resolver_test.go,
 // which this found on its first run.
-func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
+func TestNoCommentCitesAnAbsentDocument(t *testing.T) {
 	if testing.Short() {
 		t.Skip("walks the repo; runs in the full suite")
 	}
@@ -87,8 +89,18 @@ func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "prompts")); err == nil {
 		t.Skip("prompts/ exists again; the citations are no longer dead")
 	}
-	// Split so this file does not match its own detection string.
-	needle := "prompts/" + "sprint"
+	// Split so this file does not match its own detection strings.
+	//
+	// Two families, both removed from the repo and both cited from comments
+	// long after: prompts/ went at v1.12.0 (#120), and the per-sprint review
+	// trackers issues/issue_sprintNN_*.md never shipped at all (#111). A
+	// reference to either is a dead end for a reader of the current release.
+	//
+	// Note what is NOT here: `Sprint N` and `PRD N` on their own. Those resolve
+	// — docs/PLAN.md carries 37 sprint sections and docs/prd/ holds the specs,
+	// both cited from the CHANGELOG header — so they are navigable references,
+	// not archaeology.
+	needles := []string{"prompts/" + "sprint", "issue_" + "sprint"}
 	// Derived, not hard-coded: a rename of this file would silently drop a
 	// hard-coded exclusion and leave the test failing on itself.
 	_, self, _, ok := runtime.Caller(0)
@@ -114,8 +126,11 @@ func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
 				return nil
 			}
 			for _, line := range strings.Split(string(body), "\n") {
-				if strings.Contains(line, needle) {
-					offenders = append(offenders, rel+": "+strings.TrimSpace(line))
+				for _, needle := range needles {
+					if strings.Contains(line, needle) {
+						offenders = append(offenders, rel+": "+strings.TrimSpace(line))
+						break
+					}
 				}
 			}
 			return nil
@@ -125,8 +140,11 @@ func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
 		}
 	}
 	if len(offenders) > 0 {
-		t.Errorf("comment(s) cite prompts/, which was removed from the repo at v1.12.0:\n  %s\n"+
-			"A reader of the current release cannot follow it. State the rationale inline instead.",
+		t.Errorf("comment(s) cite a document that is not in this repo:\n  %s\n\n"+
+			"prompts/ was removed at v1.12.0; issues/issue_sprintNN_*.md never shipped. "+
+			"A reader of the current release cannot follow either, so the citation is a dead "+
+			"end where the rationale should be. State the reasoning inline instead.\n"+
+			"`Sprint N` and `PRD N` on their own are fine — docs/PLAN.md and docs/prd/ exist.",
 			strings.Join(offenders, "\n  "))
 	}
 }

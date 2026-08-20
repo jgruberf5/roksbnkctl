@@ -136,8 +136,7 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 		// (re)authenticate the target's ibmcloud CLI before `ks cluster
 		// config --admin` — an already-broken jumphost whose cloud-init
 		// login fork failed silently needs the login healed too, not just
-		// the kubeconfig (Sprint 14 / issues/issue_sprint14_staff.md
-		// Issue 1, 2026-05-18 live finding). Same resolver workspaceEnvCore
+		// the kubeconfig (a 2026-05-18 live finding). Same resolver workspaceEnvCore
 		// uses. Best-effort: a resolve failure passes an empty key (the
 		// heal then falls back to assume-pre-logged-in and, if that's
 		// false, surfaces the real ibmcloud error — no worse than before,

@@ -134,7 +134,7 @@ func runK8sBackendChecks(ctx context.Context) []doctor.Check {
 		} else {
 			add("ops cred secret", doctor.StatusOK, fmt.Sprintf("%s (rotated %s)", secret.Name, secret.Annotations["roksbnkctl.io/rotated-at"]))
 		}
-		// Sprint 5: cred rotation freshness check. Annotated with
+		// Cred-rotation freshness check. Annotated with
 		// roksbnkctl.io/rotated-at on `ops install`; we surface a
 		// warning (not error) when the value is older than 30 days
 		// — best-practice rotation reminder, not a hard fail.
@@ -152,7 +152,7 @@ func runK8sBackendChecks(ctx context.Context) []doctor.Check {
 		}
 	}
 
-	// Sprint 5: ops-pod env runtime check. Verify the pod's
+	// Ops-pod env runtime check. Verify the pod's
 	// environment actually carries IBMCLOUD_API_KEY at exec time.
 	// Failure modes this catches: the Secret was deleted out-of-band
 	// after install; the pod was created from a stale envFrom that

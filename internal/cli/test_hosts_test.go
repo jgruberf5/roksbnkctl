@@ -12,7 +12,7 @@
 // `~/.roksbnkctl/` tree.
 //
 // Sub-case → acceptance-criterion map (validator AC refers to
-// `issues/issue_sprint24_validator.md` Issue 1 sub-cases (a)..(l)):
+// the `test hosts` surface review, sub-cases (a)..(l)):
 //
 //	TestTestHostsAdd_Persists                  → (a)
 //	TestTestHostsAdd_Idempotent_AlreadyPresent → (b)

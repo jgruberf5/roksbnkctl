@@ -4,7 +4,7 @@
 // runs — so an over-long or malformed prefix is rejected at `init` time
 // rather than mid-`apply` by IBM Cloud.
 //
-// Sprint 26 (issues/issue_sprint26_staff.md): a single workspace prefix is
+// A single workspace prefix is
 // the base for the cluster, cluster VPC, registry COS instance, transit
 // gateway, client VPC, and the two jumphost name surfaces. Cluster name ==
 // prefix (no suffix) is intentional: it makes the prefix-length limit equal
@@ -28,10 +28,8 @@ type constraint struct {
 
 // Constraint table — the per-resource-type IBM Cloud length/charset limits.
 //
-// Sprint 26: verify against architect's pinned constraint table in
-// issues/issue_sprint26_architect.md. The architect owns the authoritative
-// values (cited from the IBM Terraform provider's validators); these are the
-// dispatch-time starting values. Any verified delta is a one-line change
+// The authoritative values are the IBM Terraform provider's own validators;
+// these are the dispatch-time starting values. Any verified delta is a one-line change
 // here so the integrator can reconcile.
 //
 //	Kind                                  MaxLen  Charset rule
