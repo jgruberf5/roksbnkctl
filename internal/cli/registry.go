@@ -766,6 +766,33 @@ func runRegistryList(_ *cobra.Command, _ []string) error {
 
 // ── diff ────────────────────────────────────────────────────────────────────
 
+// mirrorRecordMismatch reports why the recorded mirror does not describe the
+// CONFIGURED target, or "" when it does (or when we cannot tell).
+//
+// Cannot-tell is deliberately treated as a match. If the target will not build —
+// missing credentials, an unreachable ICR region — we know less than the record
+// does, and discarding it on that basis would turn a diff into a full re-replicate
+// for a reason that has nothing to do with the mirror's contents.
+func mirrorRecordMismatch(ctx context.Context, name string, ws *config.Workspace, rec *config.RegistryMirror) string {
+	if rec == nil {
+		return ""
+	}
+	if kind := registryTargetKind(ws); rec.Target != "" && rec.Target != kind {
+		return fmt.Sprintf("it was written for target %q, the configured target is %q", rec.Target, kind)
+	}
+	target, err := buildTarget(ctx, name, ws)
+	if err != nil {
+		return "" // cannot resolve the target — say nothing rather than guess
+	}
+	if ns := target.MirrorNamespace(); rec.Namespace != "" && ns != "" && rec.Namespace != ns {
+		return fmt.Sprintf("it was written for repository %q, the configured repository is %q", rec.Namespace, ns)
+	}
+	if h := target.ImageHostPath(); rec.ImageHost != "" && h != "" && rec.ImageHost != h {
+		return fmt.Sprintf("it was written for host %q, the configured host is %q", rec.ImageHost, h)
+	}
+	return ""
+}
+
 func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 	name, ws, err := loadRegistryWorkspace()
 	if err != nil {
@@ -779,8 +806,25 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 	rec, err := config.ReadRegistryMirror(name)
 	have := map[string]bool{}
 	if err == nil {
-		for _, a := range rec.Artifacts {
-			have[a.Kind+"|"+a.Name+":"+a.Tag] = true
+		// The record describes the mirror it was WRITTEN against, which is not
+		// necessarily the one configured now. Re-point a workspace at a
+		// different registry — or rebuild the one it names — and the record
+		// still lists 89 artifacts that are not there, so diff reports "in
+		// sync" against an EMPTY registry (#109). verify catches it because it
+		// probes; diff does not probe at all.
+		//
+		// A record for a different mirror tells us nothing about this one, so it
+		// is discarded rather than trusted. Everything then reads as missing,
+		// which is the safe direction: it prompts a replicate, and replicate is
+		// idempotent — an artifact already present at the right digest is
+		// skipped.
+		if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+			fmt.Fprintf(os.Stderr, "→ ignoring the recorded mirror: %s\n", why)
+			fmt.Fprintln(os.Stderr, "  It describes a different mirror, so it says nothing about this one.")
+		} else {
+			for _, a := range rec.Artifacts {
+				have[a.Kind+"|"+a.Name+":"+a.Tag] = true
+			}
 		}
 	} else if err != config.ErrNoRegistryMirror {
 		return err
@@ -796,7 +840,13 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"missing": missing, "bom_total": len(bom.Artifacts)})
 	}
 	if len(missing) == 0 {
+		// Say what this is based on. diff reads the RECORD; it never contacts
+		// the registry, so "in sync" means "nothing left to replicate according
+		// to what was last replicated" — not "every artifact is present". Only
+		// verify establishes the latter, and the difference matters when the
+		// registry has been emptied or rebuilt underneath the record.
 		fmt.Fprintln(os.Stderr, "mirror is in sync with the BOM — nothing to replicate")
+		fmt.Fprintln(os.Stderr, "  (from the recorded mirror; `registry verify` probes the registry itself)")
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "%d of %d BOM artifacts not yet in the mirror:\n", len(missing), len(bom.Artifacts))
