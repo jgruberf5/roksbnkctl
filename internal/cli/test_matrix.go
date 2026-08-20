@@ -12,6 +12,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/test"
 )
 
@@ -121,7 +122,7 @@ func runTestMatrixCmd(cmd *cobra.Command, _ []string) error {
 		probes = append(probes, runMatrixCell(cmdContext(cmd), cctx, c))
 	}
 	run := test.NewMatrixRun(start, probes)
-	return outputMatrix(run)
+	return outputMatrix(cmdContext(cmd), run)
 }
 
 // resolveMatrixFile picks the matrix.yaml: explicit --file, else the
@@ -236,7 +237,7 @@ func dispatchMatrixTool(ctx context.Context, cctx *config.Context, backendSpec, 
 	return stdout.String(), rc, runErr
 }
 
-func outputMatrix(run test.MatrixRun) error {
+func outputMatrix(ctx context.Context, run test.MatrixRun) error {
 	switch flagOutput {
 	case "json":
 		if err := test.WriteJSON(os.Stdout, run); err != nil {
@@ -248,7 +249,12 @@ func outputMatrix(run test.MatrixRun) error {
 		test.WriteMatrixMarkdown(os.Stderr, run)
 	}
 	if run.Overall == test.StatusFail {
-		os.Exit(1)
+		// See outputSuite: an interrupted matrix reports the interrupt, not a
+		// red run — the cells stringify the cancellation into their results.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }

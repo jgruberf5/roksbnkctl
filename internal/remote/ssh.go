@@ -11,19 +11,34 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 )
 
-// Exit codes used by the --on flow. Match the conventions in PRD 01:
+// Exit codes are internal/exitcode's contract (AuthFailed=126,
+// ConnectFailed=127, per PRD 01); this package used to state its own copy,
+// which nothing else participated in. Callers classify a Connect failure via
+// IsAuthError and code it themselves. Remote command exit codes flow through
+// unchanged when Run returns without err.
+
+// IsAuthError reports whether a Connect failure is a REJECTION — the target
+// answered and refused us (publickey authentication denied, a host-key
+// mismatch) — as opposed to the target being unreachable. Callers map a
+// rejection to AuthFailed=126 ("permission denied") and everything else to
+// ConnectFailed=127 ("command not found" analog).
 //
-//	127 — "command not found" analog: connect failure / unreachable target
-//	126 — "permission denied" analog: auth failure or host-key mismatch
-//
-// Remote command exit codes flow through unchanged when Run returns
-// without err.
-const (
-	ExitConnectFailed = 127
-	ExitAuthFailed    = 126
-)
+// The string match is the only handle x/crypto/ssh offers for an auth
+// rejection: it returns no sentinel, just an error whose chain stringifies
+// through fmt.Errorf. The host-key half is ours, so that one is typed.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrHostKeyMismatch) {
+		return true
+	}
+	return strings.Contains(err.Error(), "ssh: unable to authenticate")
+}
 
 // connectTimeout is the per-attempt TCP+handshake budget. Short enough
 // that a misconfigured target fails fast; long enough that a tunnel /
@@ -60,8 +75,8 @@ type ShellOpts struct {
 // returns a Client ready for Run / Shell. The caller must Close.
 //
 // Context cancellation aborts both the TCP dial and the handshake.
-// Connect failures wrap a sentinel so callers can map them to the
-// 127 / 126 exit codes documented in PRD 01.
+// Callers classify failures with IsAuthError to pick between the
+// AuthFailed / ConnectFailed exit codes documented in PRD 01.
 func Connect(ctx context.Context, target *Target) (*Client, error) {
 	if target == nil {
 		return nil, errors.New("nil target")
@@ -282,12 +297,24 @@ func (c *Client) Shell(ctx context.Context, opts ShellOpts) error {
 	defer close(cancelDone)
 
 	if err := sess.Wait(); err != nil {
-		// A clean remote exit also surfaces as *ssh.ExitError on Wait;
-		// treat any non-zero shell exit as not-an-error here (the user
-		// just typed `exit 1`). Transport errors flow through.
+		// A non-zero remote exit (`exit 3`) surfaces as *ssh.ExitError on
+		// Wait. Propagate the status — silently, the shell's own output has
+		// already said everything — exactly as the local shell path does.
+		// Swallowing it to 0 made the same `exit 3` report success under
+		// `--on` and 3 locally, which matters now that statuses are a
+		// script-facing contract.
 		var ee *ssh.ExitError
 		if errors.As(err, &ee) {
-			return nil
+			if ee.ExitStatus() == 0 {
+				return nil
+			}
+			return exitcode.Silent(ee.ExitStatus())
+		}
+		// A cancelled ctx tears the session down (the goroutine above), and
+		// Wait then reports the teardown (ExitMissingError) — fallout of the
+		// interrupt, not information. Report the interrupt.
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		return err
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 )
 
@@ -168,11 +169,28 @@ func Execute() {
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
 		"roksbnkctl {{.Version}} (commit %s, built %s)\nDocs: %s\n",
 		Commit, BuildDate, DocsURL))
+	// A malformed flag is a Usage error: the invocation was rejected and
+	// nothing was attempted. Without this, cobra hands the parse error back as
+	// a plain error and it exits Failure=1 while the argv preflight's typo
+	// check (cmd/roksbnkctl/main.go) exits Usage=2 — two malformed
+	// invocations, two different codes, and a script branching on $?==2 per
+	// the contract misclassifies one of them.
+	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return exitcode.Wrap(exitcode.Usage, err)
+	})
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "roksbnkctl: %v\n", err)
-		os.Exit(1)
+		// The ONE place a command's failure becomes a process status. Commands
+		// return a coded error (internal/exitcode); everything else is a plain
+		// failure, and a cancelled context is the operator interrupting us
+		// rather than a fault — which used to collapse into 1, leaving a script
+		// unable to tell Ctrl-C from a real error.
+		if !exitcode.IsSilent(err) {
+			fmt.Fprintf(os.Stderr, "roksbnkctl: %v\n", err)
+		}
+		os.Exit(exitcode.FromError(err))
 	}
 }
 

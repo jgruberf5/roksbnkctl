@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 )
 
 // LocalBackend executes argv in a child process on the host running
@@ -144,7 +146,9 @@ func (LocalBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int, 
 
 	var ee *exec.ExitError
 	if errors.As(runErr, &ee) {
-		return ee.ExitCode(), runErr
+		// FromChildExit maps a signal-killed child to 128+signum; the naive
+		// ExitCode() is -1 there, which callers would os.Exit into a bare 255.
+		return exitcode.FromChildExit(ee), runErr
 	}
 	return 0, runErr
 }

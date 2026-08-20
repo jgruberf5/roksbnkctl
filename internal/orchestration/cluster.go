@@ -34,6 +34,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
@@ -92,8 +93,9 @@ type ClusterInputs struct {
 	ResolveKubeTarget func() (path string, kubeContext string, err error)
 	// DispatchRemote / DispatchRemoteShell are cli.dispatchRemote /
 	// cli.dispatchRemoteShell (remote.go stays in cli per the scope —
-	// it holds the single Sprint 15 SSH-boundary assertion). On success
-	// dispatchRemote does not return (os.Exit with the remote rc).
+	// it holds the single Sprint 15 SSH-boundary assertion). Both return
+	// the outcome as a coded error (internal/exitcode); the remote rc
+	// travels back as exitcode.Silent for the root to map.
 	DispatchRemote      func(ctx context.Context, target string, argv []string, envExtra []string, tty bool) error
 	DispatchRemoteShell func(ctx context.Context, target string) error
 	// OpenIBMClient is cli.openIBMClient (cos.go stays in cli per the
@@ -572,7 +574,19 @@ func dispatchBackend(ctx context.Context, in *ClusterInputs, spec, tool string, 
 		return err
 	}
 	if rc != 0 {
-		os.Exit(rc)
+		// An interrupted run first: the rc a backend reports for its
+		// torn-down child (the local backend says 137 after SIGKILLing it) is
+		// fallout of the Ctrl-C, not information, and a negative rc from a
+		// signal-killed child would reach os.Exit as shell status 255.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if rc < 0 {
+			return fmt.Errorf("backend child killed by a signal (no exit status): %w", err)
+		}
+		// The wrapped tool wrote its own output to the inherited streams;
+		// propagate only its status.
+		return exitcode.Silent(rc)
 	}
 	return nil
 }
@@ -697,7 +711,10 @@ func runWithEnv(bin string, args, env []string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			os.Exit(ee.ExitCode())
+			// FromChildExit, not ExitCode(): the latter is -1 for a
+			// signal-killed child, and exiting with -1 becomes shell status
+			// 255 — a Ctrl-C'd child must propagate 130 (128+SIGINT), not 255.
+			return exitcode.Silent(exitcode.FromChildExit(ee))
 		}
 		return err
 	}

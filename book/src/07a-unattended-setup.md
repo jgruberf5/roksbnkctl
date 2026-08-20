@@ -54,6 +54,43 @@ roksbnkctl init -w ci-run-42 \
 
 No secret ever lands in git; the same template seeds every account.
 
+## Exit codes
+
+Unattended callers branch on `$?`, so the codes are an interface:
+
+| code | meaning |
+|---:|---|
+| `0` | The command did what was asked. |
+| `1` | It went wrong. The default for anything without a more specific code. |
+| `2` | The **invocation** was rejected — a malformed flag, an argument the command cannot accept. Nothing was attempted. |
+| `126` | Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused. |
+| `127` | The target could not be reached at all. |
+| `130` | The operator interrupted it (Ctrl-C / `SIGINT`). |
+| *other* | A wrapped tool's own status, passed through unchanged — `terraform`, `ibmcloud`, and `--on <target>` remote commands all propagate theirs. |
+
+`130` is worth wiring into CI cleanup: it distinguishes *"someone stopped this"*
+from *"it broke"*, which a job that retries on failure should treat differently.
+Before v1.50.0 only `roksbnkctl init` produced it — every other command turned
+the same Ctrl-C into `1`.
+
+`2` is similarly worth separating. It means the command never ran, so retrying
+the same invocation will fail the same way; the fix is in the script, not the
+environment.
+
+A command that propagates a wrapped tool's status does not print its own error
+on top — `terraform`'s diagnostics have already gone to stderr, and a second
+`roksbnkctl: ...` line would only add noise. Check the stream, not just the
+code.
+
+### The interrupt outranks everything else
+
+A failure that happens *because* of the Ctrl-C reports the interrupt, not the
+failure class it landed in: a connect aborted mid-handshake is `130`, not
+`127`; a test suite cut off mid-run is `130`, not a red `1`; a child killed by
+the signal propagates `130` (`128+SIGINT`, the shell convention), not `255`.
+So `$? -eq 130` is reliable — a job does not need to trap `SIGINT` itself to
+tell "someone stopped this" from "it broke".
+
 ## `--config-file`
 
 `--config-file` parses the supplied YAML strictly — **unknown fields are
