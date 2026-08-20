@@ -43,6 +43,55 @@ import (
 //
 // StandaloneFLPVSI() keys on mode==vsi AND a network — either bnk.flp.vsi.vpc (adopt an existing VPC) or bnk.flp.vsi.create_vpc (build one) — so those are
 // what turn a cluster-less appliance on; the rest are refinements.
+// flpVSIStringOverrides are the verbatim string fields of the standalone-VSI
+// block. Package-level so SupportedOverrideNames can enumerate them: an earlier
+// revision declared this table inline and its ten names silently dropped out of
+// the reported surface.
+var flpVSIStringOverrides = []struct {
+	env   string
+	label string
+	set   func(*BNKFLPVSICfg, string)
+}{
+	{"ROKSBNKCTL_FLP_VSI_VPC", "bnk.flp.vsi.vpc", func(c *BNKFLPVSICfg, v string) { c.VPC = v }},
+	// name_prefix applies to BOTH paths — adopting an existing VPC and creating
+	// one. It sat nested inside the CREATE_VPC block for a while, so a Forge
+	// blueprint adopting a VPC (FLP_VSI_VPC=<id>, no CREATE_VPC — it is not
+	// creating one) silently got the legacy unprefixed VSI names: #88 regressed
+	// for exactly the adopt path. Empty keeps the legacy names (#88).
+	{"ROKSBNKCTL_FLP_VSI_NAME_PREFIX", "bnk.flp.vsi.name_prefix", func(c *BNKFLPVSICfg, v string) { c.NamePrefix = v }},
+	{"ROKSBNKCTL_FLP_VSI_ZONE", "bnk.flp.vsi.zone", func(c *BNKFLPVSICfg, v string) { c.Zone = v }},
+	{"ROKSBNKCTL_FLP_VSI_PROFILE", "bnk.flp.vsi.profile", func(c *BNKFLPVSICfg, v string) { c.Profile = v }},
+	{"ROKSBNKCTL_FLP_VSI_SSH_KEY", "bnk.flp.vsi.ssh_key", func(c *BNKFLPVSICfg, v string) { c.SSHKey = v }},
+	{"ROKSBNKCTL_FLP_VSI_REACH", "bnk.flp.vsi.reach", func(c *BNKFLPVSICfg, v string) { c.Reach = v }},
+	// #60 gave the proxy its own VPC; #64 makes that reachable from a
+	// blueprint, which until now it was not — the field existed only in a
+	// config.yaml the Forge modules never write.
+	//
+	// create_vpc now opens the cluster-less path on its own (#76):
+	// StandaloneFLPVSI accepts either vsi.vpc or vsi.create_vpc, and the
+	// FLP-phase override no longer forces a VPC adopt when there is no id.
+	{"ROKSBNKCTL_FLP_VSI_VPC_NAME", "bnk.flp.vsi.vpc_name", func(c *BNKFLPVSICfg, v string) { c.VPCName = v }},
+	{"ROKSBNKCTL_FLP_VSI_SUBNET_CIDR", "bnk.flp.vsi.subnet_cidr", func(c *BNKFLPVSICfg, v string) { c.SubnetCIDR = v }},
+	{"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "bnk.flp.vsi.status_image", func(c *BNKFLPVSICfg, v string) { c.StatusImage = v }},
+	{"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST", "bnk.flp.vsi.status_registry_host", func(c *BNKFLPVSICfg, v string) { c.StatusRegistryHost = v }},
+	// Already base64 (that is how the operator captures a mirror's CA), so it is
+	// stored verbatim — like ROKSBNKCTL_FLP_ROOT_CA_B64, unlike the raw secrets
+	// elsewhere in the map that get encoded on the way in.
+	{"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64", "bnk.flp.vsi.status_registry_ca_b64", func(c *BNKFLPVSICfg, v string) { c.StatusRegistryCAB64 = v }},
+}
+
+// cosOverrides name the orchestration COS bucket the FAR supply chain downloads
+// from. Package-level for the same reason as flpVSIStringOverrides.
+var cosOverrides = []struct {
+	env   string
+	label string
+	set   func(*COSCfg, string)
+}{
+	{"ROKSBNKCTL_COS_INSTANCE", "cos.instance", func(c *COSCfg, v string) { c.Instance = v }},
+	{"ROKSBNKCTL_COS_BUCKET", "cos.bucket", func(c *COSCfg, v string) { c.Bucket = v }},
+	{"ROKSBNKCTL_COS_REGION", "cos.region", func(c *COSCfg, v string) { c.Region = v }},
+}
+
 func overrideFLPFromEnv(ws *Workspace) []string {
 	var applied []string
 
@@ -54,32 +103,7 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 	// Each VSI field creates the vsi block on demand, so setting only one of them
 	// (e.g. just the SSH key on a config that already carries the VPC) never
 	// nil-panics and never wipes the others.
-	for _, f := range []struct {
-		env   string
-		label string
-		set   func(*BNKFLPVSICfg, string)
-	}{
-		{"ROKSBNKCTL_FLP_VSI_VPC", "bnk.flp.vsi.vpc", func(c *BNKFLPVSICfg, v string) { c.VPC = v }},
-		{"ROKSBNKCTL_FLP_VSI_ZONE", "bnk.flp.vsi.zone", func(c *BNKFLPVSICfg, v string) { c.Zone = v }},
-		{"ROKSBNKCTL_FLP_VSI_PROFILE", "bnk.flp.vsi.profile", func(c *BNKFLPVSICfg, v string) { c.Profile = v }},
-		{"ROKSBNKCTL_FLP_VSI_SSH_KEY", "bnk.flp.vsi.ssh_key", func(c *BNKFLPVSICfg, v string) { c.SSHKey = v }},
-		{"ROKSBNKCTL_FLP_VSI_REACH", "bnk.flp.vsi.reach", func(c *BNKFLPVSICfg, v string) { c.Reach = v }},
-		// #60 gave the proxy its own VPC; #64 makes that reachable from a
-		// blueprint, which until now it was not — the field existed only in a
-		// config.yaml the Forge modules never write.
-		//
-		// create_vpc now opens the cluster-less path on its own (#76):
-		// StandaloneFLPVSI accepts either vsi.vpc or vsi.create_vpc, and the
-		// FLP-phase override no longer forces a VPC adopt when there is no id.
-		{"ROKSBNKCTL_FLP_VSI_VPC_NAME", "bnk.flp.vsi.vpc_name", func(c *BNKFLPVSICfg, v string) { c.VPCName = v }},
-		{"ROKSBNKCTL_FLP_VSI_SUBNET_CIDR", "bnk.flp.vsi.subnet_cidr", func(c *BNKFLPVSICfg, v string) { c.SubnetCIDR = v }},
-		{"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "bnk.flp.vsi.status_image", func(c *BNKFLPVSICfg, v string) { c.StatusImage = v }},
-		{"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST", "bnk.flp.vsi.status_registry_host", func(c *BNKFLPVSICfg, v string) { c.StatusRegistryHost = v }},
-		// Already base64 (that is how the operator captures a mirror's CA), so it is
-		// stored verbatim — like ROKSBNKCTL_FLP_ROOT_CA_B64, unlike the raw secrets
-		// elsewhere in the map that get encoded on the way in.
-		{"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64", "bnk.flp.vsi.status_registry_ca_b64", func(c *BNKFLPVSICfg, v string) { c.StatusRegistryCAB64 = v }},
-	} {
+	for _, f := range flpVSIStringOverrides {
 		if v := envValue(f.env); v != "" {
 			f.set(flpVSI(ws), v)
 			applied = append(applied, f.label+" ("+f.env+")")
@@ -103,11 +127,6 @@ func overrideFLPFromEnv(ws *Workspace) []string {
 		if b, err := strconv.ParseBool(v); err == nil {
 			flpVSI(ws).CreateVPC = b
 			applied = append(applied, "bnk.flp.vsi.create_vpc (ROKSBNKCTL_FLP_VSI_CREATE_VPC)")
-		}
-
-		if v := envValue("ROKSBNKCTL_FLP_VSI_NAME_PREFIX"); v != "" {
-			flpVSI(ws).NamePrefix = v
-			applied = append(applied, "bnk.flp.vsi.name_prefix (ROKSBNKCTL_FLP_VSI_NAME_PREFIX)")
 		}
 	}
 
@@ -186,15 +205,7 @@ func overrideSupplyChainFromEnv(ws *Workspace) []string {
 		applied = append(applied, "bnk.subscription_jwt_file (ROKSBNKCTL_SUBSCRIPTION_JWT_FILE)")
 	}
 
-	for _, f := range []struct {
-		env   string
-		label string
-		set   func(*COSCfg, string)
-	}{
-		{"ROKSBNKCTL_COS_INSTANCE", "cos.instance", func(c *COSCfg, v string) { c.Instance = v }},
-		{"ROKSBNKCTL_COS_BUCKET", "cos.bucket", func(c *COSCfg, v string) { c.Bucket = v }},
-		{"ROKSBNKCTL_COS_REGION", "cos.region", func(c *COSCfg, v string) { c.Region = v }},
-	} {
+	for _, f := range cosOverrides {
 		if v := envValue(f.env); v != "" {
 			f.set(cosCfg(ws), v)
 			applied = append(applied, f.label+" ("+f.env+")")

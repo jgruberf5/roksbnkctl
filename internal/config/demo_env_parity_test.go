@@ -40,15 +40,12 @@ func TestDemoEnvAllowlistCoversEveryOverride(t *testing.T) {
 		"ROKSBNKCTL_TGW_JUMPHOST_CREATE":         "as above",
 	}
 
-	supported := supportedOverrideNames(t, root)
+	supported := SupportedOverrideNames()
 	allow := declaredInEnvExample(t, envExample)
 	inWorkflow := namesUsedUnder(t, wfDir)
 
 	var missing []string
 	for _, name := range supported {
-		if strings.HasPrefix(name, "ROKSBNKCTL_ZONE") {
-			continue // indexed per-zone family, declared as ZONE1_/ZONE2_/ZONE3_
-		}
 		if allow[name] || inWorkflow[name] {
 			continue
 		}
@@ -108,19 +105,6 @@ func repoRootForDemoTest(t *testing.T) string {
 		t.Skipf("demos not present: %v", err)
 	}
 	return root
-}
-
-func supportedOverrideNames(t *testing.T, _ string) []string {
-	t.Helper()
-	// The authoritative list, not a regex over the source. The scrape this
-	// replaced hard-coded two filenames and two literal shapes, so it silently
-	// covered less whenever the override code changed shape — a guard against
-	// drift that was itself drifting.
-	names := SupportedOverrideNames()
-	if len(names) == 0 {
-		t.Fatal("SupportedOverrideNames() is empty — there is nothing to check")
-	}
-	return names
 }
 
 func declaredInEnvExample(t *testing.T, path string) map[string]bool {

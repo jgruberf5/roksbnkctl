@@ -1,27 +1,17 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
-// clearFLPEnv isolates from the ambient environment: every variable the
-// FLP-VSI + supply-chain maps read is cleared, so each sub-case sets only what
-// it exercises.
+// clearFLPEnv isolates from the ambient environment. It ranges the
+// authoritative list rather than keeping its own copy of the FLP subset — a
+// hand list here is the same drift disease #114 removed from the production
+// code, and clearing the superset is strictly safer.
 func clearFLPEnv(t *testing.T) {
 	t.Helper()
-	for _, e := range []string{
-		"ROKSBNKCTL_FLP_MODE",
-		"ROKSBNKCTL_FLP_VSI_VPC", "ROKSBNKCTL_FLP_VSI_ZONE", "ROKSBNKCTL_FLP_VSI_PROFILE",
-		"ROKSBNKCTL_FLP_VSI_SSH_KEY", "ROKSBNKCTL_FLP_VSI_REACH",
-		"ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB", "ROKSBNKCTL_FLP_VSI_FLOATING_IP",
-		"ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS", "ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS",
-		"ROKSBNKCTL_FLP_VSI_STATUS_IMAGE", "ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_HOST",
-		"ROKSBNKCTL_FLP_VSI_STATUS_REGISTRY_CA_B64",
-		"ROKSBNKCTL_MANIFEST_VERSION",
-		"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE", "ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE",
-		"ROKSBNKCTL_FAR_AUTH_FILE", "ROKSBNKCTL_SUBSCRIPTION_JWT_FILE",
-		"ROKSBNKCTL_COS_INSTANCE", "ROKSBNKCTL_COS_BUCKET", "ROKSBNKCTL_COS_REGION",
-	} {
+	for _, e := range SupportedOverrideNames() {
 		t.Setenv(e, "")
 	}
 }
@@ -233,5 +223,31 @@ func TestOverrideFLPVSIFromEnv_PrecedenceAndPreservation(t *testing.T) {
 	}
 	if v.VPC != "from-config-file" || v.Profile != "bx2-8x32" {
 		t.Errorf("unset variables must preserve existing fields: %+v", v)
+	}
+}
+
+// #88's prefix must apply on BOTH paths. It sat misnested inside the
+// CREATE_VPC env check, so a Forge blueprint ADOPTING an existing VPC
+// (FLP_VSI_VPC=<id>, no CREATE_VPC — it is not creating one) silently got the
+// legacy unprefixed VSI names, contradicting this file's own doc table.
+func TestFLPVSINamePrefixAppliesWithoutCreateVPC(t *testing.T) {
+	clearFLPEnv(t)
+	t.Setenv("ROKSBNKCTL_FLP_VSI_VPC", "r006-vpc-adopted")
+	t.Setenv("ROKSBNKCTL_FLP_VSI_NAME_PREFIX", "team-a")
+
+	ws := &Workspace{}
+	applied := OverrideFromEnv(ws)
+
+	if got := ws.BNK.FLP.VSI.NamePrefix; got != "team-a" {
+		t.Fatalf("name_prefix = %q on the adopt path, want team-a — #88 regressed for adopters", got)
+	}
+	found := false
+	for _, a := range applied {
+		if strings.Contains(a, "ROKSBNKCTL_FLP_VSI_NAME_PREFIX") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the applied report does not name ROKSBNKCTL_FLP_VSI_NAME_PREFIX: %v", applied)
 	}
 }
