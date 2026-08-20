@@ -49,6 +49,10 @@ var absentKindExemptions = map[string]string{
 	"terraform/modules/gateway/variables.tf": "gateway_route_examples validation message names the rejected kinds",
 	"terraform/variables.tf":                 "same validation message at the root",
 	"scripts/tf-variable-validation-test.sh": "asserts TCPRoute is rejected, which requires passing it",
+
+	// Operator-facing prose explaining WHY those kinds are not accepted, next
+	// to the ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES setting it constrains.
+	"scripts/demos/blueprint-workflows-ci-demo/.env.example": "documents which kinds the pinned channel lacks",
 }
 
 // absentKindRE matches a route kind BNK does not install, either as a manifest
@@ -60,20 +64,32 @@ var absentKindExemptions = map[string]string{
 // stops covering it — which is precisely how the matrix teardown kept naming
 // tcproutes after the fixture stopped emitting TCPRoute.
 func absentKindRE() *regexp.Regexp {
-	alts := make([]string, 0, len(AbsentRouteKinds)*2)
+	// Case-insensitive, with an optional trailing "s", so ONE derived pattern
+	// covers every spelling a reference can take: the manifest kind
+	// (`TCPRoute`), the CRD plural (`tcproutes`), the singular kubectl accepts
+	// (`kubectl get tcproute`), and a prose plural (`TCPRoutes`). `TCPRoute`
+	// alone misses "TCPRoutes" — the trailing s is a word character — and a
+	// lowercase-plural literal misses the singular.
+	alts := make([]string, 0, len(AbsentRouteKinds))
 	for _, k := range AbsentRouteKinds {
-		alts = append(alts, regexp.QuoteMeta(k), regexp.QuoteMeta(strings.ToLower(k)+"s"))
+		alts = append(alts, regexp.QuoteMeta(k))
 	}
-	// (?i) is deliberately NOT used: "tcproute" in prose is not a reference to
-	// the kind, and matching it would make the exemption list unmanageable.
-	return regexp.MustCompile(`\b(` + strings.Join(alts, "|") + `)\b`)
+	return regexp.MustCompile(`(?i)\b(` + strings.Join(alts, "|") + `)s?\b`)
 }
 
 // scannedDirs are the trees that can name a Kubernetes kind.
 var scannedDirs = []string{"internal", "cmd", "terraform", "scripts"}
 
+// scannedExts covers every extension in those trees that can carry a manifest
+// or a setting an operator copies.
+//
+// .example and .tmpl are here because they were the gap: the demo
+// .env.example files are copied verbatim by operators, and the cloud-init
+// .tmpl files carry YAML — neither was scanned, so a route kind in one was
+// invisible to a guard whose whole job is finding them.
 var scannedExts = map[string]bool{
-	".go": true, ".yaml": true, ".yml": true, ".tf": true, ".tftpl": true, ".sh": true,
+	".go": true, ".yaml": true, ".yml": true, ".tf": true, ".tftpl": true,
+	".sh": true, ".example": true, ".tmpl": true, ".json": true,
 }
 
 // TestNoReferenceToARouteKindBNKDoesNotInstall fails on any mention of a
@@ -152,14 +168,40 @@ func TestAbsentRouteKindExemptionsAreAllStillNeeded(t *testing.T) {
 // Fixture teardown must delete exactly what the fixtures create. These were
 // written apart — the emitter and the delete list — and drifted: the list named
 // tcproutes long after the emitter stopped producing them.
-func TestFixtureTeardownCoversEveryInstalledRouteKind(t *testing.T) {
-	crds := FixtureRouteCRDs()
-	if len(crds) != len(InstalledRouteKinds) {
-		t.Fatalf("FixtureRouteCRDs returned %d entries for %d kinds", len(crds), len(InstalledRouteKinds))
+func TestFixtureTeardownCoversExactlyWhatTheFixturesCreate(t *testing.T) {
+	// Independently stated, NOT derived from FixtureRouteKinds. Comparing
+	// FixtureRouteCRDs() against the list it is computed from can only restate
+	// the function's own definition — it would pass with the wrong group, the
+	// wrong plural, or any other spelling error, which is the whole class of
+	// mistake this file exists to catch.
+	want := []string{
+		"httproutes.gateway.networking.k8s.io",
+		"l4routes.gateway.k8s.f5net.com",
 	}
-	for _, r := range InstalledRouteKinds {
-		if !slices.Contains(crds, r.CRD()) {
-			t.Errorf("%s (%s) is created but never torn down", r.Kind, r.CRD())
+	got := FixtureRouteCRDs()
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("fixture teardown deletes %v, want %v", got, want)
+	}
+
+	// Every kind a fixture actually renders must be in the teardown list. The
+	// renderers are the ground truth here, so this reads them rather than the
+	// declaration they are supposed to agree with.
+	rendered := map[string]bool{
+		HTTPRouteKind.CRD(): strings.Contains(renderHTTPRoute("r", "ns", "gw", "", "svc", 80), "kind: "+HTTPRouteKind.Kind),
+		L4RouteKind.CRD():   strings.Contains(renderL4Route("r", "ns", "gw", "", "svc", 80), "kind: "+L4RouteKind.Kind),
+		GRPCRouteKind.CRD(): false, // no fixture renders a GRPCRoute
+	}
+	for crd, isRendered := range rendered {
+		inTeardown := slices.Contains(got, crd)
+		switch {
+		case isRendered && !inTeardown:
+			t.Errorf("%s is created by a fixture but never torn down", crd)
+		case !isRendered && inTeardown:
+			t.Errorf("%s is torn down but no fixture creates it — the delete resolves every "+
+				"type before removing anything, so naming a CRD the cluster lacks aborts the "+
+				"whole teardown and leaks the deployments and secrets with it", crd)
 		}
 	}
 
@@ -211,11 +253,110 @@ func TestAbsentKindRegexCoversBothSpellingsOfEveryKind(t *testing.T) {
 		if !re.MatchString(crd) {
 			t.Errorf("the guard does not match the CRD %q, which is the exact shape #99 left behind", crd)
 		}
+		// kubectl accepts the lowercase singular, and prose writes the plural
+		// of the kind. `\bTCPRoute\b` misses "TCPRoutes" (the trailing s is a
+		// word character) and a lowercase-plural literal misses "tcproute".
+		for _, variant := range []string{
+			strings.ToLower(kind), // kubectl get tcproute
+			kind + "s",            // "the TCPRoutes we create"
+			strings.ToUpper(kind), // shouting in a comment
+		} {
+			if !re.MatchString(variant) {
+				t.Errorf("the guard does not match %q — a reference in that spelling would pass", variant)
+			}
+		}
 	}
 	// Kinds BNK DOES install must not trip it, or the guard is unusable.
 	for _, r := range InstalledRouteKinds {
 		if re.MatchString(r.Kind) || re.MatchString(r.CRD()) {
 			t.Errorf("the guard matches %s, which BNK installs", r.Kind)
 		}
+	}
+}
+
+// The terraform `gateway_route_examples` validation hand-enumerates the kinds
+// it accepts, in two files. HCL cannot read RouteExampleKinds, so nothing but
+// this stops the two halves drifting: add a kind to the channel and the Go side
+// moves while the terraform side silently keeps rejecting it.
+//
+// That is the same written-apart failure as #99's teardown list, one language
+// away — and the claim that a channel change moves everything together is only
+// true if something checks.
+func TestTerraformRouteExampleValidationMatchesTheContract(t *testing.T) {
+	want := RouteExampleKinds()
+	slices.Sort(want)
+
+	// contains(["A", "B"], k) — the accepted set in the validation condition.
+	listRE := regexp.MustCompile(`contains\(\[([^\]]*)\], k\)`)
+	quoted := regexp.MustCompile(`"([^"]+)"`)
+
+	for _, rel := range []string{
+		"terraform/variables.tf",
+		"terraform/modules/gateway/variables.tf",
+	} {
+		t.Run(rel, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(repoRoot(), rel))
+			if err != nil {
+				t.Fatalf("reading %s: %v", rel, err)
+			}
+			m := listRE.FindStringSubmatch(string(body))
+			if m == nil {
+				t.Fatalf("no gateway_route_examples validation list found in %s — "+
+					"this test can no longer detect the drift", rel)
+			}
+			var got []string
+			for _, q := range quoted.FindAllStringSubmatch(m[1], -1) {
+				got = append(got, q[1])
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s accepts %v, the contract says %v — update internal/test/gatewayapi.go "+
+					"and both terraform validations together", rel, got, want)
+			}
+		})
+	}
+}
+
+// Fixture teardown must issue one delete per type group, not one comma-joined
+// delete of all of them.
+//
+// cli-runtime's builder resolves every requested type before removing anything
+// and returns on the FIRST unknown one, so a single call naming a CRD the
+// cluster lacks deletes nothing at all — the deployments, services and secrets
+// leak with it. That bites on exactly the cluster where cleanup matters: one
+// where the BNK install failed or was removed, so its route CRDs are absent.
+//
+// The property is invisible from inside internal/test, so this reads the caller.
+func TestFixtureTeardownDeletesEachTypeGroupSeparately(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(), "internal/cli/test_matrix_fixtures.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(body)
+
+	start := strings.Index(src, "func teardownMatrixFixtures")
+	if start < 0 {
+		t.Fatal("teardownMatrixFixtures not found — this test can no longer detect the gap")
+	}
+	end := strings.Index(src[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("could not delimit teardownMatrixFixtures")
+	}
+	fn := src[start : start+end]
+
+	if !strings.Contains(fn, "test.FixtureRouteCRDs()") {
+		t.Error("the teardown does not derive its CRD list from test.FixtureRouteCRDs — " +
+			"a hand-written list is what drifted from the fixtures in the first place")
+	}
+	// The route CRDs must be SEPARATE elements, never joined into the core
+	// group. Joining is what makes one unresolvable type abort everything.
+	if regexp.MustCompile(`strings\.Join\([^)]*FixtureRouteCRDs`).MatchString(fn) ||
+		regexp.MustCompile(`FixtureRouteCRDs\(\)\.\.\.\), ","`).MatchString(fn) {
+		t.Error("the route CRDs are comma-joined with the core types; one CRD the cluster " +
+			"lacks then aborts the whole delete and leaks the deployments, services and secrets")
+	}
+	if !strings.Contains(fn, "for _, types := range") {
+		t.Error("the teardown does not loop over type groups, so a single unresolvable " +
+			"route CRD takes the rest of the cleanup with it")
 	}
 }

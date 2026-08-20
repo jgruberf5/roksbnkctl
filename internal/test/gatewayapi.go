@@ -47,9 +47,23 @@ var (
 )
 
 // InstalledRouteKinds are the route kinds a BNK cluster can actually serve.
-// Fixture teardown deletes exactly these, so a kind added here is cleaned up
-// without a second edit somewhere else remembering to.
+// This is the CHANNEL's surface — what an operator may legitimately create,
+// and what the terraform `gateway_route_examples` validation accepts.
 var InstalledRouteKinds = []RouteKind{HTTPRouteKind, GRPCRouteKind, L4RouteKind}
+
+// FixtureRouteKinds are the route kinds the perf matrix's fixtures actually
+// render. Teardown deletes exactly these.
+//
+// Deliberately NOT the same list as InstalledRouteKinds. GRPCRoute is a kind
+// the channel serves, but no fixture emits one — so deriving teardown from the
+// installed set would delete a CRD nothing creates. That is #99's mismatch
+// inverted, and it is not harmless: the delete resolves its types up front and
+// fails on the FIRST unknown one, so naming a CRD the cluster lacks aborts the
+// whole delete and leaks the deployments, services and secrets alongside it.
+//
+// "Which kinds exist" and "which kinds we create" are two different questions.
+// Answering both from one list is how they drift.
+var FixtureRouteKinds = []RouteKind{HTTPRouteKind, L4RouteKind}
 
 // AbsentRouteKinds are Gateway API route kinds that exist upstream but are NOT
 // in the standard channel, so they can never be created against a BNK cluster.
@@ -60,12 +74,33 @@ var InstalledRouteKinds = []RouteKind{HTTPRouteKind, GRPCRouteKind, L4RouteKind}
 // test uses this list to fail on any reference to them.
 var AbsentRouteKinds = []string{"TCPRoute", "TLSRoute", "UDPRoute"}
 
-// FixtureRouteCRDs is the CRD list fixture teardown deletes, derived from
-// InstalledRouteKinds so it cannot name a kind the fixtures never create — or
-// miss one they do.
-func FixtureRouteCRDs() []string {
+// RouteExampleKinds are the kinds `gateway_route_examples` accepts: the
+// installed set minus HTTPRoute, which the gateway phase always creates and so
+// is never an "extra" example.
+//
+// The terraform validation hand-enumerates the same two kinds in two files.
+// HCL cannot read this declaration, so the tie is a guard test asserting the
+// lists agree — without it the CHANGELOG's claim that a channel change "moves
+// all of them together" holds for the Go half and silently not for the
+// terraform half, which is the written-apart drift this whole change targets,
+// recurring one language away.
+func RouteExampleKinds() []string {
 	out := make([]string, 0, len(InstalledRouteKinds))
 	for _, r := range InstalledRouteKinds {
+		if r.Kind == HTTPRouteKind.Kind {
+			continue
+		}
+		out = append(out, r.Kind)
+	}
+	return out
+}
+
+// FixtureRouteCRDs is the CRD list fixture teardown deletes, derived from
+// FixtureRouteKinds so it cannot name a kind the fixtures never create — or
+// miss one they do.
+func FixtureRouteCRDs() []string {
+	out := make([]string, 0, len(FixtureRouteKinds))
+	for _, r := range FixtureRouteKinds {
 		out = append(out, r.CRD())
 	}
 	return out

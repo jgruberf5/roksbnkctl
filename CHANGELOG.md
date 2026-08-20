@@ -41,6 +41,8 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   The route contract now lives in one place (`internal/test/gatewayapi.go`): which kinds BNK's pinned Gateway API 1.4.1 **standard** channel provides, which upstream kinds it does **not**, and the CRD names for each. Fixtures render from it, teardown deletes from it, and the tests assert against it — so a change to the pinned channel moves all of them together instead of leaving one behind.
 
+  Teardown also issues **one delete per type group** rather than one comma-joined delete. cli-runtime's builder resolves every requested type before removing anything and returns on the first unknown one, so a single call naming a CRD the cluster lacks deleted nothing at all — leaking the deployments, services and secrets alongside it, on exactly the cluster where cleanup matters most: one where the BNK install failed or was removed. The pre-existing `tcproutes` entry meant this aborted on *every* BNK cluster.
+
   Three comments in `internal/test/matrix.go` still described the fixtures as rendering `TCPRoute`; a repo-wide guard test found them. That guard fails on any reference to a route kind outside the standard channel, across Go, YAML, Terraform and shell, with an exemption list where each entry states why the mention is prose rather than a manifest — and a companion test that drops entries which stop applying. It is a repo scan rather than a package test on purpose: #99's own fix missed a file one package away, and a package-scoped test would not have looked there. (#115)
 
 

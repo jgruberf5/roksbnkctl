@@ -95,9 +95,13 @@ func deployMatrixFixtures(ctx context.Context, spec *test.MatrixSpec) error {
 	return apply.Run(ctx)
 }
 
+// coreFixtureTypes are the built-in kinds the fixtures create. Always present
+// on any cluster, so they resolve even when the BNK route CRDs do not.
+var coreFixtureTypes = []string{"deployments", "services", "secrets"}
+
 // teardownMatrixFixtures removes everything deployMatrixFixtures created,
 // best-effort. The manifest fixtures all carry the managed-by label, so
-// they go in one label-selected delete per resource kind.
+// they go in one label-selected delete per type group.
 func teardownMatrixFixtures(spec *test.MatrixSpec) {
 	tctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -117,21 +121,34 @@ func teardownMatrixFixtures(spec *test.MatrixSpec) {
 	if ns == "" {
 		ns = "default"
 	}
+	// One delete per type group, NOT one comma-joined delete of all of them.
+	//
+	// cli-runtime's builder resolves every requested type before deleting
+	// anything and returns on the FIRST unknown one, so a single call naming a
+	// CRD the cluster lacks deletes nothing at all — the deployments, services
+	// and secrets leak alongside it. That is the failure mode on exactly the
+	// cluster where cleanup matters most: one where the BNK install failed or
+	// was removed, so its route CRDs are absent. Splitting them means an
+	// unresolvable route kind costs only that kind.
+	//
 	// The route CRDs come from test.FixtureRouteCRDs, not a literal. This list
 	// named a route CRD BNK never installs (#99) long after the fixture that
 	// created it was corrected, because the two were written apart and nothing
 	// tied them together. Deriving both from one declaration is what ties them.
-	del := &k8s.DeleteOptions{
-		Args:          []string{strings.Join(append([]string{"deployments", "services", "secrets"}, test.FixtureRouteCRDs()...), ",")},
-		Namespace:     ns,
-		LabelSelector: test.FixtureLabelKey + "=" + test.FixtureLabelValue,
-		IOStreams: genericiooptions.IOStreams{
-			Out:    os.Stderr,
-			ErrOut: os.Stderr,
-		},
-	}
-	if err := del.Run(tctx); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: tearing down matrix fixtures (label %s=%s in %s): %v\n",
-			test.FixtureLabelKey, test.FixtureLabelValue, ns, err)
+	groups := append([]string{strings.Join(coreFixtureTypes, ",")}, test.FixtureRouteCRDs()...)
+	for _, types := range groups {
+		del := &k8s.DeleteOptions{
+			Args:          []string{types},
+			Namespace:     ns,
+			LabelSelector: test.FixtureLabelKey + "=" + test.FixtureLabelValue,
+			IOStreams: genericiooptions.IOStreams{
+				Out:    os.Stderr,
+				ErrOut: os.Stderr,
+			},
+		}
+		if err := del.Run(tctx); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: tearing down matrix fixtures %s (label %s=%s in %s): %v\n",
+				types, test.FixtureLabelKey, test.FixtureLabelValue, ns, err)
+		}
 	}
 }
