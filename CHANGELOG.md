@@ -4,6 +4,22 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## v1.49.1 — 2026-08-20
+
+A single fix, and a correction to what v1.49.0 actually contained.
+
+### Fixed
+
+- **v1.49.0 shipped WITHOUT the #100 adopt-guard fix, which had been silently reverted.** The fix and its regression test were both undone by the Artifactory-demo commit and released missing, so `bnk up` again refused a workspace that owned its install — observed on a workspace holding **94 resources**: `cluster "bnk-ci" already has BNK installed … but workspace "bnkconn" has no terraform state for it`. Anyone on v1.49.0 adopting or converging a cluster from the workspace that built it will hit that false refusal; v1.48.0 and v1.49.1 are unaffected.
+
+  The mechanism is worth recording, because the diff is the least interesting part. The branch was squashed with `git reset --soft main` while local `main` was behind origin, so the resulting tree was "stale main + the branch's changes" and its diff undid everything that had landed in between. The same commit also reverted the v1.48.0 CHANGELOG section; that half was caught and restored, and the code half was missed by assuming it was the only casualty rather than reading the rest of the diff.
+
+  CI stayed green throughout because the regression test was reverted **alongside** the code it guarded — the worst shape this failure can take, since nothing remains to detect it. Restoring both is verified in the opposite direction: re-applying the reverted implementation makes the test fail on exactly the case it was written for.
+
+- **The blueprint demo's `.env.example` pinned a runner image seven releases old**, and that pin *overrides* the demo script's default (the script reads `${RUNNER_TAG:-…}`), so every run exercised v1.42.0 however new the installed binary was. `TestDemoRunnerTagMatchesTheCurrentRelease` guarded only the script, not the file that beats it — the same drift its own comment records happening once before, arriving through the one file it does not read. Pin bumped, and a second test now covers `.env.example`.
+
+- **The two cluster-creating blueprints collided on every name.** `new-cluster` and `new-cluster-disconnected` use different workspaces but inherited the same `ROKSBNKCTL_PREFIX`, `ROKSBNKCTL_CLUSTER_NAME` and `ROKSBNKCTL_CLUSTER_VPC_CIDR`, so running them in sequence failed with `Provided Name (bnk-ci-cluster-vpc) is not unique` — while the README documents `all` as running every workflow in order and teardown removes both workspaces as though both exist. The disconnected pair now has its own identity (`bnk-cid`, `10.244.0.0/16`). The CIDR half mattered more than the name: both VPCs attach to the shared transit gateway, where overlapping prefixes are blackholed silently rather than refused.
+
 ## v1.49.0 — 2026-08-19
 
 Everything here came out of the v1.48.0 demo cycle. Two of the three fixes were **tests asserting the bug rather than catching it**: the perf matrix *required* the exact rendering that could never work, and the arbitrary-uid gate passes on the platform it runs on (kind) while the platform it ships to (OpenShift) fails.
