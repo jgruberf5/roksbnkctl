@@ -98,8 +98,10 @@ func TestNoReferenceToARouteKindBNKDoesNotInstall(t *testing.T) {
 			if !scannedExts[strings.ToLower(filepath.Ext(path))] {
 				return nil
 			}
-			rel := filepath.ToSlash(strings.TrimPrefix(path, filepath.ToSlash(repoRoot())+string(filepath.Separator)))
-			rel = strings.TrimPrefix(filepath.ToSlash(path), "../../")
+			// repoRoot() is "../.." so filepath.Walk hands back paths prefixed
+			// with it; strip that to get the repo-relative key the exemption
+			// map is written in.
+			rel := strings.TrimPrefix(filepath.ToSlash(path), "../../")
 			if _, ok := absentKindExemptions[rel]; ok {
 				return nil
 			}
