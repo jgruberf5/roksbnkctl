@@ -41,7 +41,7 @@ func runAPIKey(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	resolver := &cred.Resolver{Workspace: cctx.WorkspaceName, NonInteractive: true}
-	key, err := resolver.IBMCloudAPIKey(cmd.Context())
+	key, err := resolver.IBMCloudAPIKey(cmdContext(cmd))
 	if err != nil {
 		return err
 	}

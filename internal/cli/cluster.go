@@ -109,16 +109,16 @@ func init() {
 // the local-only KUBECONFIG addendum). KUBECONFIG is a host filesystem
 // path that is meaningless on an SSH target — callers crossing the --on
 // boundary MUST use workspaceEnvCore().
-func workspaceEnv() (*config.Context, []string, error) {
-	return orchestration.WorkspaceEnv(flagWorkspace)
+func workspaceEnv(ctx context.Context) (*config.Context, []string, error) {
+	return orchestration.WorkspaceEnv(ctx, flagWorkspace)
 }
 
 // workspaceEnvCore composes the machine-portable subset that is the
 // ONLY workspace-derived env safe to cross the --on SSH boundary; it
 // deliberately omits KUBECONFIG (a local path), including any inherited
 // from the shell (Sprint 13 Issue 1).
-func workspaceEnvCore() (*config.Context, []string, error) {
-	return orchestration.WorkspaceEnvCore(flagWorkspace)
+func workspaceEnvCore(ctx context.Context) (*config.Context, []string, error) {
+	return orchestration.WorkspaceEnvCore(ctx, flagWorkspace)
 }
 
 // remoteSafeEnv strips every local-path-valued var (the single
@@ -201,15 +201,15 @@ func clusterInputs() *orchestration.ClusterInputs {
 // ── thin cobra RunE shims ───────────────────────────────────────────
 
 func runShell(cmd *cobra.Command, _ []string) error {
-	return orchestration.RunShell(cmd.Context(), clusterInputs())
+	return orchestration.RunShell(cmdContext(cmd), clusterInputs())
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
-	return orchestration.RunExec(cmd.Context(), clusterInputs(), args)
+	return orchestration.RunExec(cmdContext(cmd), clusterInputs(), args)
 }
 
 func runKubeconfig(cmd *cobra.Command, _ []string) error {
-	return orchestration.RunKubeconfig(cmd.Context(), clusterInputs())
+	return orchestration.RunKubeconfig(cmdContext(cmd), clusterInputs())
 }
 
 // The passthroughs pin themselves to the -w workspace's cluster, so `kubectl`/`oc`
@@ -218,13 +218,13 @@ func runKubeconfig(cmd *cobra.Command, _ []string) error {
 // orchestration — it must happen AFTER the DisableFlagParsing `-w` extraction, which
 // is what tells us which workspace was meant.
 func runKubectlPassthrough(cmd *cobra.Command, args []string) error {
-	return orchestration.RunKubectlPassthrough(cmd.Context(), clusterInputs(), args)
+	return orchestration.RunKubectlPassthrough(cmdContext(cmd), clusterInputs(), args)
 }
 
 func runOCPassthrough(cmd *cobra.Command, args []string) error {
-	return orchestration.RunOCPassthrough(cmd.Context(), clusterInputs(), args)
+	return orchestration.RunOCPassthrough(cmdContext(cmd), clusterInputs(), args)
 }
 
 func runIBMCloudPassthrough(cmd *cobra.Command, args []string) error {
-	return orchestration.RunIBMCloudPassthrough(cmd.Context(), clusterInputs(), args)
+	return orchestration.RunIBMCloudPassthrough(cmdContext(cmd), clusterInputs(), args)
 }

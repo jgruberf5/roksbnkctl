@@ -80,7 +80,7 @@ func refreshKubeconfig(ctx context.Context, in *ClusterInputs, path string, data
 	if in == nil || in.OpenIBMClient == nil {
 		return fmt.Errorf("no IBM client available")
 	}
-	cctx, ic, err := in.OpenIBMClient()
+	cctx, ic, err := in.OpenIBMClient(ctx)
 	if err != nil {
 		return err
 	}

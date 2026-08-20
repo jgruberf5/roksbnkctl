@@ -70,7 +70,7 @@ func runPhaseStatus(cmd *cobra.Command, phase string, stateDir func(string) (str
 	ps.Deployed = true
 	ps.Outputs = selectOutputs(outs, keys)
 	if probe != nil {
-		if p := probe(cmd.Context(), outs); len(p) > 0 {
+		if p := probe(cmdContext(cmd), outs); len(p) > 0 {
 			ps.Probe = p
 		}
 	}

@@ -54,7 +54,7 @@ func init() {
 }
 
 func runCleanup(cmd *cobra.Command, _ []string) error {
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func runCleanup(cmd *cobra.Command, _ []string) error {
 
 	scope := ibm.SweepScope{Prefix: ws.Prefix, ClusterID: clusterID, Regions: regions}
 
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 	fmt.Fprintf(os.Stderr, "→ Scanning for %s-* resources in regions: %s\n", ws.Prefix, strings.Join(regions, ", "))
 	if !flagCleanupAllRegions {
 		fmt.Fprintln(os.Stderr, "  (use --all-regions to sweep every region, or --region <name> to add one)")

@@ -624,7 +624,7 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 	// prompt below names the record's host, so it would state the wrong
 	// destination while doing it. diff can afford to shrug this off and report
 	// everything missing; an unrecoverable delete cannot (#109).
-	if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+	if why := mirrorRecordMismatch(cmdContext(cmd), name, ws, rec); why != "" {
 		return fmt.Errorf("refusing to delete: the recorded mirror does not describe the configured target — %s.\n"+
 			"  Deleting would remove that mirror's artifact list from THIS one.\n"+
 			"  Point the workspace back at the recorded mirror, or clear the record with `registry adopt`", why)
@@ -638,7 +638,7 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 			return errors.New("aborted")
 		}
 	}
-	target, err := buildTarget(cmd.Context(), name, ws)
+	target, err := buildTarget(cmdContext(cmd), name, ws)
 	if err != nil {
 		return err
 	}
@@ -653,7 +653,7 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 	if delCA == "" {
 		delCA, _ = resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath()))
 	}
-	results := registryEngine(target, resolveBOMInputs(ws), delCA).Delete(cmd.Context(), arts)
+	results := registryEngine(target, resolveBOMInputs(ws), delCA).Delete(cmdContext(cmd), arts)
 
 	var deleted, failed int
 	var remaining []config.MirrorArtifact
@@ -712,7 +712,7 @@ func runRegistryBOM(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+	bom, err := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -787,7 +787,7 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+	bom, err := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -806,7 +806,7 @@ func runRegistryDiff(cmd *cobra.Command, _ []string) error {
 		// which is the safe direction: it prompts a replicate, and replicate is
 		// idempotent — an artifact already present at the right digest is
 		// skipped.
-		if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+		if why := mirrorRecordMismatch(cmdContext(cmd), name, ws, rec); why != "" {
 			fmt.Fprintf(os.Stderr, "→ ignoring the recorded mirror: %s\n", why)
 			fmt.Fprintln(os.Stderr, "  It describes a different mirror, so it says nothing about this one.")
 		} else {
@@ -969,11 +969,11 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+	bom, err := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(cmd.Context(), name, ws)
+	target, err := buildTarget(cmdContext(cmd), name, ws)
 	if err != nil {
 		return err
 	}
@@ -994,10 +994,10 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	// retried against every artifact in the BOM (401 is retryable — Harbor's token
 	// service genuinely flakes), so the command grinds for minutes and then reports
 	// ~100 failures instead of one clear "the mirror rejected the credential".
-	if err := eng.PreflightAuth(cmd.Context(), bom); err != nil {
+	if err := eng.PreflightAuth(cmdContext(cmd), bom); err != nil {
 		return err
 	}
-	results := eng.Replicate(cmd.Context(), bom)
+	results := eng.Replicate(cmdContext(cmd), bom)
 
 	var failed int
 	mirrored := make([]config.MirrorArtifact, 0, len(results))
@@ -1097,7 +1097,7 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(cmd.Context(), name, ws)
+	target, err := buildTarget(cmdContext(cmd), name, ws)
 	if err != nil {
 		return err
 	}
@@ -1125,7 +1125,7 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 	manifestVersion := in.ManifestVersion
 
 	if registryAdoptFlags.verifyContents {
-		bom, berr := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+		bom, berr := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 		if berr != nil {
 			return fmt.Errorf("--verify-contents needs the FAR source to build the BOM: %w", berr)
 		}
@@ -1134,7 +1134,7 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 		// digest, so the recorded inventory can carry digests. An inventory without
 		// them drives a tag-based `registry delete` rather than the digest-based
 		// form, which is the reliable one for a registry manifest DELETE.
-		results := eng.VerifyAll(cmd.Context(), bom)
+		results := eng.VerifyAll(cmdContext(cmd), bom)
 		var bad []mirror.Result
 		for _, r := range results {
 			if r.Err != nil {
@@ -1156,7 +1156,7 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "✓ verified %d artifacts against the source\n", len(bom.Artifacts))
 	} else {
 		// Source-free sanity check: does the mirror hold anything under the prefix?
-		n, perr := eng.ProbeNamespace(cmd.Context(), target.MirrorNamespace())
+		n, perr := eng.ProbeNamespace(cmdContext(cmd), target.MirrorNamespace())
 		switch {
 		case perr != nil:
 			// Not every registry exposes _catalog. Being unable to look is not the
@@ -1216,11 +1216,11 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+	bom, err := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
-	target, err := buildTarget(cmd.Context(), name, ws)
+	target, err := buildTarget(cmdContext(cmd), name, ws)
 	if err != nil {
 		return err
 	}
@@ -1229,7 +1229,7 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	// the replicate push does. Best-effort capture (public targets return "").
 	verifyCA, _ := resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath()))
 	eng := registryEngine(target, in, verifyCA)
-	bad := eng.Verify(cmd.Context(), bom)
+	bad := eng.Verify(cmdContext(cmd), bom)
 	if flagOutput == "json" {
 		out := make([]map[string]string, 0, len(bad))
 		for _, b := range bad {
@@ -1265,7 +1265,7 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	in := resolveBOMInputs(ws)
-	bom, err := buildBOM(cmd.Context(), name, ws, &in, registryScratchDir(name))
+	bom, err := buildBOM(cmdContext(cmd), name, ws, &in, registryScratchDir(name))
 	if err != nil {
 		return err
 	}
@@ -1277,7 +1277,7 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 	// Same refusal as delete: prune computes what to REMOVE from the record and
 	// removes it from the configured target. A record for another mirror makes
 	// that a delete against the wrong registry (#109).
-	if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+	if why := mirrorRecordMismatch(cmdContext(cmd), name, ws, rec); why != "" {
 		return fmt.Errorf("refusing to prune: the recorded mirror does not describe the configured target — %s", why)
 	}
 	inBOM := map[string]bool{}

@@ -128,7 +128,8 @@ func TestRunRegistryDelete_NoMirror(t *testing.T) {
 	defer func() { flagWorkspace = oldWS }()
 
 	// No registry-mirror.json → "nothing to delete", returns nil before any
-	// target build (so a nil cobra.Command is safe here).
+	// target build. A nil command is safe regardless now — the RunE bodies read
+	// their context through cmdContext.
 	if err := runRegistryDelete(nil, nil); err != nil {
 		t.Fatalf("runRegistryDelete with no mirror: %v", err)
 	}

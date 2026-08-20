@@ -113,7 +113,7 @@ func TestE2E_RemoteVsLocalEnvComposition(t *testing.T) {
 	stageEnvSplitWorkspace(t)
 	stageRealKubeconfig(t)
 
-	_, remoteEnv, err := workspaceEnvCore()
+	_, remoteEnv, err := workspaceEnvCore(context.Background())
 	if err != nil {
 		t.Fatalf("workspaceEnvCore: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestE2E_RemoteVsLocalEnvComposition(t *testing.T) {
 		t.Errorf("remoteSafeEnv backstop failed to strip KUBECONFIG")
 	}
 
-	_, localEnv, err := workspaceEnv()
+	_, localEnv, err := workspaceEnv(context.Background())
 	if err != nil {
 		t.Fatalf("workspaceEnv: %v", err)
 	}

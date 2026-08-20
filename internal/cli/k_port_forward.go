@@ -64,5 +64,5 @@ func runKPortForward(cmd *cobra.Command, args []string) error {
 			ErrOut: os.Stderr,
 		},
 	}
-	return opts.Run(cmd.Context())
+	return opts.Run(cmdContext(cmd))
 }

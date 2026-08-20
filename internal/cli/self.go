@@ -67,7 +67,7 @@ func init() {
 // running binary and lets the operator pick one; --version or --yes keep the
 // non-interactive behaviour (pin, or latest).
 func runUpgrade(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := context.WithTimeout(cmd.Context(), selfUpdateTimeout)
+	ctx, cancel := context.WithTimeout(cmdContext(cmd), selfUpdateTimeout)
 	defer cancel()
 	pinned := strings.TrimSpace(flagUpgradeVersion)
 	if pinned == "" && !flagUpgradeYes && isTTY() {
@@ -131,7 +131,7 @@ func pickNewerRelease(ctx context.Context, w io.Writer) (string, error) {
 // runSelfUpdate backs the legacy `roksbnkctl self update` — always latest,
 // always interactive. Kept for compatibility; `upgrade` is the primary verb.
 func runSelfUpdate(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := context.WithTimeout(cmd.Context(), selfUpdateTimeout)
+	ctx, cancel := context.WithTimeout(cmdContext(cmd), selfUpdateTimeout)
 	defer cancel()
 	return selfUpdate(ctx, os.Stderr, "", false)
 }

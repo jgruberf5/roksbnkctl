@@ -73,11 +73,11 @@ func SetSSHOpts(opts SSHBackendOpts) { sshOpts = opts }
 // sshTargetResolver is the seam tests use to inject a synthetic target
 // without touching the workspace config loader. Production callers
 // leave it nil; the default falls through to remote.LoadTarget.
-var sshTargetResolver func(workspace, name string) (*remote.Target, map[string][]byte, error)
+var sshTargetResolver func(ctx context.Context, workspace, name string) (*remote.Target, map[string][]byte, error)
 
 // SetSSHTargetResolver overrides the default (workspace-config-backed)
 // target resolver. Called from internal/cli (and tests).
-func SetSSHTargetResolver(fn func(workspace, name string) (*remote.Target, map[string][]byte, error)) {
+func SetSSHTargetResolver(fn func(ctx context.Context, workspace, name string) (*remote.Target, map[string][]byte, error)) {
 	sshTargetResolver = fn
 }
 
@@ -170,7 +170,7 @@ func (b *SSHBackend) Run(ctx context.Context, argv []string, opts RunOpts) (int,
 	if resolveFn == nil {
 		resolveFn = defaultSSHTargetResolver
 	}
-	t, _, err := resolveFn(sshOpts.Workspace, target)
+	t, _, err := resolveFn(ctx, sshOpts.Workspace, target)
 	if err != nil {
 		return sshExitFailedToStart, fmt.Errorf("ssh target %q: %w", target, err)
 	}
@@ -281,7 +281,7 @@ func extractSSHTarget(env []string) (string, []string) {
 // can pull tf-output-derived signers + insecure-host-key plumbing. This
 // default exists for tests + early integration; the CLI override is
 // the production path.
-func defaultSSHTargetResolver(workspace, name string) (*remote.Target, map[string][]byte, error) {
+func defaultSSHTargetResolver(_ context.Context, workspace, name string) (*remote.Target, map[string][]byte, error) {
 	t, err := remote.LoadTarget(workspace, name)
 	if err != nil {
 		return nil, nil, err

@@ -64,7 +64,7 @@ func runTFVars(cmd *cobra.Command, _ []string) error {
 	// Resolve source (fetches the tarball if not already cached). Skip
 	// tf.Open so we don't write the backend override file into the
 	// source dir for a read-only operation.
-	sourceDir, err := tf.FetchSourceForLine(cmd.Context(), cctx.Workspace.TFSource, srcRoot, cctx.Workspace.BNKLineOrEmpty())
+	sourceDir, err := tf.FetchSourceForLine(cmdContext(cmd), cctx.Workspace.TFSource, srcRoot, cctx.Workspace.BNKLineOrEmpty())
 	if err != nil {
 		return fmt.Errorf("resolving TF source: %w", err)
 	}

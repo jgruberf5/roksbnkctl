@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,8 +28,8 @@ func stageRealKubeconfig(t *testing.T) string {
 }
 
 // stageEnvSplitWorkspace stages a minimal workspace whose API key
-// resolves from the environment (api_key_source: env), so workspaceEnv()
-// / workspaceEnvCore() run without keychain or prompt. Returns the
+// resolves from the environment (api_key_source: env), so workspaceEnv(context.Background())
+// / workspaceEnvCore(context.Background()) run without keychain or prompt. Returns the
 // workspace name; ROKSBNKCTL_HOME + IBMCLOUD_API_KEY are set via
 // t.Setenv so the process env is restored after the test.
 func stageEnvSplitWorkspace(t *testing.T) string {
@@ -68,7 +69,7 @@ func TestWorkspaceEnvCore_OmitsKubeconfig_KeepsIBMCloud(t *testing.T) {
 	// it stays out of core is the split (not its absence).
 	stageRealKubeconfig(t)
 
-	_, core, err := workspaceEnvCore()
+	_, core, err := workspaceEnvCore(context.Background())
 	if err != nil {
 		t.Fatalf("workspaceEnvCore: %v", err)
 	}
@@ -88,7 +89,7 @@ func TestWorkspaceEnv_LocalKeepsKubeconfig(t *testing.T) {
 	stageEnvSplitWorkspace(t)
 	stageRealKubeconfig(t)
 
-	_, env, err := workspaceEnv()
+	_, env, err := workspaceEnv(context.Background())
 	if err != nil {
 		t.Fatalf("workspaceEnv: %v", err)
 	}

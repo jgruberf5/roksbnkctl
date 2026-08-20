@@ -23,7 +23,7 @@ import (
 //
 // Callers that dispatch remotely source this; callers that exec locally
 // use WorkspaceEnv which adds the KUBECONFIG addendum on top.
-func WorkspaceEnvCore(workspace string) (*config.Context, []string, error) {
+func WorkspaceEnvCore(ctx context.Context, workspace string) (*config.Context, []string, error) {
 	cctx, err := config.New(workspace)
 	if err != nil {
 		return nil, nil, err
@@ -36,7 +36,7 @@ func WorkspaceEnvCore(workspace string) (*config.Context, []string, error) {
 		Workspace: cctx.WorkspaceName,
 		Source:    cctx.Workspace.IBMCloud.APIKeySource,
 	}
-	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}
@@ -67,8 +67,8 @@ func WorkspaceEnvCore(workspace string) (*config.Context, []string, error) {
 // nonexistent file and shadows the target's cloud-init kubeconfig
 // (Sprint 13 Issue 1). Callers that cross the SSH boundary MUST use
 // WorkspaceEnvCore.
-func WorkspaceEnv(workspace string) (*config.Context, []string, error) {
-	cctx, core, err := WorkspaceEnvCore(workspace)
+func WorkspaceEnv(ctx context.Context, workspace string) (*config.Context, []string, error) {
+	cctx, core, err := WorkspaceEnvCore(ctx, workspace)
 	if err != nil {
 		return nil, nil, err
 	}

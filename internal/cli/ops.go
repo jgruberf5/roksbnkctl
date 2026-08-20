@@ -162,7 +162,7 @@ func opsImage() string {
 }
 
 func runOpsInstall(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return err
@@ -319,7 +319,7 @@ func resolveTrustedProfileForInstall(ctx context.Context, cctx *config.Context, 
 }
 
 func runOpsShow(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 	cs, err := k8s.BuildClientset("")
 	if err != nil {
 		return fmt.Errorf("building kubernetes client: %w", err)
@@ -367,7 +367,7 @@ func runOpsShow(cmd *cobra.Command, _ []string) error {
 }
 
 func runOpsUninstall(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 	if !flagOpsConfirm {
 		fmt.Fprintln(os.Stderr, "Would delete (re-run with --confirm to proceed):")
 		fmt.Fprintln(os.Stderr, "  - Pod        roksbnkctl-ops/roksbnkctl-ops")

@@ -90,7 +90,7 @@ const (
 //   - If stdin is not a TTY, accepts every default — usable from CI as
 //     long as IBMCLOUD_API_KEY and the existing config (or workspace
 //     name) provide enough context.
-func runInit(_ *cobra.Command, _ []string) error {
+func runInit(cmd *cobra.Command, _ []string) error {
 	if err := rejectOnFlag("init"); err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 		if cctx.Workspace == nil {
 			return fmt.Errorf("workspace %q does not exist; run `roksbnkctl init` (without --upgrade-tf) to create it", cctx.WorkspaceName)
 		}
-		ctx, cancel := contextWithTimeout(initTimeout)
+		ctx, cancel := contextWithTimeout(cmdContext(cmd), initTimeout)
 		defer cancel()
 		return runUpgradeTF(ctx, cctx)
 	}
@@ -155,7 +155,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	// API key — env, then keychain, then prompt; offer to save on prompt.
 	resolver := &cred.Resolver{Workspace: cctx.WorkspaceName}
-	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
+	apiKey, err := resolver.IBMCloudAPIKey(cmdContext(cmd))
 	if err != nil {
 		return fmt.Errorf("resolving API key: %w", err)
 	}
@@ -172,7 +172,11 @@ func runInit(_ *cobra.Command, _ []string) error {
 	// expire the API calls (the resource-group lookup in particular). Each
 	// network call is bounded individually instead: SDK calls via apiCtx,
 	// raw-REST calls by the ibm http client's own per-request 60s timeout.
-	ctx, cancel := context.WithCancel(context.Background())
+	//
+	// Derived from the command's context, not Background: WithCancel adds no
+	// deadline, so the interview keeps its unbounded budget while Ctrl-C still
+	// reaches every call made under it.
+	ctx, cancel := context.WithCancel(cmdContext(cmd))
 	defer cancel()
 
 	fmt.Fprintln(os.Stderr, "\n→ Verifying IBM Cloud credentials...")
@@ -1329,10 +1333,11 @@ func refDescription(c config.TFSourceCfg) string {
 	}
 }
 
-// contextWithTimeout returns a child of context.Background with the
-// given timeout. Used to keep init's network ops bounded.
-func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), d)
+// contextWithTimeout bounds one of init's network ops. It derives from the
+// caller's context rather than Background so the bound is a ceiling, not a
+// detachment: the call still times out on its own, and Ctrl-C still reaches it.
+func contextWithTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, d)
 }
 
 // apiCtx bounds a single SDK network call within the (deadline-free) interview

@@ -265,7 +265,7 @@ func init() {
 	//
 	// PRD 03 §"SSH" — backend resolves its target identically to --on so
 	// users don't have to maintain two key-resolution paths.
-	execbackend.SetSSHTargetResolver(func(workspace, name string) (*remote.Target, map[string][]byte, error) {
+	execbackend.SetSSHTargetResolver(func(ctx context.Context, workspace, name string) (*remote.Target, map[string][]byte, error) {
 		if workspace == "" {
 			return nil, nil, fmt.Errorf("ssh backend: no workspace set")
 		}
@@ -279,7 +279,7 @@ func init() {
 		if err != nil {
 			return nil, nil, err
 		}
-		tfOutputs, err := loadTFOutputsForTarget(context.Background(), cctx, t)
+		tfOutputs, err := loadTFOutputsForTarget(ctx, cctx, t)
 		if err != nil {
 			return nil, nil, err
 		}

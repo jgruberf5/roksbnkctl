@@ -128,7 +128,7 @@ func init() {
 }
 
 func runClusterRegister(cmd *cobra.Command, args []string) error {
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -147,7 +147,7 @@ func runClusterRegister(cmd *cobra.Command, args []string) error {
 		return errors.New("cluster name/id is required")
 	}
 
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 
 	// 1. Cluster discovery via container service (same endpoint
 	//    `ibmcloud ks cluster get` uses). 404 → ErrClusterNotFound.
@@ -383,7 +383,7 @@ func networkModeFor(cctx *config.Context) string {
 }
 
 func runClusterUp(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 
 	// The network mode is fixed at creation. Validate it here, before either the
 	// attach path or the terraform create — an unknown value should not reach
@@ -489,7 +489,7 @@ func tryAutoConnectTGW(cmd *cobra.Command, cctx *config.Context) {
 }
 
 func runClusterDown(cmd *cobra.Command, _ []string) error {
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 
 	// flagVarFiles is already chokepoint-normalized (PersistentPreRunE).
 

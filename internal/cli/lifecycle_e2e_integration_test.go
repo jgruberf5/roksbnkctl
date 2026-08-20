@@ -100,7 +100,7 @@ func TestIntegration_KubectlPassthrough_GetNodes(t *testing.T) {
 // "skip when the prerequisite tooling/config is absent" precedent —
 // ops_integration_test.go) when the failure is the passthrough's
 // workspace prerequisite, not a real regression: the `kubectl`
-// passthrough composes workspaceEnv() and so needs an initialised
+// passthrough composes workspaceEnv(context.Background()) and so needs an initialised
 // workspace + IBM Cloud API key. A kind-only CI box has neither. A
 // genuine localhost:8080 fallback or wiring break is NOT swallowed
 // here — those are asserted by the caller after this returns false.

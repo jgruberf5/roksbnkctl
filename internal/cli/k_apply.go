@@ -66,5 +66,5 @@ func runKApply(cmd *cobra.Command, _ []string) error {
 			ErrOut: os.Stderr,
 		},
 	}
-	return opts.Run(cmd.Context())
+	return opts.Run(cmdContext(cmd))
 }
