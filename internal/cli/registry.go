@@ -53,7 +53,7 @@ air-gapped cluster installs BNK from a registry it controls.
 Commands:
   roksbnkctl registry target     Show or set the mirror target (icr|generic)
   roksbnkctl registry bom        Build + print the bill-of-materials
-  roksbnkctl registry list       List artifacts currently in the mirror
+  roksbnkctl registry list       List the artifacts the last replicate recorded
   roksbnkctl registry diff       Show what ` + "`replicate`" + ` would copy (BOM vs. mirror)
   roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched
