@@ -293,6 +293,13 @@ Preparation for BNK 2.4 and multi-NIC ROKS, neither of which has shipped. Everyt
 
 ### Changed
 
+- **`renderBNKFields` and `registry.go` split along the seams they already had.** `renderBNKFields` was one 298-line function emitting eleven unrelated groups of terraform variables; it is now a twenty-line dispatcher plus one renderer per group, so a change to the GTM fields touches `renderBNKGTM` and nothing else. `internal/cli/registry.go` was 1,311 lines holding nine subcommands that share only helpers; each subcommand now has its own file and the shared helpers stay in `registry.go` (690 lines).
+
+  Pure moves — no behaviour change, and a **golden test** proves it: the whole rendered tfvars body is pinned byte-for-byte against a workspace that populates every section. That assertion exists because the per-line tests could not have caught this class of mistake. Verified by breaking it three ways — dropping a section from the dispatcher, reordering two, and emitting one twice — each of which the existing tests pass and the golden fails. A companion test checks the fixture still exercises every section, so the golden cannot quietly pin an empty render.
+
+  Two claims in the issue did **not** survive measurement and are not acted on: `DefaultResources` is 12 lines, not 565 — the sweep that filed it measured to the next `func`, sweeping in the type declarations that follow — and `internal/config/workspace.go` is 32 type declarations with doc comments against 10 functions, which is what a config schema file should look like. Splitting either would have been churn justified by a bad number. (#117)
+
+
 - **`cluster.vpc_cidr` now warns when it changes after the cluster exists.** It has always been documented as create-time-only and was never enforced; the warning is the deprecation, and the refusal follows it in a later release rather than arriving without one. It fires only on a genuine disagreement with the recorded block, so a workspace that set it once and left it alone stays silent.
 
 ### Documentation
