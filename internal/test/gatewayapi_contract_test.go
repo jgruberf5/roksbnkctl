@@ -51,10 +51,22 @@ var absentKindExemptions = map[string]string{
 	"scripts/tf-variable-validation-test.sh": "asserts TCPRoute is rejected, which requires passing it",
 }
 
-// absentKindRE matches a route kind BNK does not install, as a manifest kind or
-// as a CRD plural.
+// absentKindRE matches a route kind BNK does not install, either as a manifest
+// kind ("TCPRoute") or as a CRD plural ("tcproutes").
+//
+// Both forms are DERIVED from AbsentRouteKinds rather than listed alongside it.
+// A hard-coded plural list is the same defect this whole file exists to catch:
+// add a kind to AbsentRouteKinds, and a second list somewhere else silently
+// stops covering it — which is precisely how the matrix teardown kept naming
+// tcproutes after the fixture stopped emitting TCPRoute.
 func absentKindRE() *regexp.Regexp {
-	return regexp.MustCompile(`\b(` + strings.Join(AbsentRouteKinds, "|") + `|tcproutes|tlsroutes|udproutes)\b`)
+	alts := make([]string, 0, len(AbsentRouteKinds)*2)
+	for _, k := range AbsentRouteKinds {
+		alts = append(alts, regexp.QuoteMeta(k), regexp.QuoteMeta(strings.ToLower(k)+"s"))
+	}
+	// (?i) is deliberately NOT used: "tcproute" in prose is not a reference to
+	// the kind, and matching it would make the exemption list unmanageable.
+	return regexp.MustCompile(`\b(` + strings.Join(alts, "|") + `)\b`)
 }
 
 // scannedDirs are the trees that can name a Kubernetes kind.
@@ -176,5 +188,32 @@ func TestRenderedRoutesUseTheContractsAPIVersions(t *testing.T) {
 	// point of #99 is that the group was wrong, not just the version.
 	if strings.Contains(l4, GatewayAPIGroup) {
 		t.Errorf("the L4 fixture references %s; BNK's L4Route is its own CRD:\n%s", GatewayAPIGroup, l4)
+	}
+}
+
+// The regex has to cover BOTH spellings of every absent kind, derived from the
+// one list. A plural that is listed separately drifts the moment a kind is
+// added — which is the failure this file exists to prevent, reproduced inside
+// the guard itself.
+func TestAbsentKindRegexCoversBothSpellingsOfEveryKind(t *testing.T) {
+	re := absentKindRE()
+	for _, kind := range AbsentRouteKinds {
+		if !re.MatchString(kind) {
+			t.Errorf("the guard does not match the manifest kind %q", kind)
+		}
+		plural := strings.ToLower(kind) + "s"
+		if !re.MatchString(plural) {
+			t.Errorf("the guard does not match the CRD plural %q — a delete list naming it would pass", plural)
+		}
+		crd := plural + "." + GatewayAPIGroup
+		if !re.MatchString(crd) {
+			t.Errorf("the guard does not match the CRD %q, which is the exact shape #99 left behind", crd)
+		}
+	}
+	// Kinds BNK DOES install must not trip it, or the guard is unusable.
+	for _, r := range InstalledRouteKinds {
+		if re.MatchString(r.Kind) || re.MatchString(r.CRD()) {
+			t.Errorf("the guard matches %s, which BNK installs", r.Kind)
+		}
 	}
 }
