@@ -139,16 +139,16 @@ func remoteHealCommand(clusterID, apiKey, region, resourceGroup string) []string
 	}
 	login := `ibmcloud login --apikey "$2"`
 	args := []string{"_", clusterID, apiKey}
-	n := 3
+	// args[0] is $0, so a value appended at args[i] is referenced as $i — the
+	// positional index is derived from the slice rather than tracked in a
+	// parallel counter that has to be kept in step with it.
 	if region != "" {
-		login += fmt.Sprintf(` -r "$%d"`, n)
 		args = append(args, region)
-		n++
+		login += fmt.Sprintf(` -r "$%d"`, len(args)-1)
 	}
 	if resourceGroup != "" {
-		login += fmt.Sprintf(` -g "$%d"`, n)
 		args = append(args, resourceGroup)
-		n++
+		login += fmt.Sprintf(` -g "$%d"`, len(args)-1)
 	}
 	script := login + ` && ibmcloud ks cluster config --cluster "$1" --admin`
 	return append([]string{"sh", "-c", script}, args...)
