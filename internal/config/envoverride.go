@@ -11,7 +11,9 @@ package config
 // supported variable maps to exactly one config field.
 
 import (
+	"crypto/x509"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -334,18 +336,32 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "resources.testing_ssh_key_name (ROKSBNKCTL_TESTING_SSH_KEY_NAME)")
 	}
 
+	// The BNK Forge server's CA (PEM, base64) — how an env-only runner pins a
+	// self-signed Forge, mirroring `bnkforge enable --forge-ca`. Validated here
+	// for the same reason the flag path x509-parses before encoding: a bad value
+	// must be rejected at seed time, where the operator is watching — not inside
+	// the best-effort registration hook after `cluster up`. GNU base64 wraps at
+	// 76 columns, so the natural $(base64 ca.pem) arrives line-wrapped; the
+	// value is stored with all whitespace stripped.
+	if v := envValue("ROKSBNKCTL_BNKFORGE_CA_B64"); v != "" {
+		compact := strings.Join(strings.Fields(v), "")
+		pem, err := DecodeB64Field("ROKSBNKCTL_BNKFORGE_CA_B64", compact)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "! ROKSBNKCTL_BNKFORGE_CA_B64 ignored: %v\n", err)
+		case !x509.NewCertPool().AppendCertsFromPEM(pem):
+			fmt.Fprintln(os.Stderr, "! ROKSBNKCTL_BNKFORGE_CA_B64 ignored: no PEM certificate found in the decoded value")
+		default:
+			bnkForgeCfg(ws).CAB64 = compact
+			applied = append(applied, "bnkforge.ca_b64 (ROKSBNKCTL_BNKFORGE_CA_B64)")
+		}
+	}
+
 	// The registry mirror. A CI job needs to name its registry without a config
 	// file: these four plus ROKSBNKCTL_GENERIC_PASSWORD are the whole surface for
 	// `registry replicate --target generic` and the install that pulls back out of
 	// it. Setting only the password (the pre-v1.19 surface) meant a pipeline still
 	// had to shell out to four `registry target` subcommands to say WHERE.
-	if v := envValue("ROKSBNKCTL_BNKFORGE_CA_B64"); v != "" {
-		if ws.BNKForge == nil {
-			ws.BNKForge = &BNKForgeCfg{}
-		}
-		ws.BNKForge.CAB64 = v
-		applied = append(applied, "bnkforge.ca_b64 (ROKSBNKCTL_BNKFORGE_CA_B64)")
-	}
 	if v := envValue("ROKSBNKCTL_REGISTRY_TARGET"); v != "" {
 		registryCfg(ws).Target = v
 		applied = append(applied, "registry.target (ROKSBNKCTL_REGISTRY_TARGET)")
@@ -502,6 +518,14 @@ func preflightCfg(ws *Workspace) *BNKPreflightCfg {
 		ws.BNK.Preflight = &BNKPreflightCfg{}
 	}
 	return ws.BNK.Preflight
+}
+
+// bnkForgeCfg lazily creates ws.BNKForge so the overrides above can populate it.
+func bnkForgeCfg(ws *Workspace) *BNKForgeCfg {
+	if ws.BNKForge == nil {
+		ws.BNKForge = &BNKForgeCfg{}
+	}
+	return ws.BNKForge
 }
 
 // gtmCfg lazily creates bnk.gtm so the overrides above can populate it.

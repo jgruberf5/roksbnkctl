@@ -189,6 +189,11 @@ func TestIsPublicIPOnlyClassifiesLiterals(t *testing.T) {
 		{"[2001:db8::1]:443", true},
 		{"[fd00::1]:443", false},
 		{"[::1]:443", false},
+		// Bracketed v6 WITHOUT a port: SplitHostPort fails, so the brackets
+		// must be stripped explicitly or a public address reads as not-public.
+		{"[2600:1f18::1]", true},
+		{"[fd00::1]", false},
+		{"2600:1f18::1", true},
 		{"10.241.0.4", false},
 		{"192.168.1.10:8443", false},
 		{"172.16.0.1", false},

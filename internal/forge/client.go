@@ -63,6 +63,13 @@ func New(baseURL string, opts Options) (*Client, error) {
 	tr := &http.Transport{}
 	switch {
 	case len(opts.CAPEM) > 0:
+		// The pool is EXCLUSIVE on purpose: the pinned CA is the only authority
+		// the Forge server's certificate may chain to, so a system-trusted cert
+		// for the same host is rejected. This is deliberately stricter than the
+		// registry mirror's trust (mirror.Engine.caTransport builds system-roots-
+		// PLUS-CA, because one transport there serves both public pulls and the
+		// private mirror). This client talks to exactly one server; pinning is
+		// the point. Do not "harmonize" the two.
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(opts.CAPEM) {
 			return nil, errors.New("bnkforge CA: no certificate found in the supplied PEM")
@@ -112,6 +119,11 @@ func isPublicIP(host string) bool {
 	h := host
 	if hp, _, err := net.SplitHostPort(host); err == nil {
 		h = hp
+	} else if strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
+		// A bracketed IPv6 literal WITHOUT a port ("[2600:1f18::1]") fails
+		// SplitHostPort, and ParseIP does not accept the brackets — strip them
+		// so a public v6 address still escalates the warning.
+		h = h[1 : len(h)-1]
 	}
 	ip := net.ParseIP(h)
 	if ip == nil {

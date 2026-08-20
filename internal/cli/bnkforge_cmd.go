@@ -157,8 +157,11 @@ func runBNKForgeEnable(_ *cobra.Command, _ []string) error {
 			return err
 		}
 		ws.BNKForge.CAB64 = b64
-		// Pinning supersedes disabling verification — persist that rather than
-		// leaving a stale `insecure: true` for the client to have to ignore.
+		// Config hygiene, not enforcement: forge.New already ignores Insecure
+		// whenever a CA is pinned. But `enable` is the only CLI path that writes
+		// this block, so leaving a stale `insecure: true` here would make every
+		// later command print the "insecure is ignored" notice with no way to
+		// quiet it short of hand-editing config.yaml.
 		ws.BNKForge.Insecure = false
 	}
 	if err := config.SaveWorkspace(name, ws); err != nil {
@@ -256,7 +259,6 @@ func runBNKForgeUnregister(cmd *cobra.Command, _ []string) error {
 			return cerr
 		}
 		eff.CAB64 = b64
-		eff.Insecure = false
 	}
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
@@ -293,7 +295,6 @@ func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {
 			return cerr
 		}
 		eff.CAB64 = b64
-		eff.Insecure = false
 	}
 	// --password is a transient override: expose it to resolveForgePassword via
 	// the env it already consults (avoids widening the internal signature).
@@ -323,7 +324,9 @@ func readForgeCAFile(path string) (string, error) {
 }
 
 // forgeTLSDescription renders the connection's trust for `bnkforge status`, so
-// a workspace running unverified says so where someone will read it.
+// a workspace running unverified says so where someone will read it. The
+// CA-before-insecure ordering mirrors the precedence forge.New enforces — if
+// forge.New's rules ever change, this text must follow.
 func forgeTLSDescription(bf *config.BNKForgeCfg) string {
 	switch {
 	case bf == nil:

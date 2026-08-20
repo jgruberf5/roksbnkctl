@@ -434,9 +434,9 @@ func buildGenericTarget(ws *config.Workspace) (mirrorTarget, error) {
 	}
 	var auth authn.Authenticator = authn.Anonymous
 	if reg.GenericUsername != "" || reg.GenericPasswordB64 != "" {
-		pw, derr := base64.StdEncoding.DecodeString(reg.GenericPasswordB64)
+		pw, derr := config.DecodeB64Field("registry.generic_password_b64", reg.GenericPasswordB64)
 		if derr != nil {
-			return nil, fmt.Errorf("registry target generic: decoding generic_password_b64: %w", derr)
+			return nil, fmt.Errorf("registry target generic: %w", derr)
 		}
 		auth = &authn.Basic{Username: reg.GenericUsername, Password: string(pw)}
 	}
@@ -876,9 +876,9 @@ func resolveMirrorCA(name string, ws *config.Workspace, host string) (string, er
 		return strings.TrimSpace(string(pemBytes)), nil
 	}
 	if ws != nil && ws.Registry != nil && ws.Registry.GenericCAB64 != "" {
-		der, err := base64.StdEncoding.DecodeString(strings.TrimSpace(ws.Registry.GenericCAB64))
+		der, err := config.DecodeB64Field("registry.generic_ca_b64", ws.Registry.GenericCAB64)
 		if err != nil {
-			return "", fmt.Errorf("decoding registry.generic_ca_b64: %w", err)
+			return "", err
 		}
 		return strings.TrimSpace(string(der)), nil
 	}
