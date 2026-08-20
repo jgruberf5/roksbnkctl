@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/jgruberf5/roksbnkctl/internal/cli"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 )
 
 func main() {
@@ -25,7 +26,10 @@ func main() {
 		// Preflight already wrote the actionable error to stderr; just
 		// exit non-zero. cli.Execute() must NOT run — the typo must
 		// surface before any RunE / workspace mutation / IAM call.
-		os.Exit(2)
+		//
+		// Usage, not Failure: nothing was attempted, so a script can tell a
+		// malformed invocation from a command that ran and went wrong.
+		os.Exit(exitcode.Usage)
 	}
 	cli.Execute()
 }

@@ -54,6 +54,43 @@ roksbnkctl init -w ci-run-42 \
 
 No secret ever lands in git; the same template seeds every account.
 
+## Exit codes
+
+Unattended callers branch on `$?`, so the codes are an interface:
+
+| code | meaning |
+|---:|---|
+| `0` | The command did what was asked. |
+| `1` | It went wrong. The default for anything without a more specific code. |
+| `2` | The **invocation** was rejected — a malformed flag, an argument the command cannot accept. Nothing was attempted. |
+| `126` | Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused. |
+| `127` | The target could not be reached at all. |
+| `130` | The operator interrupted it (Ctrl-C / `SIGINT`). |
+| *other* | A wrapped tool's own status, passed through unchanged — `terraform`, `ibmcloud`, and `--on <target>` remote commands all propagate theirs. |
+
+`130` is worth wiring into CI cleanup: it distinguishes *"someone stopped this"*
+from *"it broke"*, which a job that retries on failure should treat differently.
+Before v1.50.0 only `roksbnkctl init` produced it — every other command turned
+the same Ctrl-C into `1`.
+
+`2` is similarly worth separating. It means the command never ran, so retrying
+the same invocation will fail the same way; the fix is in the script, not the
+environment.
+
+A command that propagates a wrapped tool's status does not print its own error
+on top — `terraform`'s diagnostics have already gone to stderr, and a second
+`roksbnkctl: ...` line would only add noise. Check the stream, not just the
+code.
+
+### A limit worth knowing
+
+`130` requires the command to *surface* the interrupt. Commands that run a
+child process or a cancellable API call do. A few convert a cancelled context
+into an error of their own — `test dns` reports its per-query timeout, for
+instance — and those still exit `1`. If your job needs to distinguish an
+interrupt reliably, trap `SIGINT` in the script rather than inferring it from
+the exit code alone.
+
 ## `--config-file`
 
 `--config-file` parses the supplied YAML strictly — **unknown fields are

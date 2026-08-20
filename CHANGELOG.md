@@ -35,6 +35,16 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   Two cases are deliberately **not** treated as mismatches. When the configured mirror cannot be resolved from config at all (an unset `generic_host`, an ICR region with no known registry host), the record is still trusted — knowing less than the record is not grounds for discarding it. And when no target is stated anywhere, the `icr` default is a fallback rather than a claim: `registry replicate --target generic` is a supported way to mirror without putting `target: generic` in `config.yaml`, so the record's host and repository are checked through its own kind instead. The tfvars check runs before the file is created, so a refusal leaves the previous render intact rather than truncated. (#112)
 
+### Changed
+
+- **Exit codes are one contract instead of eighteen decisions.** `os.Exit` was called from 18 places across five packages, each with its own policy. `roksbnkctl init` exited `130` on Ctrl-C while every other command turned the same interrupt into `1` — indistinguishable from a real failure, which matters because every demo and CI path in this repo branches on `$?`. `internal/remote` defined a meaningful `126`/`127` scheme that nothing else participated in. And because `os.Exit` terminates the test binary, none of it could be asserted: the inconsistencies went unnoticed because there was no way to notice.
+
+  Commands now **return** a coded error (`internal/exitcode`) and one place maps it to a status. Three `os.Exit` calls remain, each with a stated reason: the root's mapping, the argv preflight (which runs before cobra exists to return an error to), and `init`'s SIGINT handler (which fires from a goroutine while a terminal read blocks, where there is no error to return from anywhere). All three take their value from the contract.
+
+  Two behaviours change for callers: **Ctrl-C now yields `130` from any command that surfaces the interrupt**, not just `init`; and a malformed invocation yields `2` rather than `1`, so a script can tell "the command never ran" from "the command ran and failed". Codes documented in [chapter 7a](book/src/07a-unattended-setup.md), including the limit — a command that converts a cancelled context into an error of its own still exits `1`.
+
+  Returning rather than exiting also fixes a quieter bug: `os.Exit` skips deferred cleanup, so the SSH error paths in `internal/cli/remote.go` were leaving `client.Close()` unrun. (#118)
+
 ### Fixed
 
 - **Ctrl-C did not cancel credential and `terraform output` calls.** `root.go` builds the process context with `signal.NotifyContext`, so every command receives something that cancels on interrupt. Eight call sites discarded it and started a fresh `context.Background()`, including credential resolution — which can block on the OS keychain — and a `terraform output` shell-out. While one was blocked, Ctrl-C was accepted by the signal handler and then ignored, because the work was running on a context that could not hear it. `ibmcloud login` on the passthrough path was worse still: `exec.Command` with no context at all, so a hang on a wedged IAM endpoint was uninterruptible and unbounded.

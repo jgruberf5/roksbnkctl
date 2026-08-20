@@ -11,6 +11,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
@@ -110,8 +111,7 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 
 	client, err := remote.Connect(ctx, t)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "roksbnkctl: connect %s: %v\n", t.Name, err)
-		os.Exit(remote.ExitConnectFailed)
+		return exitcode.Newf(exitcode.ConnectFailed, "connect %s: %w", t.Name, err)
 	}
 	defer client.Close()
 
@@ -154,8 +154,7 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 			}
 		}
 		if herr := maybeSelfHealRemoteKubeconfig(ctx, clientRunner{client}, argv, clusterID, apiKey, region, resourceGroup); herr != nil {
-			fmt.Fprintf(os.Stderr, "roksbnkctl: remote kubeconfig self-heal: %v\n", herr)
-			os.Exit(remote.ExitAuthFailed)
+			return exitcode.Newf(exitcode.AuthFailed, "remote kubeconfig self-heal: %w", herr)
 		}
 	}
 
@@ -167,11 +166,12 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 		TTY:    tty,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "roksbnkctl: remote run: %v\n", err)
-		os.Exit(remote.ExitAuthFailed)
+		return exitcode.Newf(exitcode.AuthFailed, "remote run: %w", err)
 	}
 	if code != 0 {
-		os.Exit(code)
+		// The wrapped command already wrote its own diagnostics to the inherited
+		// stderr; propagate only its status.
+		return exitcode.Silent(code)
 	}
 	return nil
 }
@@ -205,8 +205,7 @@ func dispatchRemoteShell(ctx context.Context, target string) error {
 
 	client, err := remote.Connect(ctx, t)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "roksbnkctl: connect %s: %v\n", t.Name, err)
-		os.Exit(remote.ExitConnectFailed)
+		return exitcode.Newf(exitcode.ConnectFailed, "connect %s: %w", t.Name, err)
 	}
 	defer client.Close()
 

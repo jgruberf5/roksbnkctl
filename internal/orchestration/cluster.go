@@ -34,6 +34,7 @@ import (
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
@@ -572,7 +573,9 @@ func dispatchBackend(ctx context.Context, in *ClusterInputs, spec, tool string, 
 		return err
 	}
 	if rc != 0 {
-		os.Exit(rc)
+		// The wrapped tool wrote its own output to the inherited streams;
+		// propagate only its status.
+		return exitcode.Silent(rc)
 	}
 	return nil
 }
@@ -697,7 +700,7 @@ func runWithEnv(bin string, args, env []string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			os.Exit(ee.ExitCode())
+			return exitcode.Silent(ee.ExitCode())
 		}
 		return err
 	}

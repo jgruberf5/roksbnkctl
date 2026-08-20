@@ -11,6 +11,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/doctor"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/remote"
 )
 
@@ -134,7 +135,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if doctor.HasFailures(results) {
-		os.Exit(1)
+		// PrintResults already showed every check and its detail; a second
+		// "roksbnkctl: ..." line would add nothing.
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }

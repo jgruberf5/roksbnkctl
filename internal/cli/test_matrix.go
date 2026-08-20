@@ -12,6 +12,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/test"
 )
 
@@ -248,7 +249,7 @@ func outputMatrix(run test.MatrixRun) error {
 		test.WriteMatrixMarkdown(os.Stderr, run)
 	}
 	if run.Overall == test.StatusFail {
-		os.Exit(1)
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }

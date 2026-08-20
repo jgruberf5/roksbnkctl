@@ -14,6 +14,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
 	"github.com/jgruberf5/roksbnkctl/internal/test"
 )
@@ -292,7 +293,7 @@ func runDNSSingleVantage(ctx context.Context, cctx *config.Context, target strin
 	// in the text rendering at printDNSVantageText); the exit code mirrors
 	// that classification. Pinned by e2e step LD3 (NXDOMAIN must exit 1).
 	if res.Err != "" || res.Rcode != "NOERROR" {
-		os.Exit(1)
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }
@@ -364,11 +365,11 @@ func runDNSGSLBCompare(ctx context.Context, cctx *config.Context, target string,
 	// vantage errored.
 	if flagDNSRequireDivergence && !cmp.GSLBDivergence {
 		fmt.Fprintln(os.Stderr, "✗ --require-divergence: no divergence across vantages (GSLB may not be taking effect)")
-		os.Exit(1)
+		return exitcode.Silent(exitcode.Failure)
 	}
 	for _, v := range cmp.Vantages {
 		if v.Err != "" {
-			os.Exit(1)
+			return exitcode.Silent(exitcode.Failure)
 		}
 	}
 	return nil
@@ -805,7 +806,7 @@ func outputSuite(s test.SuiteRun) error {
 		test.PrintSuiteText(os.Stderr, s)
 	}
 	if s.Overall == test.StatusFail {
-		os.Exit(1)
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }
@@ -917,7 +918,7 @@ func outputAll(all test.AllRun) error {
 		fmt.Fprintf(os.Stderr, "\n%s overall (%d/%d suites passed)\n", all.Overall, passed, len(all.Suites))
 	}
 	if all.Overall == test.StatusFail {
-		os.Exit(1)
+		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
 }

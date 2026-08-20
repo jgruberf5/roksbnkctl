@@ -17,6 +17,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/ibm"
 	"github.com/jgruberf5/roksbnkctl/internal/naming"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
@@ -219,7 +220,12 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		<-sigCh
 		fmt.Fprintf(os.Stderr, "\n\n^C interrupted — workspace %q is saved. Re-run `roksbnkctl init -w %s` to finish it.\n",
 			cctx.WorkspaceName, cctx.WorkspaceName)
-		os.Exit(130)
+		// One of the two os.Exit calls left outside root.go, and the only one
+		// inside a command. It fires from a goroutine while the interview is
+		// blocked on a terminal read, which no context can interrupt — there is
+		// no error to return from anywhere. The CODE still comes from the
+		// contract, so init's interrupt matches every other command's.
+		os.Exit(exitcode.Interrupted)
 	}()
 
 	// The account-aware interview: create-vs-reuse, region + existing-cluster

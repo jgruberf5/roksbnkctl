@@ -16,6 +16,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/orchestration"
 )
 
@@ -171,8 +172,15 @@ func Execute() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "roksbnkctl: %v\n", err)
-		os.Exit(1)
+		// The ONE place a command's failure becomes a process status. Commands
+		// return a coded error (internal/exitcode); everything else is a plain
+		// failure, and a cancelled context is the operator interrupting us
+		// rather than a fault — which used to collapse into 1, leaving a script
+		// unable to tell Ctrl-C from a real error.
+		if !exitcode.IsSilent(err) {
+			fmt.Fprintf(os.Stderr, "roksbnkctl: %v\n", err)
+		}
+		os.Exit(exitcode.FromError(err))
 	}
 }
 

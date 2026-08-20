@@ -3,12 +3,12 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
@@ -231,7 +231,7 @@ func runTerraformPassthrough(cmd *cobra.Command, args []string) error {
 		// terraform already streamed its diagnostics to stderr; surface
 		// a non-zero exit without double-printing.
 		if ee, ok := runErr.(interface{ ExitCode() int }); ok {
-			os.Exit(ee.ExitCode())
+			return exitcode.Silent(ee.ExitCode())
 		}
 		return runErr
 	}
