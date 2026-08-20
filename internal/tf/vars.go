@@ -31,24 +31,37 @@ func WriteTFVars(path string, ws *config.Workspace, kubeconfigDir, scratchDir st
 // record) renders exactly as WriteTFVars did — byte-identical off the
 // air-gap path.
 func WriteTFVarsForWorkspace(path, workspaceName string, ws *config.Workspace, kubeconfigDir, scratchDir string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", path, err)
-	}
-	defer f.Close()
-
 	// Resolve the mirror record whenever one exists for this workspace. Its
 	// presence — written by `registry replicate` — IS the opt-in to redirect the
 	// install onto the in-cluster mirror; it does not require a registry: block in
 	// config.yaml (replicate runs flag-driven too, as `--target icr`). A
 	// workspace with no record reads ErrNoRegistryMirror, leaving mirror nil so
 	// the render stays behavior-identical to the legacy far_repo_url path.
+	//
+	// Resolved BEFORE the file is created: a rejected record must leave the
+	// existing tfvars untouched rather than truncated, since the caller aborts
+	// and the operator is left holding whatever is on disk.
 	var mirror *config.RegistryMirror
 	if workspaceName != "" {
 		if m, err := config.ReadRegistryMirror(workspaceName); err == nil {
+			// Only redirect onto a mirror the workspace is actually configured
+			// for. A record that describes a registry the config has since been
+			// repointed away from would rewrite every image and chart reference
+			// in the install to a mirror nobody asked for — and terraform would
+			// apply it without complaint.
+			if err := config.MirrorRecordMismatchError(workspaceName, ws, m); err != nil {
+				return err
+			}
 			mirror = m
 		}
 	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", path, err)
+	}
+	defer f.Close()
+
 	return renderTFVars(f, ws, mirror, kubeconfigDir, scratchDir)
 }
 

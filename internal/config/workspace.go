@@ -1018,6 +1018,7 @@ func LoadWorkspace(name string) (*Workspace, error) {
 	if err := yaml.Unmarshal(b, &ws); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
+	warnOnLoosePerms(name)
 	return &ws, nil
 }
 
@@ -1031,23 +1032,35 @@ func SaveWorkspace(name string, ws *Workspace) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfgPath), SecretDirMode); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(cfgPath), err)
 	}
 	stateDir, err := WorkspaceStateDir(name)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+	if err := os.MkdirAll(stateDir, SecretDirMode); err != nil {
 		return fmt.Errorf("creating %s: %w", stateDir, err)
 	}
 	b, err := yaml.Marshal(ws)
 	if err != nil {
 		return fmt.Errorf("encoding workspace config: %w", err)
 	}
-	if err := os.WriteFile(cfgPath, b, 0o644); err != nil {
+	// Owner-only: this file can hold ibmcloud.api_key_b64 and
+	// registry.generic_password_b64, which are base64 and not encrypted.
+	if err := os.WriteFile(cfgPath, b, SecretFileMode); err != nil {
 		return fmt.Errorf("writing %s: %w", cfgPath, err)
 	}
+	// WriteFile does not narrow an existing file's mode, and MkdirAll does not
+	// touch an existing directory's — so a workspace written by an older build
+	// stays world-readable until this runs.
+	//
+	// Best-effort: a filesystem that cannot hold 0600 (a WSL DrvFs mount without
+	// metadata, an SMB share) must not make `init` fail outright — the workspace
+	// itself was written correctly, and refusing to save it would leave the user
+	// with no workspace at all rather than a workspace with loose permissions.
+	// `roksbnkctl doctor` reports the tree it could not tighten.
+	_, _ = SecureWorkspacePerms(name)
 	return nil
 }
 

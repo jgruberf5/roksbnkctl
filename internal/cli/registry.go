@@ -374,14 +374,7 @@ type mirrorTarget interface {
 // registryTargetKind resolves the active target backend: --target flag >
 // registry.target > "icr" (the default).
 func registryTargetKind(ws *config.Workspace) string {
-	kind := "icr"
-	if ws.Registry != nil && ws.Registry.Target != "" {
-		kind = ws.Registry.Target
-	}
-	if flagRegistryTarget != "" {
-		kind = flagRegistryTarget
-	}
-	return kind
+	return config.MirrorTargetKind(ws, flagRegistryTarget)
 }
 
 // buildTarget resolves the configured registry target and prepares it.
@@ -397,14 +390,6 @@ func buildTarget(ctx context.Context, name string, ws *config.Workspace) (mirror
 	}
 }
 
-// icrHostForRegion maps an IBM Cloud region to its regional ICR registry host.
-var icrHostForRegion = map[string]string{
-	"us-south": "us.icr.io", "us-east": "us.icr.io",
-	"eu-de": "de.icr.io", "eu-gb": "uk.icr.io", "eu-es": "es.icr.io",
-	"jp-tok": "jp.icr.io", "jp-osa": "jp2.icr.io",
-	"au-syd": "au.icr.io", "ca-tor": "ca.icr.io", "br-sao": "br.icr.io",
-}
-
 // buildICRTarget builds the IBM Container Registry target: host from
 // registry.icr_host (else derived from ibmcloud.region), namespace from
 // registry.icr_namespace (else the workspace prefix), and iamapikey auth using
@@ -416,7 +401,7 @@ func buildICRTarget(ctx context.Context, name string, ws *config.Workspace) (mir
 	}
 	host := reg.ICRHost
 	if host == "" {
-		h, ok := icrHostForRegion[ws.IBMCloud.Region]
+		h, ok := config.ICRHostForRegion[ws.IBMCloud.Region]
 		if !ok {
 			return nil, fmt.Errorf("registry target icr: cannot derive an ICR host for region %q — set registry.icr_host (e.g. de.icr.io)", ws.IBMCloud.Region)
 		}
@@ -778,30 +763,22 @@ func runRegistryList(_ *cobra.Command, _ []string) error {
 // ── diff ────────────────────────────────────────────────────────────────────
 
 // mirrorRecordMismatch reports why the recorded mirror does not describe the
-// CONFIGURED target, or "" when it does (or when we cannot tell).
+// CONFIGURED target, or "" when it does (or when we cannot tell). It is the
+// registry subcommands' entry to the shared check in internal/config, passing
+// the `--target` flag so an explicit override is honoured here as everywhere
+// else the flag applies.
 //
-// Cannot-tell is deliberately treated as a match. If the target will not build —
-// missing credentials, an unreachable ICR region — we know less than the record
-// does, and discarding it on that basis would turn a diff into a full re-replicate
-// for a reason that has nothing to do with the mirror's contents.
-func mirrorRecordMismatch(ctx context.Context, name string, ws *config.Workspace, rec *config.RegistryMirror) string {
-	if rec == nil {
-		return ""
-	}
-	if kind := registryTargetKind(ws); rec.Target != "" && rec.Target != kind {
-		return fmt.Sprintf("it was written for target %q, the configured target is %q", rec.Target, kind)
-	}
-	target, err := buildTarget(ctx, name, ws)
-	if err != nil {
-		return "" // cannot resolve the target — say nothing rather than guess
-	}
-	if ns := target.MirrorNamespace(); rec.Namespace != "" && ns != "" && rec.Namespace != ns {
-		return fmt.Sprintf("it was written for repository %q, the configured repository is %q", rec.Namespace, ns)
-	}
-	if h := target.ImageHostPath(); rec.ImageHost != "" && h != "" && rec.ImageHost != h {
-		return fmt.Sprintf("it was written for host %q, the configured host is %q", rec.ImageHost, h)
-	}
-	return ""
+// Cannot-tell is deliberately treated as a match. When the configured mirror
+// cannot be resolved from config we know less than the record does, and
+// discarding it on that basis would turn a diff into a full re-replicate for a
+// reason that has nothing to do with the mirror's contents.
+//
+// ctx and name are unused: resolving the mirror's identity needs no client and
+// no credentials. They stay in the signature because every call site is inside
+// a cobra RunE that has them, and a check this cheap should not be the reason a
+// caller has to restructure.
+func mirrorRecordMismatch(_ context.Context, _ string, ws *config.Workspace, rec *config.RegistryMirror) string {
+	return config.MirrorRecordMismatch(ws, rec, flagRegistryTarget)
 }
 
 func runRegistryDiff(cmd *cobra.Command, _ []string) error {

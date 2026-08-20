@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -128,6 +130,13 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	}
 	out = append(out, checkWorkspace(cctx))
 	if cctx.Workspace != nil {
+		// Not on Windows: Go's Chmod there only toggles the read-only bit, so
+		// there is no owner-only mode to assert. A skipped row would render as ⚠
+		// (symbolFor) and sit there permanently, unactionable — better to have no
+		// row than a warning nobody can clear.
+		if runtime.GOOS != "windows" {
+			out = append(out, checkWorkspacePerms(cctx))
+		}
 		out = append(out, checkAPIKey(cctx))
 		out = append(out, checkIBMAuth(ctx, cctx))
 		out = append(out, checkQuota(ctx, cctx))
@@ -250,6 +259,36 @@ func checkWorkspace(cctx *config.Context) withWhy {
 	c.Status = StatusOK
 	c.Detail = cctx.WorkspaceName
 	return withWhy{Check: c, Why: "per-environment config + state"}
+}
+
+// checkWorkspacePerms reports whether the workspace tree is owner-only.
+//
+// config.yaml can hold ibmcloud.api_key_b64 and registry.generic_password_b64,
+// both base64 rather than encrypted, so the file mode is the only protection
+// they have. LoadWorkspace repairs a loose tree on read; this check is what
+// makes the state visible rather than assumed, and it is the only thing that
+// reports a tree that could NOT be repaired.
+func checkWorkspacePerms(cctx *config.Context) withWhy {
+	const why = "credentials in the workspace are protected by file mode alone"
+	c := Check{Name: "workspace permissions"}
+	// Read-only on purpose: loading the workspace has already repaired what it
+	// could, so anything still loose here is something the repair could NOT fix
+	// — a read-only mount, a filesystem with no POSIX modes. A doctor check that
+	// also mutated would report the state it had just created.
+	loose, err := config.LooseWorkspacePaths(cctx.WorkspaceName)
+	switch {
+	case err != nil:
+		c.Status = StatusError
+		c.Detail = err.Error()
+	case len(loose) > 0:
+		c.Status = StatusError
+		c.Detail = fmt.Sprintf("%s readable by other users and could not be tightened (%d path(s)) — move the workspace to a filesystem that can hold 0600, or keep credentials out of config.yaml",
+			filepath.Base(loose[0]), len(loose))
+	default:
+		c.Status = StatusOK
+		c.Detail = "owner-only"
+	}
+	return withWhy{Check: c, Why: why}
 }
 
 func checkAPIKey(cctx *config.Context) withWhy {

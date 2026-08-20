@@ -845,7 +845,11 @@ func guardRegistryMirror(workspaceName string, ws *config.Workspace) error {
 		return fmt.Errorf("the registry-mirror record is incomplete (missing %s) — re-run `roksbnkctl registry replicate`, or `roksbnkctl registry adopt` if the mirror is already populated",
 			missingMirrorHosts(m))
 	}
-	return nil
+	// Present and complete is not the same as current. The record describes the
+	// mirror as it was last replicated; the config can have been repointed at a
+	// different registry or repository since, and nothing re-probes on read. A
+	// record for another mirror would redirect the whole install at it.
+	return config.MirrorRecordMismatchError(workspaceName, ws, m)
 }
 
 // missingMirrorHosts names which mirror host(s) are absent, for the guard's

@@ -161,7 +161,7 @@ func WriteClusterOutputs(workspace string, out *ClusterOutputs) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), SecretDirMode); err != nil {
 		return err
 	}
 	body, err := json.MarshalIndent(out, "", "  ")
@@ -169,7 +169,7 @@ func WriteClusterOutputs(workspace string, out *ClusterOutputs) error {
 		return err
 	}
 	body = append(body, '\n')
-	if err := os.WriteFile(p, body, 0o644); err != nil {
+	if err := os.WriteFile(p, body, SecretFileMode); err != nil {
 		return fmt.Errorf("writing %s: %w", p, err)
 	}
 	return nil

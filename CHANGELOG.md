@@ -6,7 +6,27 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Security
+
+- **`config.yaml` was written world-readable while holding credentials.** `SaveWorkspace` wrote mode `0644` into a `0755` directory. That file can carry `ibmcloud.api_key_b64`, `registry.generic_password_b64`, and the BIG-IP/GTM passwords — all base64, which the field documentation is explicit is obfuscation and not encryption, so the file mode was the only protection they had. Any other account on the host could read an IBM Cloud API key that can create and destroy infrastructure. The requirement was already written down one line above the affected field (*"chmod 600, never commit"*) and the writer did not implement it.
+
+  `config.yaml`, `registry-mirror.json` and `cluster-outputs.json` are now written `0600`, and the workspace directory `0700`. Writing the right mode is not enough on its own — every workspace created by an earlier release is on disk at `0644` right now, and nothing rewrites a finished workspace — so **reading** a workspace tightens it in place and says so once, pointing at rotation.
+
+  The repair covers the workspace directory and each of its immediate children, enumerated rather than matched against a list of known names, so every `state-*` tree (and any a future phase adds) is covered without a deep walk of `tf-source/` and `scratch/` on each load. It masks the group and other bits rather than forcing a flat `0600`/`0700`, so an executable that lands in the tree keeps working. Repair is best-effort: a filesystem that cannot hold `0600` must not make `init` fail outright.
+
+  `roksbnkctl doctor` gains a read-only `workspace permissions` check — read-only because loading has already repaired what it could, so anything still loose is something the repair could **not** fix, which is the part worth reporting. The row is absent on Windows, where Go's `Chmod` only toggles the read-only bit.
+
+  If a workspace on a shared host has held `api_key_b64`, **rotate that API key**: tightening the mode now does not un-expose what was readable before. (#121)
+
+- **The BNK-phase paths trusted `registry-mirror.json` without checking it described the configured mirror.** #109 fixed this for the registry subcommands; the paths that act on the same record without asking kept believing it — the tfvars render (which redirects every chart and image reference in the install), the phase guard, and the node CA-trust installer (which pushes the recorded CA onto every worker). Repointing `registry.generic_repo_prefix` at another repository, or switching `registry.target`, leaves a record naming the old mirror, and nothing re-probes on read.
+
+  All three now refuse a record that does not describe the configured mirror, naming both repositories and how to re-record. The identity check moved into `internal/config` as a single implementation shared with the registry subcommands, resolved from configuration alone — no client, no credentials — so it runs on the paths that have neither. That also removed a network call and an API-key resolution from the subcommand path, which previously answered "cannot tell" whenever the credential was unavailable.
+
+  Two cases are deliberately **not** treated as mismatches. When the configured mirror cannot be resolved from config at all (an unset `generic_host`, an ICR region with no known registry host), the record is still trusted — knowing less than the record is not grounds for discarding it. And when no target is stated anywhere, the `icr` default is a fallback rather than a claim: `registry replicate --target generic` is a supported way to mirror without putting `target: generic` in `config.yaml`, so the record's host and repository are checked through its own kind instead. The tfvars check runs before the file is created, so a refusal leaves the previous render intact rather than truncated. (#112)
+
 ### Fixed
+
+- **`remoteHealCommand` carried a dead positional counter.** The `sh -c` self-heal command numbers its parameters so the IBM Cloud API key travels as a positional value rather than interpolated into the script text. The counter tracking those numbers ran alongside the args slice it described, and its final increment was never read — staticcheck v0.8.0 flags it (SA4006). The index now derives from `len(args)`, so there is no second thing to keep in step, and a new test pins the property the counter existed to maintain: every `"$N"` in the script resolves to the value actually at that argv position, and the key never appears in the literal.
 
 - **`registry diff` reported "in sync" against an empty registry.** `diff` compares the bill of materials against `registry-mirror.json` and **never contacts the registry**, so a record describing a mirror that has since been rebuilt, emptied or swapped still listed its artifacts as present. Observed with a record naming one repository while the workspace was configured for another, on a host that had been destroyed and rebuilt: `diff` said *"mirror is in sync"* while `verify` correctly reported all 89 artifacts missing. Skipping replication on that basis leaves an air-gapped install to fail much later on images that were never copied.
 

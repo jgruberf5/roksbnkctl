@@ -32,6 +32,13 @@ func ensureRegistryCATrust(ctx context.Context, cctx *config.Context, tfws *tf.W
 		}
 		return err
 	}
+	// The record names the host whose CA is about to be installed into every
+	// node's container-runtime trust store. If it describes a mirror this
+	// workspace is not configured for, that is the wrong CA on every node and a
+	// reachability probe against the wrong registry — refuse rather than trust it.
+	if err := config.MirrorRecordMismatchError(cctx.WorkspaceName, cctx.Workspace, rec); err != nil {
+		return fmt.Errorf("registry CA trust: %w", err)
+	}
 	host := strings.TrimSpace(rec.RegistryHost)
 	ca := strings.TrimSpace(rec.CACert)
 	// A missing CA is NOT a reason to skip: the registry may already be trusted (its CA

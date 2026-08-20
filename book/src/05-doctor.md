@@ -18,6 +18,7 @@ roksbnkctl doctor
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
+✓  workspace permissions  owner-only                                                          (credentials in the workspace are protected by file mode alone)
 ✓  ibmcloud api key  resolved                                                                 (auth for terraform + IBM SDK calls)
 ✓  ibm cloud auth    OK (account: 1a2b3c..., user: you@example.com)                           (verifies API key works against IBM IAM)
 ```
@@ -115,6 +116,30 @@ Reports the resolved workspace name and whether its `config.yaml` exists.
 - `✗ no config context` — the global config can't be loaded at all.
 
 The one-off `-w / --workspace` flag overrides which workspace `doctor` reports against. See [Chapter 6 — Workspaces](./06-workspaces.md).
+
+### `workspace permissions`
+
+Reports whether the workspace tree is owner-only, and tightens it if not.
+
+`config.yaml` can hold `ibmcloud.api_key_b64` and `registry.generic_password_b64`; `state/terraform.tfstate` holds whatever those resolve to. All of it is base64 at most, which is obfuscation and not encryption — the file mode is the only protection, so `config.yaml` is `0600` and the directories are `0700`.
+
+The check is **read-only**. Loading a workspace already tightens what it can, so anything still loose by the time `doctor` looks is something the repair could *not* fix — which is exactly what is worth reporting.
+
+- `✓ owner-only` — nothing to do.
+- `✗ <path> readable by other users and could not be tightened (N path(s))` — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (a WSL DrvFs mount without metadata, an SMB share). Move the workspace onto a filesystem that can hold `0600`, or use the keychain or env-var credential paths so nothing sensitive lands in the file at all.
+
+The row is **absent on Windows**: Go's `Chmod` there only toggles the read-only bit, so there is no owner-only mode to assert and a permanent unactionable warning would be worse than no row.
+
+The scope is the workspace directory and its immediate children: `config.yaml`, `registry-mirror.json`, `cluster-outputs.json`, `ssh/`, and every `state-*` tree. Children are enumerated rather than matched against a list of known names, so a state tree added by a future phase is covered the day it appears. Owner-only on a state directory makes everything inside it unreachable regardless of those files' own modes, which is why the check does not walk deeper.
+
+The **repair** happens on load, not here, and announces itself once:
+
+```
+⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+```
+
+Workspaces written by a release before v1.50.0 are `0644`/`0755` on disk and will produce that line the first time they are read. **The exposure that already happened is not undone** — on a shared host, rotate the API key.
 
 ### `ibmcloud api key`
 
