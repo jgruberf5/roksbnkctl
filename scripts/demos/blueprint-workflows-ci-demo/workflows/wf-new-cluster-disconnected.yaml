@@ -94,6 +94,20 @@ spec:
           # Last envFrom wins, so the handoff overrides anything stale in bnk-env.
           - secretRef:    { name: flp-handoff }
         env:
+          # The bnkdisco pair gets its OWN identity. Both cluster-creating
+          # blueprints previously inherited ROKSBNKCTL_PREFIX/CLUSTER_NAME from
+          # bnk-env, so `all` built bnk-ci-cluster-vpc twice and the second one
+          # died on "Provided Name (bnk-ci-cluster-vpc) is not unique" — while
+          # the README documents `all` as running every workflow in order and the
+          # teardown tears down bnkconn AND bnkdisco as if both exist.
+          #
+          # The CIDR is not cosmetic either. Both VPCs attach to the shared
+          # transit gateway, and overlapping prefixes there are BLACKHOLED
+          # silently rather than refused: 10.241 services, 10.242 forge,
+          # 10.243 the connected cluster, so the disconnected one takes 10.244.
+          - { name: ROKSBNKCTL_PREFIX,           value: "bnk-cid" }
+          - { name: ROKSBNKCTL_CLUSTER_NAME,     value: "bnk-cid" }
+          - { name: ROKSBNKCTL_CLUSTER_VPC_CIDR, value: "10.244.0.0/16" }
           - { name: ROKSBNKCTL_CLUSTER_CREATE,         value: "true" }
           - { name: ROKSBNKCTL_LICENSE_MODE,           value: "f5licenseproxy" }
           - { name: ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY, value: "false" }  # ← DISCONNECTED
