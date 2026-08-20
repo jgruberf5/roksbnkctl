@@ -18,7 +18,7 @@ package cli
 //
 // At validator-dispatch time, internal/cli/ops.go didn't exist yet (staff
 // implementation in-flight). Tests skip cleanly when the `ops` cobra verb
-// isn't registered. See issues/issue_sprint4_validator.md for the
+// isn't registered. See the k8s backend notes for the
 // roadmap entry.
 
 import (

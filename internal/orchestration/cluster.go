@@ -415,7 +415,7 @@ func RunIBMCloudPassthrough(ctx context.Context, in *ClusterInputs, args []strin
 	//   4. Default "local".
 	backendSpec := resolveBackendSpecWith(cctx, "ibmcloud", be)
 	if backendSpec == "local" || backendSpec == "" {
-		// Fast path — byte-identical to pre-Sprint-3 behaviour.
+		// Fast path — the original behaviour.
 		bin, err := exec.LookPath("ibmcloud")
 		if err != nil {
 			return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")

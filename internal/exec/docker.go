@@ -50,10 +50,10 @@ type DockerBackend struct {
 // link time) — see toolImageTag below — so a tag-released binary
 // (v0.10.0) pulls v0.10.0 images, and a `dev` build pulls :dev.
 //
-// PRD 03 §"Docker (internal/exec/docker.go)" §"Tool migration plan" +
-// Sprint 3 tech-writer Issue 8 carry-over (the :dev hard-code broke
-// `go install ./cmd/roksbnkctl` on a fresh host because CI doesn't
-// publish :dev). Sprint 4 fixes this by pinning to the binary's version.
+// PRD 03 §"Docker (internal/exec/docker.go)" §"Tool migration plan".
+//
+// The tag is derived rather than hard-coded because a :dev hard-code broke
+// `go install ./cmd/roksbnkctl` on a fresh host — CI does not publish :dev.
 //
 // Populated lazily via the tool-image accessor below; the var keeps
 // the same shape so existing tests using `toolImages["iperf3"]`
@@ -669,7 +669,7 @@ var dockerImageBinary = map[string][]string{
 //     argv[1:] is the in-container command — useful for tests and
 //     ad-hoc shapes.
 //
-// Sprint 6 — Dockerfile ENTRYPOINT drop landed for the bundled
+// The Dockerfile ENTRYPOINT drop landed for the bundled
 // tools-ibmcloud image; this function adapts the dispatch
 // accordingly. PRD 03 §"Docker (internal/exec/docker.go)".
 func resolveDockerImageAndArgv(argv []string) (image string, cmdArgv []string) {

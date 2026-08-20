@@ -129,7 +129,6 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 // (Cluster / BNK / Testing). Each field is an independent boolean
 // derived purely from the per-phase state dir — no terraform / cloud
 // calls, same contract as DetectShape. See
-// issues/issue_sprint28_architect.md §2c.
 type Presence struct {
 	Cluster bool // state-cluster/ has a managed ibm_container_vpc_cluster (the ROKS cluster itself)
 	BNK     bool // state/ has managed BNK resources
@@ -379,7 +378,7 @@ func tfstateHasResources(path string) (bool, error) {
 //     external lookups, not ownership. Trial-state plans legitimately
 //     refresh data sources under `module.cert_manager` /
 //     `module.roks_cluster` / `module.testing` (the BNK trial modules
-//     read cluster info via those addresses) and pre-Sprint-22 that
+//     read cluster info via those addresses) and older layouts that
 //     refresh tripped the legacy classifier — see Sprint 22 issue.
 //  2. `type == "ibm_container_vpc_cluster"` — the ROKS cluster
 //     resource is the singular marker of "this state file owns the

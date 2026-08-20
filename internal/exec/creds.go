@@ -58,7 +58,7 @@ type Credentials struct {
 //
 // IBMCLOUD_API_KEY is also exported as IC_API_KEY because the IBM CLI
 // older versions accept both names — matches the historical workspaceEnv
-// behaviour in cli/cluster.go pre-Sprint-3.
+// behaviour in cli/cluster.go.
 func (c *Credentials) EnvVars() []string {
 	if c == nil {
 		return nil

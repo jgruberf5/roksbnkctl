@@ -118,7 +118,7 @@ func TestWriteBnkPhaseOverride_TurnsAllClusterSharedOff(t *testing.T) {
 
 // TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey is the
 // Sprint 23 regression: the 2026-05-27 live evidence
-// (issues/issue_sprint23_staff.md) shows two cluster-shared resources
+// shows two cluster-shared resources
 // landing as MANAGED entries in the trial state on every Split-shape
 // `roksbnkctl up` —
 // `module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`
@@ -215,7 +215,7 @@ func TestClusterIdentity_PrefersIDThenName(t *testing.T) {
 // `testing_create_cluster_jumphosts = false`, in that order, with no
 // intervening lines.
 //
-// Why the stronger assertion: pre-Sprint-23 the override was the round-2
+// Why the stronger assertion: the override used to be the round-2
 // 8-line block (no registry-COS gate). The Sprint 23 fix inserts ONE
 // new line at a specific position. A future refactor that re-orders the
 // override (or accidentally drops the new gate while leaving its
@@ -224,7 +224,7 @@ func TestClusterIdentity_PrefersIDThenName(t *testing.T) {
 // byte-identical match on the new lines, not a regex.
 //
 // Live-verify recipe (DO NOT execute in tests — the integrator runs it
-// via `!`): see issues/issue_sprint23_validator.md §"Live-verify recipe".
+// via `!`).
 // On a fresh Split-shape workspace, after a successful `up`, the trial
 // state file must carry ZERO managed resources under
 // `module.roks_cluster.*` or `module.testing.*` prefixes (jq filter in

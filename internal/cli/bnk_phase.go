@@ -164,7 +164,7 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 	clusterDir, err := config.WorkspaceClusterStateDir(cctx.WorkspaceName)
 	if err == nil {
 		fmt.Fprintf(os.Stderr, "\n✓ BNK phase destroyed. Cluster phase %s/ is intact.\n", clusterDir)
-		// Sprint 28: the testing jumphosts are their own phase now, so
+		// The testing jumphosts are their own phase, so
 		// `bnk down` leaves them untouched — reassure the user explicitly.
 		fmt.Fprintln(os.Stderr, "  The testing jumphosts (if any) are also intact — `bnk down` no longer touches them.")
 		fmt.Fprintln(os.Stderr, "  Run `roksbnkctl bnk up` to deploy another trial against the same cluster,")

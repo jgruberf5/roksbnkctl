@@ -119,7 +119,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	if flagDoctorTarget != "" {
 		results = append(results, runTargetCheck(cmdContext(cmd), cctx, flagDoctorTarget))
 	}
-	// Sprint 5: DNS probe sanity check. Runs the in-process miekg/dns
+	// DNS probe sanity check. Runs the in-process miekg/dns
 	// probe against the workspace's `test.dns.default_target` (or
 	// skips silently if not configured). Mostly a no-op since the
 	// probe library is built into the binary, but useful for

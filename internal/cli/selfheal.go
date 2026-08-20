@@ -10,8 +10,7 @@ import (
 	"time"
 )
 
-// Sprint 14 / get-well (issues/issue_sprint14_staff.md Issue 1,
-// issues/issue_sprint13_architect.md Issue 2, option C part B).
+// Remote kubeconfig self-heal.
 //
 // Part A hardens the cloud-init kubeconfig provisioning so NEW deploys
 // are robust. But an already-running jumphost that booted before the
@@ -131,7 +130,7 @@ func remoteKubeconfigUsable(ctx context.Context, r remoteRunner) (bool, error) {
 // are POSITIONAL params ($1=clusterID, $2=apiKey, then optional
 // region/resource-group) — never interpolated into the script text, so
 // the key is injection-safe and absent from the literal. Empty apiKey
-// falls back to the pre-Sprint-14 behaviour (assume pre-logged-in) so a
+// falls back to assuming the target is already logged in, so a
 // keyless workspace still degrades sanely rather than mis-erroring.
 func remoteHealCommand(clusterID, apiKey, region, resourceGroup string) []string {
 	if apiKey == "" {

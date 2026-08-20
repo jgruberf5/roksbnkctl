@@ -57,6 +57,37 @@ For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …) and fo
 
 End users running a pre-built `roksbnkctl` binary from the GitHub Release page do **not** need this script — they only need `terraform` and (optionally) the passthrough CLIs. See the book's installation chapter for that path.
 
+## Comments: cite what a reader can open
+
+Two families of citation accumulated in the comments and neither resolves:
+
+- `prompts/sprintNN/README.md` — removed from the repo at v1.12.0.
+- `issues/issue_sprintNN_<role>.md` — per-sprint review trackers that were
+  never in the repo at all.
+
+A reader of the current release cannot follow either, so where the *reasoning*
+should be they find a dead end. `TestNoCommentCitesAnAbsentDocument` now fails
+on both.
+
+**`Sprint N` and `PRD N` on their own are fine.** They resolve —
+[`docs/PLAN.md`](docs/PLAN.md) carries the per-sprint sections and
+[`docs/prd/`](docs/prd/) holds the specs, and the CHANGELOG header points at
+both. A navigable reference is not archaeology.
+
+The useful test is not *"is this comment about the past?"* but *"can the reader
+act on it?"*:
+
+- **Keep** anything that says why the code is the way it is, including history:
+  *"this used to render `TCPRoute` — a CRD BNK never installs, so the object
+  could not be created and the failure was silent."* That comment is what stops
+  someone reintroducing the bug. It is the most valuable kind here, not the
+  least.
+- **Drop** a pointer to a document that does not exist, and state the reasoning
+  inline instead.
+- **Drop** a bare sprint prefix on a sentence that stands without it —
+  `// Sprint 28: the testing jumphosts are their own phase now` says exactly as
+  much as `// The testing jumphosts are their own phase`.
+
 ## Writing tests that can fail
 
 Two defects shipped in one month past a green suite, and both had a test

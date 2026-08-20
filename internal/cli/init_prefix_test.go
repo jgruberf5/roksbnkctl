@@ -1,6 +1,6 @@
 // Sprint 26 validator Issue 1 — hermetic coverage for the prefix-driven
 // `init` interview staff shipped in internal/cli/init.go
-// (issues/issue_sprint26_validator.md). Additive new file; never edits any
+// Additive new file; never edits any
 // pre-existing _test.go (parity discipline carried from Sprints 18–24).
 //
 // Testability note
@@ -23,7 +23,7 @@
 // it goes assertive automatically when run with IBMCLOUD_API_KEY.
 //
 // Sub-case → assertion map (see closure in
-// issues/issue_sprint26_validator.md):
+// the prefix-driven config review):
 //
 //	TestPromptPrefix_NonTTY_ValidDefault       → non-TTY accepts a valid default prefix
 //	TestPromptPrefix_NonTTY_InvalidDefaultErrors→ non-TTY hard-errors on an invalid default (CI contract)

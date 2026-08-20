@@ -87,7 +87,7 @@ func SetSSHTargetResolver(fn func(ctx context.Context, workspace, name string) (
 // bootstrap-failure modes (sudo failure, non-Ubuntu, repo
 // unreachable) without dialing a live sshd.
 //
-// Sprint 4 validator Issue 3 carry-over: the production *remote.Client
+// The production *remote.Client
 // satisfies this surface natively (its Run + Close signatures match);
 // tests replace `sshClientFactory` with a mock that captures the
 // argv + stdin streams that the SSHBackend's wrapper-script path

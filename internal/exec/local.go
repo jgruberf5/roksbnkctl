@@ -15,7 +15,7 @@ import (
 // roksbnkctl. Wraps `os/exec` with the credential-propagation +
 // stream-redaction behaviour the Backend interface requires.
 //
-// Behaviour matches the pre-Sprint-3 passthrough callsites in
+// Behaviour matches the original passthrough callsites in
 // internal/cli/cluster.go (runWithEnv): host env is inherited; Env
 // entries from RunOpts.Env are appended (later wins for duplicates,
 // per os/exec's documented semantics); cred env vars come from

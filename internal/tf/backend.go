@@ -2,7 +2,7 @@ package tf
 
 // PRD 16 — terraform backend selection. roksbnkctl writes a
 // `roksbnkctl_backend_override.tf` per phase pinning where state lives.
-// Default is the local backend (byte-identical to pre-Sprint-31); an
+// Default is the local backend (the original behaviour); an
 // opt-in `state.backend: s3` block routes each phase's state into an
 // S3-compatible bucket (IBM COS) with native lockfile locking.
 

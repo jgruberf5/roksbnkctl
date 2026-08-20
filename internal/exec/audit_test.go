@@ -331,7 +331,7 @@ func TestCredAudit_K8s_FilesSecretCarriesKubeconfigOnly(t *testing.T) {
 //
 // Wrapper-script content inspection (the third element of PRD 04's
 // acceptance criterion) requires a hook into the backend's wrapper
-// rendering — see issues/issue_sprint4_validator.md for the SSH-mock
+// rendering — see the SSH backend tests for the SSH-mock
 // surface roadmap.
 func TestCredAudit_SSH_NoLeakInArgvOrWrapper(t *testing.T) {
 	b, err := ResolveBackend("ssh:test")

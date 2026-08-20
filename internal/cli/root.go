@@ -219,7 +219,7 @@ func init() {
 	pf.BoolVar(&flagBootstrap, "bootstrap", false, "for --backend ssh:<target>: auto-install missing tools on Ubuntu via apt-get (requires passwordless sudo on the target)")
 
 	// Wire the docker / k8s backends' image-tag resolver to the
-	// binary's build-time Version. Sprint 4 polish carry-over 5b: a
+	// binary's build-time Version: a
 	// tag-released binary pulls matching tag-released tool images
 	// instead of the :dev tag CI doesn't publish.
 	execbackend.SetToolImageTag(func() string { return Version })

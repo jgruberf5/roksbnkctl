@@ -273,7 +273,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		TFSource:  tfCfg,
 	}
 
-	// BNK supply-chain knobs (Sprint 29): the manifest version + the FAR auth
+	// BNK supply-chain knobs: the manifest version + the FAR auth
 	// tarball name. Asked only when BNK is being deployed; seeded with the
 	// terraform-default values and stored in config.yaml so `registry` and the
 	// BNK phase run from the workspace without flags.

@@ -102,7 +102,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(tw, "Cluster:\t%s\t%s\n", or(cctx.Workspace.Cluster.Name, "(unset)"), createOrAttach(cctx.Workspace.Cluster.Create))
 	fmt.Fprintf(tw, "TF source:\t%s\n", tfSourceDescription(cctx.Workspace.TFSource))
 
-	// Per-phase deployment lines. Sprint 29: read the four-phase truth
+	// Per-phase deployment lines. Read the four-phase truth
 	// from `config.DetectPresence` (Cluster / BNK / Testing / Gateway) —
 	// the same signal the `up`/`down` phase guards use — instead of the
 	// old two-phase `DetectShape`. Legacy single-state workspaces keep the

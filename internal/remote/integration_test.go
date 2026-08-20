@@ -340,8 +340,7 @@ func TestIntegration_StderrSeparation(t *testing.T) {
 // path and a per-call insecure override isn't pinned down in their spec
 // (it could be on Target, on RunOpts, on a separate ConnectOpts, or only
 // reachable via a global root flag). Rather than guess and constantly
-// rewrite this test as staff iterates, the validator filed a follow-up
-// in issues/issue_sprint1_validator.md to land this test once the
+// rewrite this test as that API iterates, it is deferred until the
 // surface is stable. The unit-tier `hostkeys_test.go` (staff's) covers
 // the parsing logic; this integration test would only add MITM /
 // second-connect-silent confidence.
@@ -388,7 +387,6 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 		// cancellation closes the session within a few seconds." If Run
 		// hasn't returned by then, the SSH client is leaking a goroutine
 		// + an open TCP connection on every Ctrl-C — bad UX, real bug.
-		// See issue_sprint1_validator.md Issue 8.
 		t.Fatal("Run did not return within 5s after context cancellation (PRD 01 §1 requires prompt teardown)")
 	}
 }

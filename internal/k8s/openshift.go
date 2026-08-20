@@ -17,8 +17,6 @@ import (
 // advertises them via the API discovery doc and our DeferredDiscovery
 // mapper picks them up). The typed-client path is purely an optimisation
 // for Phase 2.1.
-//
-// Tracked in issues/issue_sprint2_staff.md.
 func BuildOpenShiftClient(_ string) (interface{}, error) {
-	return nil, errors.New("BuildOpenShiftClient not implemented (Phase 2.1; see issue_sprint2_staff.md)")
+	return nil, errors.New("BuildOpenShiftClient not implemented")
 }
