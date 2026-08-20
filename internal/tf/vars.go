@@ -470,9 +470,6 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
 // Each is emitted only when set in config.yaml, so neither render path
 // duplicates a variable.
-// renderBNKFields emits the BNK tuning fields shared by both render modes.
-// Each is emitted only when set in config.yaml, so neither render path
-// duplicates a variable.
 //
 // One section per renderer below, following the grouping the output already
 // had: each renderer owns one block of related variables, so a change to the
