@@ -47,6 +47,7 @@ import (
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_NAME      → resources.client_vpc.existing (adopt a client VPC)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
+//	ROKSBNKCTL_BNKFORGE_CA_B64      → bnkforge.ca_b64 (PEM CA pinning the Forge server)
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
 //	ROKSBNKCTL_GENERIC_REPO_PREFIX  → registry.generic_repo_prefix
@@ -338,6 +339,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// `registry replicate --target generic` and the install that pulls back out of
 	// it. Setting only the password (the pre-v1.19 surface) meant a pipeline still
 	// had to shell out to four `registry target` subcommands to say WHERE.
+	if v := envValue("ROKSBNKCTL_BNKFORGE_CA_B64"); v != "" {
+		if ws.BNKForge == nil {
+			ws.BNKForge = &BNKForgeCfg{}
+		}
+		ws.BNKForge.CAB64 = v
+		applied = append(applied, "bnkforge.ca_b64 (ROKSBNKCTL_BNKFORGE_CA_B64)")
+	}
 	if v := envValue("ROKSBNKCTL_REGISTRY_TARGET"); v != "" {
 		registryCfg(ws).Target = v
 		applied = append(applied, "registry.target (ROKSBNKCTL_REGISTRY_TARGET)")

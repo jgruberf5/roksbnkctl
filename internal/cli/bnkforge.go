@@ -91,7 +91,10 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 		return fmt.Errorf("resolving IBM Cloud API key: %w", err)
 	}
 
-	client := forge.New(url, bf.Insecure)
+	client, err := newForgeClient(url, bf)
+	if err != nil {
+		return err
+	}
 
 	// Auth: reuse a cached session token if still valid; else log in and cache
 	// the new token. The password itself is never persisted.
@@ -234,7 +237,10 @@ func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *confi
 		name = cctx.WorkspaceName
 	}
 
-	client := forge.New(url, bf.Insecure)
+	client, err := newForgeClient(url, bf)
+	if err != nil {
+		return err
+	}
 	client.Token = config.ForgeTokenFromKeychain(cctx.WorkspaceName)
 	if !client.TokenValid(ctx) {
 		user := os.Getenv(envForgeUser)
@@ -282,4 +288,26 @@ func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *confi
 	}
 	fmt.Fprintf(os.Stderr, "✓ unregistered cluster %q (id %d) from BNK Forge project %q\n", name, id, projName)
 	return nil
+}
+
+// newForgeClient builds the Forge client for a workspace's settings, resolving
+// the transport's trust once so both call sites cannot drift apart on it.
+//
+// A pinned CA (bnkforge.ca_b64) is preferred over --insecure and wins when both
+// are set: pinning authenticates the connection, disabling verification
+// abandons authentication while still sending the token.
+func newForgeClient(url string, bf *config.BNKForgeCfg) (*forge.Client, error) {
+	opts := forge.Options{Insecure: bf != nil && bf.Insecure}
+	if bf != nil && strings.TrimSpace(bf.CAB64) != "" {
+		pem, err := base64.StdEncoding.DecodeString(strings.TrimSpace(bf.CAB64))
+		if err != nil {
+			return nil, fmt.Errorf("decoding bnkforge.ca_b64: %w", err)
+		}
+		opts.CAPEM = pem
+		if opts.Insecure {
+			fmt.Fprintln(os.Stderr, "→ bnkforge: a CA is pinned (bnkforge.ca_b64), so `insecure` is ignored and the certificate IS verified.")
+			opts.Insecure = false
+		}
+	}
+	return forge.New(url, opts)
 }

@@ -163,7 +163,7 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
 	ctx := context.Background()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 
 	if err := c.Login(ctx, "admin", "pw"); err != nil {
 		t.Fatalf("login: %v", err)
@@ -224,7 +224,7 @@ func TestEnsureReusesExisting(t *testing.T) {
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
 	ctx := context.Background()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	tid, err := c.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-ws", "K", "rg")
@@ -248,7 +248,7 @@ func TestRegisterSameProject_UpdatesInPlaceAndKeepsID(t *testing.T) {
 	m := &mockForge{token: "t", nextID: 40, clusters: []map[string]any{{"id": 5, "name": "ws"}}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	fid, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
@@ -276,7 +276,7 @@ func TestRegisterSameProject_FallsBackWhenNoPUT(t *testing.T) {
 		clusters: []map[string]any{{"id": 5, "name": "ws"}}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	fid, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
@@ -305,7 +305,7 @@ func TestRegisterOtherProject_RefusedWithoutForce(t *testing.T) {
 		}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	_, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
@@ -345,7 +345,7 @@ func TestRegisterOtherProject_ForceTakesOver(t *testing.T) {
 		}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	fid, err := c.RegisterCluster(context.Background(), 96, RegisterRequest{
@@ -380,7 +380,7 @@ func TestRegisterSameProject_TransientPUTFailureIsNotDestructive(t *testing.T) {
 		clusters: []map[string]any{{"id": 5, "name": "ws"}}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	_, err := c.RegisterCluster(context.Background(), 1, RegisterRequest{
@@ -409,7 +409,7 @@ func TestFindClusterOwner_UnreadableProjectDoesNotBlock(t *testing.T) {
 		clusterListStatus: map[string]int{"93": 403}}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	owner, err := c.FindClusterOwner(context.Background(), "ws")
@@ -441,7 +441,7 @@ func TestFindClusterOwner_UnparseableBodyIsStillAnError(t *testing.T) {
 		_, _ = w.Write([]byte("<html>not json</html>"))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	if _, err := c.FindClusterOwner(context.Background(), "ws"); err == nil {
@@ -456,7 +456,7 @@ func TestFindClusterOwner_EmptyProjectsIsNotAnError(t *testing.T) {
 	m := &mockForge{token: "t"}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	c := New(srv.URL, false)
+	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
 	owner, err := c.FindClusterOwner(context.Background(), "ws")
@@ -475,11 +475,11 @@ func TestInsecureTLS(t *testing.T) {
 	ctx := context.Background()
 
 	// Default (verify on) must fail against the self-signed test cert.
-	if err := New(srv.URL, false).Login(ctx, "a", "b"); err == nil {
+	if err := mustNew(t, srv.URL, Options{}).Login(ctx, "a", "b"); err == nil {
 		t.Fatal("expected TLS verification error with insecure=false")
 	}
 	// insecure=true skips verification and succeeds.
-	if err := New(srv.URL, true).Login(ctx, "a", "b"); err != nil {
+	if err := mustNew(t, srv.URL, Options{Insecure: true}).Login(ctx, "a", "b"); err != nil {
 		t.Fatalf("insecure login: %v", err)
 	}
 }
@@ -488,7 +488,7 @@ func TestLoginError(t *testing.T) {
 	m := &mockForge{token: "x"}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
-	if err := New(srv.URL, false).Login(context.Background(), "", ""); err == nil {
+	if err := mustNew(t, srv.URL, Options{}).Login(context.Background(), "", ""); err == nil {
 		t.Fatal("expected login error on empty creds")
 	}
 }
@@ -513,4 +513,14 @@ func itoa(i int) string {
 		b[p] = '-'
 	}
 	return string(b[p:])
+}
+
+// mustNew keeps the existing tests to one line now that New reports a bad CA.
+func mustNew(t *testing.T, baseURL string, opts Options) *Client {
+	t.Helper()
+	c, err := New(baseURL, opts)
+	if err != nil {
+		t.Fatalf("New(%s): %v", baseURL, err)
+	}
+	return c
 }

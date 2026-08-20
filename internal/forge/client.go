@@ -10,13 +10,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,19 +29,96 @@ type Client struct {
 	BaseURL string
 	Token   string
 	http    *http.Client
+
+	// insecure records that TLS verification is off, so every request can say
+	// so. Warning at construction alone is not enough: `bnkforge.insecure: true`
+	// persists in config.yaml, so it is typically set once for a lab and then
+	// forgotten — including when the same workspace is later pointed at a
+	// production Forge.
+	insecure bool
+	warnOnce sync.Once
+	warnTo   io.Writer // nil → os.Stderr; set by tests
 }
 
-// New returns a Client for baseURL. When insecure is true, TLS verification is
-// skipped (self-signed certs, common in lab Forge installs).
-func New(baseURL string, insecure bool) *Client {
+// Options configures the transport's trust.
+type Options struct {
+	// CAPEM pins the certificate authority the Forge server's certificate must
+	// chain to. This is the right answer for a self-signed lab install: you
+	// generated the CA, so you already hold it, and pinning it authenticates
+	// the connection instead of abandoning authentication.
+	CAPEM []byte
+
+	// Insecure disables verification entirely. Ignored when CAPEM is set.
+	Insecure bool
+}
+
+// New returns a Client for baseURL.
+//
+// Verification precedence: a pinned CA, else the system roots, else — only if
+// Insecure is set — nothing at all. The API token travels on every request, so
+// the last of those makes the connection encrypted but UNAUTHENTICATED: anyone
+// positioned on the path can present a certificate for the Forge host,
+// terminate TLS, and read the token.
+func New(baseURL string, opts Options) (*Client, error) {
 	tr := &http.Transport{}
-	if insecure {
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in for self-signed lab certs
+	switch {
+	case len(opts.CAPEM) > 0:
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(opts.CAPEM) {
+			return nil, errors.New("bnkforge CA: no certificate found in the supplied PEM")
+		}
+		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	case opts.Insecure:
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // opt-in; every request warns, see warnInsecure
 	}
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: 60 * time.Second, Transport: tr},
+		BaseURL:  strings.TrimRight(baseURL, "/"),
+		insecure: len(opts.CAPEM) == 0 && opts.Insecure,
+		http:     &http.Client{Timeout: 60 * time.Second, Transport: tr},
+	}, nil
+}
+
+// warnInsecure says, once per client, that the token is being sent over an
+// unauthenticated connection. It fires from do() rather than New() so the
+// warning attaches to actual credential transmission — a client that is built
+// and never used has disclosed nothing.
+func (c *Client) warnInsecure() {
+	if !c.insecure {
+		return
 	}
+	c.warnOnce.Do(func() {
+		w := c.warnTo
+		if w == nil {
+			w = os.Stderr
+		}
+		host := c.BaseURL
+		if u, err := url.Parse(c.BaseURL); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		fmt.Fprintf(w, "⚠ BNK Forge TLS verification is DISABLED for %s — the API token is sent over a connection that is encrypted but NOT authenticated.\n", host)
+		fmt.Fprintln(w, "  Anyone able to intercept it can present any certificate for that host and read the token.")
+		if isPublicIP(host) {
+			fmt.Fprintf(w, "  %s is a public address, so this connection leaves your network.\n", host)
+		}
+		fmt.Fprintln(w, "  Pin the Forge CA instead — `roksbnkctl bnkforge enable --forge-ca <file>` — then drop --insecure.")
+	})
+}
+
+// isPublicIP reports whether host is an IP LITERAL that is routable on the
+// public internet. A hostname returns false: it cannot be classified without
+// resolving it, and claiming a lab name is public would be a guess. This only
+// escalates the warning where the answer is certain.
+func isPublicIP(host string) bool {
+	h := host
+	if hp, _, err := net.SplitHostPort(host); err == nil {
+		h = hp
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return false
+	}
+	return !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() &&
+		!ip.IsUnspecified() && !ip.IsMulticast()
 }
 
 // do issues a request; body (if non-nil) is JSON-encoded. Returns the raw
@@ -63,6 +144,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any) ([]byte,
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
+	c.warnInsecure()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s %s: %w", method, path, err)
