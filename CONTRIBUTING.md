@@ -57,6 +57,74 @@ For other Linux distributions (RHEL, Fedora, Arch, openSUSE, Alpine, …) and fo
 
 End users running a pre-built `roksbnkctl` binary from the GitHub Release page do **not** need this script — they only need `terraform` and (optionally) the passthrough CLIs. See the book's installation chapter for that path.
 
+## Writing tests that can fail
+
+Two defects shipped in one month past a green suite, and both had a test
+covering them.
+
+**A test that demanded a CRD that is never installed** ([#99]). The perf
+matrix's L4 fixture emitted `gateway.networking.k8s.io/v1alpha2 TCPRoute`. BNK
+pins Gateway API 1.4.1 **standard**, which has no `TCPRoute` at all, so the
+object could never be created — and because the fixture apply is best-effort it
+produced no L4 result rather than an error. The test asserted:
+
+```go
+if !strings.Contains(out, "kind: TCPRoute") || !strings.Contains(out, "v1alpha2") {
+	t.Error("TCPRoute should use the v1alpha2 API")
+}
+```
+
+It was written from the same wrong assumption as the code, so it could only ever
+confirm it. The iperf3 L4 leg had never run.
+
+**A test deleted alongside the code it guarded** ([#100]). The adopt-guard fix
+and its regression test were reverted in one commit and shipped missing. CI was
+green because nothing was left to detect it.
+
+Three habits follow from those, and they are cheap:
+
+### Mutation-check every new test
+
+Before you push, break the code the test covers and confirm the test fails **by
+name**. Put it back. It takes a minute and it is the only evidence a test *can*
+fail — a passing test proves nothing about a bug that has not happened yet.
+
+```bash
+go test ./internal/config/ -run TestTheThingIJustWrote   # expect FAIL
+git checkout -- internal/config/thing.go
+go test ./internal/config/ -run TestTheThingIJustWrote   # expect PASS
+```
+
+If it stays green with the code broken, the test is asserting something other
+than what you think.
+
+### Assert against the real contract, not a literal you typed
+
+Where a test pins an **external** contract — a Kubernetes kind, an API version,
+a flag another tool passes — derive it from the source of truth rather than
+restating it. `internal/test/gatewayapi.go` declares the route kinds BNK
+installs; the fixtures render from it, teardown deletes from it, and the tests
+assert against it, so all four move together.
+
+Assert the wrong shape is **absent**, not only that the right one is present.
+`kind: L4Route` appearing says nothing about whether `TCPRoute` also is.
+
+### Test the wiring, not just the helper
+
+A guard that exists but is never called passes every helper-level test — that is
+exactly how [#100] shipped. If a check has to run at three call sites, assert
+that it does. `TestDestructiveRegistryCommandsGuardAgainstAStaleRecord` reads
+the source and checks each command actually calls the guard.
+
+Several tests here scan the repository for this reason
+(`TestNoNewDetachedContextsOnRequestPaths`,
+`TestNoReferenceToARouteKindBNKDoesNotInstall`). Where they keep an exemption
+list, a companion test drops entries that no longer apply, so the next addition
+has to justify itself instead of inheriting a stale line.
+
+[#99]: https://github.com/jgruberf5/roksbnkctl/issues/99
+[#100]: https://github.com/jgruberf5/roksbnkctl/issues/100
+
 ## Running tests
 
 The unit suite lives under `internal/...` and runs without any external

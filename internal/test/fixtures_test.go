@@ -48,8 +48,8 @@ func TestRenderFixtures_BackendAndRoutes(t *testing.T) {
 	// `gateway.networking.k8s.io/v1alpha2 TCPRoute` — a kind BNK never installs,
 	// so the test pinned the exact bug it should have caught. BNK 2.3 requires
 	// Gateway API 1.4.1 STANDARD, which has no TCPRoute.
-	if !strings.Contains(out, "kind: L4Route") || !strings.Contains(out, "gateway.k8s.f5net.com/v1") {
-		t.Error("the L4 fixture must render an L4Route on gateway.k8s.f5net.com/v1")
+	if !strings.Contains(out, "kind: "+L4RouteKind.Kind) || !strings.Contains(out, L4RouteKind.APIVersion()) {
+		t.Errorf("the L4 fixture must render a %s on %s", L4RouteKind.Kind, L4RouteKind.APIVersion())
 	}
 	if strings.Contains(out, "kind: TCPRoute") {
 		t.Error("TCPRoute is not in the Gateway API standard channel BNK installs; it can never be created")

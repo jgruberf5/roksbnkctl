@@ -20,7 +20,7 @@ const (
 // Endpoint kinds.
 const (
 	EndpointVSI     = "vsi"     // an SSH jumphost — a traffic-source "VSI"
-	EndpointAddress = "address" // host:port — an iperf3 TCP server (e.g. a TCPRoute VIP)
+	EndpointAddress = "address" // host:port — an iperf3 TCP server (e.g. an L4Route VIP)
 	EndpointURL     = "url"     // a full http(s):// URL — an HTTPRoute target
 )
 
@@ -37,7 +37,7 @@ type MatrixSpec struct {
 }
 
 // GatewayIdentity names the already-deployed BNK gateway stack. Used
-// only when fixtures.routes is true, to render TCPRoute / HTTPRoute
+// only when fixtures.routes is true, to render the L4Route / HTTPRoute
 // fixtures that attach to the operator's existing Gateway. Never
 // created or mutated by the runner.
 type GatewayIdentity struct {
@@ -65,7 +65,7 @@ type GatewayIdentity struct {
 type FixturesSpec struct {
 	Iperf3Server bool `yaml:"iperf3_server,omitempty"` // L4 server pod (reuses test throughput's fixture)
 	HTTPBackend  bool `yaml:"http_backend,omitempty"`  // small HTTP file server for the L7 family
-	Routes       bool `yaml:"routes,omitempty"`        // TCPRoute + HTTPRoute(+TLS) attaching to gateway
+	Routes       bool `yaml:"routes,omitempty"`        // L4Route + HTTPRoute(+TLS) attaching to gateway
 }
 
 // EndpointSpec is one named (placement, role). The locality axis of the
