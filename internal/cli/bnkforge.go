@@ -91,7 +91,10 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 		return fmt.Errorf("resolving IBM Cloud API key: %w", err)
 	}
 
-	client := forge.New(url, bf.Insecure)
+	client, err := newForgeClient(url, bf)
+	if err != nil {
+		return err
+	}
 
 	// Auth: reuse a cached session token if still valid; else log in and cache
 	// the new token. The password itself is never persisted.
@@ -217,6 +220,9 @@ func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *confi
 	if cctx == nil || cctx.Workspace == nil {
 		return fmt.Errorf("no workspace context")
 	}
+	if bf == nil {
+		bf = &config.BNKForgeCfg{}
+	}
 	url := bf.URL
 	if v := os.Getenv(envForgeURL); v != "" {
 		url = v
@@ -234,7 +240,10 @@ func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *confi
 		name = cctx.WorkspaceName
 	}
 
-	client := forge.New(url, bf.Insecure)
+	client, err := newForgeClient(url, bf)
+	if err != nil {
+		return err
+	}
 	client.Token = config.ForgeTokenFromKeychain(cctx.WorkspaceName)
 	if !client.TokenValid(ctx) {
 		user := os.Getenv(envForgeUser)
@@ -282,4 +291,29 @@ func unregisterFromBNKForge(ctx context.Context, cctx *config.Context, bf *confi
 	}
 	fmt.Fprintf(os.Stderr, "✓ unregistered cluster %q (id %d) from BNK Forge project %q\n", name, id, projName)
 	return nil
+}
+
+// newForgeClient builds the Forge client for a workspace's settings, resolving
+// the transport's trust once so both call sites cannot drift apart on it.
+// bf must be non-nil — registerWithBNKForge and unregisterFromBNKForge both
+// normalize a nil config at their entry.
+//
+// When both a pinned CA (bnkforge.ca_b64) and `insecure` are set, forge.New
+// itself ignores Insecure (see forge.Options) — pinning authenticates the
+// connection, disabling verification abandons it. That precedence is enforced
+// in forge.New ALONE; here we only say it out loud, so a stale `insecure: true`
+// in config.yaml doesn't leave the operator believing verification is off.
+func newForgeClient(url string, bf *config.BNKForgeCfg) (*forge.Client, error) {
+	opts := forge.Options{Insecure: bf.Insecure}
+	if strings.TrimSpace(bf.CAB64) != "" {
+		pem, err := config.DecodeB64Field("bnkforge.ca_b64", bf.CAB64)
+		if err != nil {
+			return nil, err
+		}
+		opts.CAPEM = pem
+		if opts.Insecure {
+			fmt.Fprintln(os.Stderr, "→ bnkforge: a CA is pinned (bnkforge.ca_b64), so `insecure` is ignored and the certificate IS verified.")
+		}
+	}
+	return forge.New(url, opts)
 }

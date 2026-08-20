@@ -80,9 +80,24 @@ type BNKForgeCfg struct {
 	// BNK_FORGE_PASSWORD or an interactive prompt; the resulting session token
 	// is cached in the OS keychain.
 	Username string `yaml:"username,omitempty"`
-	// Insecure skips TLS verification against the Forge server (self-signed
-	// certs, common in lab installs). Also settable via --insecure.
+	// Insecure skips TLS verification against the Forge server.
+	//
+	// The session token is sent on every request, so this makes the connection
+	// encrypted but UNAUTHENTICATED — anyone on the path can present a
+	// certificate for the Forge host and read the token. Prefer CAB64. Every
+	// request made with this set prints a warning naming the host.
 	Insecure bool `yaml:"insecure,omitempty"`
+
+	// CAB64 pins the CA the Forge server's certificate must chain to, PEM,
+	// base64-encoded. This is the correct answer for a self-signed lab install:
+	// you generated the CA, so you already hold it, and pinning authenticates
+	// the connection rather than abandoning authentication. When set it wins
+	// over Insecure.
+	//
+	// A certificate is public data, so — unlike the `_b64` credential fields —
+	// this is encoded only for single-line YAML safety. Settable via
+	// `--forge-ca <file>` and ROKSBNKCTL_BNKFORGE_CA_B64.
+	CAB64 string `yaml:"ca_b64,omitempty"`
 }
 
 // BNKTrustedProfileCfg is the IBM Cloud Trusted Profile the CNE controller

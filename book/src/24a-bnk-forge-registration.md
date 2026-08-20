@@ -267,6 +267,54 @@ Step 4 is the one that changed in v1.42.0 — `roksbnkctl` prefers the in-place 
 so the cluster id survives, and only falls back to `DELETE` + `POST` against a Forge
 build that has no `PUT` route.
 
+## TLS: pin the CA, don't disable verification
+
+Forge installs commonly carry a self-signed certificate, and `--insecure` makes
+that connect. What it costs is easy to miss: **the session token is sent on
+every request**, so disabling verification leaves the connection encrypted but
+*unauthenticated*. Anyone positioned on the path can present a certificate for
+the Forge host, terminate TLS, and read the token. Encryption without
+authentication protects the traffic from a passive observer and not from an
+active one.
+
+That would matter less if the setting were transient, but `bnkforge.insecure:
+true` persists in `config.yaml` — it is typically set once for a lab and then
+forgotten, including when the same workspace is later pointed at a production
+Forge. So every request made with it prints a warning naming the host:
+
+```
+⚠ BNK Forge TLS verification is DISABLED for forge.lab.example.com:8443 — the API token
+  is sent over a connection that is encrypted but NOT authenticated.
+  Anyone able to intercept it can present any certificate for that host and read the token.
+  Pin the Forge CA instead — `roksbnkctl bnkforge enable --forge-ca <file>` — then drop --insecure.
+```
+
+**Pin the CA instead.** For a self-signed Forge you generated the CA, so you
+already hold it — and pinning it authenticates the connection rather than
+abandoning authentication:
+
+```bash
+roksbnkctl bnkforge enable --url https://forge.lab.example.com:8443 --forge-ca ./forge-ca.pem
+```
+
+That stores the PEM as `bnkforge.ca_b64` (base64 only for single-line YAML
+safety — a certificate is public data) and clears `insecure`. `--forge-ca` also
+works as a one-shot on `bnkforge register` and `unregister`. When both are set
+the pin wins and the certificate *is* verified.
+
+Non-interactively, set `ROKSBNKCTL_BNKFORGE_CA_B64` (`base64 -w0 forge-ca.pem`).
+
+`roksbnkctl bnkforge status` reports which of the three is in force:
+
+```
+tls:         verified (pinned CA from bnkforge.ca_b64)
+tls:         verified (system roots)
+tls:         NOT VERIFIED (insecure: true) — the API token is sent over an unauthenticated connection; pin a CA with `bnkforge enable --forge-ca <file>`
+```
+
+If the pinned CA is wrong, the connection fails at the handshake with an
+`x509` error rather than silently falling back — which is the point.
+
 ## Behaviour notes
 
 - **Best-effort — it never blocks or fails the deploy.** Whatever happens with

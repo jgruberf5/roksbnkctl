@@ -131,7 +131,9 @@ func (e *Engine) craneOpts(ctx context.Context) []crane.Option {
 // system roots, or nil when no private CA is configured (use crane's default).
 // The same transport serves both the source pull (public CAs, from the system
 // pool) and the target push (the private mirror CA), so a container operator
-// with no OS trust for the mirror can still replicate into it.
+// with no OS trust for the mirror can still replicate into it. The additive
+// pool is deliberate — contrast forge.New, which pins EXCLUSIVELY because that
+// client talks to exactly one server; do not "harmonize" the two.
 func (e *Engine) caTransport() http.RoundTripper {
 	if strings.TrimSpace(e.RegistryCA) == "" {
 		return nil

@@ -42,7 +42,7 @@ func TestUnregisterCluster(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			id, err := New(srv.URL, true).UnregisterCluster(context.Background(), 1, "fdisco")
+			id, err := mustNew(t, srv.URL, Options{Insecure: true}).UnregisterCluster(context.Background(), 1, "fdisco")
 			if tc.wantErr && err == nil {
 				t.Fatal("expected an error")
 			}
@@ -71,7 +71,7 @@ func TestProjectIDByNameNeverCreates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	id, err := New(srv.URL, true).ProjectIDByName(context.Background(), "nope")
+	id, err := mustNew(t, srv.URL, Options{Insecure: true}).ProjectIDByName(context.Background(), "nope")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestProjectIDByNameResponseShapes(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			id, err := New(srv.URL, true).ProjectIDByName(context.Background(), "acme")
+			id, err := mustNew(t, srv.URL, Options{Insecure: true}).ProjectIDByName(context.Background(), "acme")
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("body %q: want an error, got id=%d nil", tc.body, id)

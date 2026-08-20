@@ -127,6 +127,7 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |
 | `ROKSBNKCTL_ZONE<n>_EXT_VLAN_CIDR` … `_INTERNAL_SELFIP` | `bnk.network.zones[n-1]` | per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply) |
 | `ROKSBNKCTL_TESTING_SSH_KEY_NAME` | `resources.testing_ssh_key_name` | verbatim |
+| `ROKSBNKCTL_BNKFORGE_CA_B64` | `bnkforge.ca_b64` | PEM CA the BNK Forge server's certificate must chain to, base64-encoded. Pins a self-signed lab cert so the session token is not sent over an unauthenticated connection. Supersedes `bnkforge.insecure`. |
 | `ROKSBNKCTL_REGISTRY_TARGET` | `registry.target` | `icr` \| `generic` |
 | `ROKSBNKCTL_GENERIC_HOST` | `registry.generic_host` | verbatim, e.g. `harbor.example.com` |
 | `ROKSBNKCTL_GENERIC_REPO_PREFIX` | `registry.generic_repo_prefix` | verbatim — a Harbor project, an Artifactory repo key |

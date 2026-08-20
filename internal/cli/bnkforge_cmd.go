@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,10 +17,10 @@ import (
 // hand-editing config.yaml. It mirrors the `registry target` / `test hosts`
 // pattern: load → mutate → SaveWorkspace.
 //
-//	roksbnkctl bnkforge enable   [--url U --username N --project P --insecure]
+//	roksbnkctl bnkforge enable   [--url U --username N --project P --forge-ca F | --insecure]
 //	roksbnkctl bnkforge disable
 //	roksbnkctl bnkforge status
-//	roksbnkctl bnkforge register [--url U --username N --password S --project P --insecure]
+//	roksbnkctl bnkforge register [--url U --username N --password S --project P --forge-ca F | --insecure]
 //
 // Registration talks to BNK Forge v3's REST API directly (v3 has no CLI).
 var (
@@ -26,6 +29,7 @@ var (
 	flagBNKForgeUser     string
 	flagBNKForgePassword string
 	flagBNKForgeInsecure bool
+	flagBNKForgeCAFile   string
 	flagBNKForgeForce    bool
 )
 
@@ -103,21 +107,24 @@ func init() {
 	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge server URL (e.g. https://forge.example.com)")
 	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge login username")
 	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "target BNK Forge project name (ensured-or-created)")
-	bnkforgeEnableCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
+	bnkforgeEnableCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
+	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)
 
 	// `register` accepts the same overrides (not persisted) plus --password.
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge server URL (overrides config)")
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge login username (overrides config)")
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)")
 	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "target BNK Forge project name (overrides config)")
-	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
+	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
+	bnkforgeRegisterCmd.Flags().StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)
 	bnkforgeRegisterCmd.Flags().BoolVar(&flagBNKForgeForce, "force", false,
 		"take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes)")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge base URL")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge username")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD)")
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeProject, "project", "", "BNK Forge project holding the cluster")
-	bnkforgeUnregisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, "skip TLS verification (self-signed Forge cert)")
+	bnkforgeUnregisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
+	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)
 
 	bnkforgeCmd.AddCommand(bnkforgeEnableCmd, bnkforgeDisableCmd, bnkforgeStatusCmd, bnkforgeRegisterCmd, bnkforgeUnregisterCmd)
 	rootCmd.AddCommand(bnkforgeCmd)
@@ -143,6 +150,19 @@ func runBNKForgeEnable(_ *cobra.Command, _ []string) error {
 	}
 	if flagBNKForgeInsecure {
 		ws.BNKForge.Insecure = true
+	}
+	if flagBNKForgeCAFile != "" {
+		b64, err := readForgeCAFile(flagBNKForgeCAFile)
+		if err != nil {
+			return err
+		}
+		ws.BNKForge.CAB64 = b64
+		// Config hygiene, not enforcement: forge.New already ignores Insecure
+		// whenever a CA is pinned. But `enable` is the only CLI path that writes
+		// this block, so leaving a stale `insecure: true` here would make every
+		// later command print the "insecure is ignored" notice with no way to
+		// quiet it short of hand-editing config.yaml.
+		ws.BNKForge.Insecure = false
 	}
 	if err := config.SaveWorkspace(name, ws); err != nil {
 		return fmt.Errorf("saving workspace: %w", err)
@@ -183,7 +203,7 @@ func runBNKForgeStatus(_ *cobra.Command, _ []string) error {
 	printFieldOr(bf != nil && bf.URL != "", "url", strVal(bf, func(b *config.BNKForgeCfg) string { return b.URL }), "(unset — set --url or "+envForgeURL+")")
 	printFieldOr(bf != nil && bf.Username != "", "username", strVal(bf, func(b *config.BNKForgeCfg) string { return b.Username }), "(unset — set --username or "+envForgeUser+")")
 	printFieldOr(bf != nil && bf.Project != "", "project", strVal(bf, func(b *config.BNKForgeCfg) string { return b.Project }), "(the workspace name)")
-	fmt.Printf("insecure:    %v\n", bf != nil && bf.Insecure)
+	fmt.Printf("tls:         %s\n", forgeTLSDescription(bf))
 	if config.ForgeTokenFromKeychain(name) != "" {
 		fmt.Printf("session:     cached token in OS keychain\n")
 	} else {
@@ -233,6 +253,13 @@ func runBNKForgeUnregister(cmd *cobra.Command, _ []string) error {
 	if flagBNKForgeInsecure {
 		eff.Insecure = true
 	}
+	if flagBNKForgeCAFile != "" {
+		b64, cerr := readForgeCAFile(flagBNKForgeCAFile)
+		if cerr != nil {
+			return cerr
+		}
+		eff.CAB64 = b64
+	}
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
 	}
@@ -262,10 +289,53 @@ func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {
 	if flagBNKForgeInsecure {
 		eff.Insecure = true
 	}
+	if flagBNKForgeCAFile != "" {
+		b64, cerr := readForgeCAFile(flagBNKForgeCAFile)
+		if cerr != nil {
+			return cerr
+		}
+		eff.CAB64 = b64
+	}
 	// --password is a transient override: expose it to resolveForgePassword via
 	// the env it already consults (avoids widening the internal signature).
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
 	}
 	return registerWithBNKForge(cmdContext(cmd), cctx, &eff, true, flagBNKForgeForce)
+}
+
+const (
+	insecureFlagHelp = "DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca"
+	forgeCAFlagHelp  = "PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure)"
+)
+
+// readForgeCAFile loads a PEM CA and returns it base64-encoded for config.yaml.
+// It parses before storing so a wrong file (a key, a DER blob, a typo'd path)
+// is rejected here rather than at the next connection.
+func readForgeCAFile(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading --forge-ca %s: %w", path, err)
+	}
+	if !x509.NewCertPool().AppendCertsFromPEM(body) {
+		return "", fmt.Errorf("--forge-ca %s: no PEM certificate found in the file", path)
+	}
+	return base64.StdEncoding.EncodeToString(body), nil
+}
+
+// forgeTLSDescription renders the connection's trust for `bnkforge status`, so
+// a workspace running unverified says so where someone will read it. The
+// CA-before-insecure ordering mirrors the precedence forge.New enforces — if
+// forge.New's rules ever change, this text must follow.
+func forgeTLSDescription(bf *config.BNKForgeCfg) string {
+	switch {
+	case bf == nil:
+		return "verified (system roots)"
+	case strings.TrimSpace(bf.CAB64) != "":
+		return "verified (pinned CA from bnkforge.ca_b64)"
+	case bf.Insecure:
+		return "NOT VERIFIED (insecure: true) — the API token is sent over an unauthenticated connection; pin a CA with `bnkforge enable --forge-ca <file>`"
+	default:
+		return "verified (system roots)"
+	}
 }

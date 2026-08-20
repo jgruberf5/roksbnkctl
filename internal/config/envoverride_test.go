@@ -18,6 +18,7 @@ func TestOverrideFromEnv(t *testing.T) {
 			"ROKSBNKCTL_REGISTRY_TARGET", "ROKSBNKCTL_GENERIC_HOST",
 			"ROKSBNKCTL_GENERIC_REPO_PREFIX", "ROKSBNKCTL_GENERIC_USERNAME",
 			"ROKSBNKCTL_FLP_EXTERNAL_URL", "ROKSBNKCTL_FLP_ROOT_CA_B64",
+			"ROKSBNKCTL_BNKFORGE_CA_B64",
 		} {
 			t.Setenv(e, "")
 		}
@@ -74,6 +75,41 @@ func TestOverrideFromEnv(t *testing.T) {
 		want := base64.StdEncoding.EncodeToString([]byte("art-token"))
 		if ws.Registry == nil || ws.Registry.GenericPasswordB64 != want {
 			t.Fatalf("generic_password_b64 not applied: %+v", ws.Registry)
+		}
+	})
+
+	t.Run("bnkforge CA: line-wrapped base64 is normalized and applied", func(t *testing.T) {
+		clearAll(t)
+		// GNU `base64` wraps at 76 columns, so $(base64 ca.pem) arrives with
+		// embedded newlines — the value must be accepted and stored single-line.
+		wrapped := wrap76(base64.StdEncoding.EncodeToString(testCAPEM(t)))
+		if !strings.Contains(wrapped, "\n") {
+			t.Fatal("test cert too small to exercise wrapping")
+		}
+		t.Setenv("ROKSBNKCTL_BNKFORGE_CA_B64", wrapped)
+		ws := &Workspace{} // BNKForge is nil
+		applied := OverrideFromEnv(ws)
+		if ws.BNKForge == nil || ws.BNKForge.CAB64 == "" {
+			t.Fatal("bnkforge.ca_b64 not applied")
+		}
+		if strings.ContainsAny(ws.BNKForge.CAB64, " \n\t") {
+			t.Errorf("stored value still contains whitespace: %q", ws.BNKForge.CAB64)
+		}
+		if !strings.Contains(strings.Join(applied, ","), "bnkforge.ca_b64") {
+			t.Fatalf("override not reported: %v", applied)
+		}
+	})
+
+	t.Run("bnkforge CA: a non-certificate value is rejected at seed time", func(t *testing.T) {
+		clearAll(t)
+		t.Setenv("ROKSBNKCTL_BNKFORGE_CA_B64", base64.StdEncoding.EncodeToString([]byte("not a certificate")))
+		ws := &Workspace{}
+		applied := OverrideFromEnv(ws)
+		if ws.BNKForge != nil {
+			t.Fatalf("an invalid CA must not be stored: %+v", ws.BNKForge)
+		}
+		if strings.Contains(strings.Join(applied, ","), "bnkforge.ca_b64") {
+			t.Fatalf("a rejected override must not be reported as applied: %v", applied)
 		}
 	})
 

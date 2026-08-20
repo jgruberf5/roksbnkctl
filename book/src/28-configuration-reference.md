@@ -579,7 +579,8 @@ bnkforge:
 | `url` | string | (`BNK_FORGE_URL`) | The BNK Forge server URL. Empty ⇒ the `BNK_FORGE_URL` env var; with neither, registration errors. |
 | `project` | string | (the workspace name) | BNK Forge project to register the cluster under. Empty ⇒ a project named after the workspace, created if it does not exist. |
 | `username` | string | (`BNK_FORGE_USER`) | Forge login. The **password** is never stored in `config.yaml` — it comes from `BNK_FORGE_PASSWORD` or an interactive prompt, and only the resulting session token is cached (OS keychain). |
-| `insecure` | bool | `false` | Skip TLS verification. Forge installs commonly carry a self-signed certificate. |
+| `insecure` | bool | `false` | Disable TLS verification. The session token is sent on every request, so this leaves it encrypted but **unauthenticated** — anyone on the path can present a certificate for the Forge host and read it. Every request made with this set warns, naming the host. Prefer `ca_b64`. |
+| `ca_b64` | string | — | PEM CA the Forge server's certificate must chain to, base64-encoded. The right answer for a self-signed lab install: you generated the CA, so pinning it **authenticates** the connection instead of abandoning authentication. Wins over `insecure`. Set with `bnkforge enable --forge-ca <file>` or `ROKSBNKCTL_BNKFORGE_CA_B64`. A certificate is public data, so unlike the credential `_b64` fields this is encoded only for single-line YAML safety. |
 
 ## `targets:` block
 

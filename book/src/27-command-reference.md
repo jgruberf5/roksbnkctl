@@ -275,7 +275,8 @@ roksbnkctl bnkforge enable [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
+| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
 | `--project` | `string` | — | target BNK Forge project name (ensured-or-created) |
 | `--url` | `string` | — | BNK Forge server URL (e.g. https://forge.example.com) |
 | `--username` | `string` | — | BNK Forge login username |
@@ -295,7 +296,8 @@ roksbnkctl bnkforge register [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--force` | `bool` | `false` | take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes) |
-| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
+| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
 | `--project` | `string` | — | target BNK Forge project name (overrides config) |
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
@@ -333,7 +335,8 @@ run twice or run late.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--insecure` | `bool` | `false` | skip TLS verification (self-signed Forge cert) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
+| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD) |
 | `--project` | `string` | — | BNK Forge project holding the cluster |
 | `--url` | `string` | — | BNK Forge base URL |
