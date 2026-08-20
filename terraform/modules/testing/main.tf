@@ -227,6 +227,10 @@ locals {
   # split: management access (SSH to a jumphost with a public floating IP) is
   # open by default because the operator connects from wherever they are, while
   # in-fabric test traffic arrives over the Transit Gateway and is private.
+  #
+  # testing_rfc1918 duplicates flp_rfc1918 (modules/flp_vsi/main.tf) because the
+  # two modules share no parent that could carry it. Both mean "the private
+  # ranges the fabric/TGW carries" — change them TOGETHER or they drift.
   testing_rfc1918       = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   testing_ssh_cidrs     = length(var.testing_jumphost_allowed_cidrs) > 0 ? var.testing_jumphost_allowed_cidrs : ["0.0.0.0/0"]
   testing_client_vpc_in = length(var.testing_client_vpc_inbound_cidrs) > 0 ? var.testing_client_vpc_inbound_cidrs : local.testing_rfc1918
@@ -347,6 +351,10 @@ resource "ibm_is_vpc" "client_vpc" {
 # 0.0.0.0/0 that is a fail-open default waiting for the first VSI to be given a
 # floating IP; scoped to the private ranges the Transit Gateway carries, it
 # admits the traffic the tests actually generate and nothing from the internet.
+#
+# Deliberately NO moved block here, unlike the SSH rules below: the default
+# source CHANGED (0.0.0.0/0 -> RFC-1918), so replacing the existing rule is the
+# security fix itself, not migration fallout.
 resource "ibm_is_security_group_rule" "tgw_vpc_default_sg_inbound_all" {
   for_each = (var.testing_create_tgw_jumphost && var.testing_create_client_vpc) ? toset(local.testing_client_vpc_in) : toset([])
 
@@ -398,6 +406,15 @@ resource "ibm_is_security_group" "tgw_jumphost_sg" {
   name           = "${var.testing_tgw_jumphost_name}-sg"
   vpc            = local.tgw_vpc_id
   resource_group = data.ibm_resource_group.resource_group.id
+}
+
+# count -> for_each changed the SSH rules' state addresses; the default source is
+# unchanged, so rename in state instead of destroy-and-recreate — the gap between
+# those two independent graph nodes drops SSH, including this module's own
+# remote-exec provisioners.
+moved {
+  from = ibm_is_security_group_rule.tgw_jumphost_ssh_inbound[0]
+  to   = ibm_is_security_group_rule.tgw_jumphost_ssh_inbound["0.0.0.0/0"]
 }
 
 resource "ibm_is_security_group_rule" "tgw_jumphost_ssh_inbound" {
@@ -488,6 +505,11 @@ resource "ibm_is_security_group" "cluster_jumphost_sg" {
   name           = "${var.testing_cluster_jumphost_name_prefix}-sg"
   vpc            = var.cluster_vpc_id
   resource_group = data.ibm_resource_group.resource_group.id
+}
+
+moved {
+  from = ibm_is_security_group_rule.cluster_jumphost_ssh_inbound[0]
+  to   = ibm_is_security_group_rule.cluster_jumphost_ssh_inbound["0.0.0.0/0"]
 }
 
 resource "ibm_is_security_group_rule" "cluster_jumphost_ssh_inbound" {

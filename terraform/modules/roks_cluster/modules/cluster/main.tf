@@ -376,6 +376,18 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
 # :80 on the cluster security group — the ingress/ALB path, which is meant to be
 # publicly reachable, so the default stays open. cluster_http_allowed_cidrs
 # narrows it for a cluster whose ingress serves a known set of sources.
+#
+# count -> for_each changed these rules' state addresses. For the default (open)
+# source the rule itself is unchanged, so rename it in state rather than letting
+# terraform destroy-and-recreate it: destroy and create are independent graph
+# nodes, and the window between them drops live traffic (:80 ingress here, the
+# VPC data path below) — or, ordered the other way, races the IBM VPC API into
+# a duplicate-rule failure mid-apply.
+moved {
+  from = ibm_is_security_group_rule.cluster_tcp_80[0]
+  to   = ibm_is_security_group_rule.cluster_tcp_80["0.0.0.0/0"]
+}
+
 resource "ibm_is_security_group_rule" "cluster_tcp_80" {
   for_each = var.create_cluster ? toset(local.cluster_http_cidrs) : toset([])
 
@@ -403,6 +415,11 @@ resource "ibm_is_security_group_rule" "cluster_tcp_80" {
 # IBM ships a VPC default SG denying inbound, so this inverts a safe default for
 # every resource later placed in the VPC without an explicit SG — which is what
 # cluster_vpc_default_sg_inbound_cidrs is for.
+moved {
+  from = ibm_is_security_group_rule.cluster_sg_inbound_all[0]
+  to   = ibm_is_security_group_rule.cluster_sg_inbound_all["0.0.0.0/0"]
+}
+
 resource "ibm_is_security_group_rule" "cluster_sg_inbound_all" {
   for_each = var.create_cluster ? toset(local.cluster_vpc_default_sg_cidrs) : toset([])
 

@@ -119,3 +119,92 @@ func hclResourceBlock(t *testing.T, body, name string) string {
 	}
 	return rest[:end]
 }
+
+// The sparse (legacy empty-Prefix) render body can still create a cluster via
+// create_roks_cluster, so it must emit the CIDR fields too. Before this test,
+// only renderFullBody emitted them: a legacy no-prefix workspace exporting
+// ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS got the override logged as applied
+// while the rendered tfvars silently left the fail-open module default standing.
+func TestSecurityGroupCIDRsRenderOnTheSparsePathToo(t *testing.T) {
+	ws := &config.Workspace{Resources: config.DefaultResources()} // no Prefix → sparse
+	ws.Resources.ClusterHTTPAllowedCIDRs = []string{"198.51.100.0/24"}
+	ws.Resources.ClusterVPCDefaultSGInboundCIDRs = []string{"10.0.0.0/8"}
+
+	var buf bytes.Buffer
+	if err := RenderTFVars(&buf, ws, "", ""); err != nil {
+		t.Fatalf("RenderTFVars: %v", err)
+	}
+	for _, want := range []string{
+		`cluster_http_allowed_cidrs = ["198.51.100.0/24"]`,
+		`cluster_vpc_default_sg_inbound_cidrs = ["10.0.0.0/8"]`,
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("sparse render missing:\n  %s\n--- got ---\n%s", want, buf.String())
+		}
+	}
+}
+
+// The plumbing has five hops (workspace → tfvars → root variable → module arg →
+// inner module arg → rule), and terraform accepts an unused root variable
+// without a warning — which is exactly how the root→module hop shipped missing
+// while the leaf test above stayed green. Pin every pass-through hop.
+func TestSecurityGroupCIDRVariablesAreWiredThroughEveryHop(t *testing.T) {
+	repo := filepath.Join("..", "..")
+	for _, tc := range []struct{ file, arg string }{
+		// root → testing module
+		{"terraform/main.tf", "testing_jumphost_allowed_cidrs"},
+		{"terraform/main.tf", "testing_client_vpc_inbound_cidrs"},
+		// root → roks_cluster module
+		{"terraform/main.tf", "cluster_http_allowed_cidrs"},
+		{"terraform/main.tf", "cluster_vpc_default_sg_inbound_cidrs"},
+		// roks_cluster → its inner cluster module
+		{"terraform/modules/roks_cluster/main.tf", "cluster_http_allowed_cidrs"},
+		{"terraform/modules/roks_cluster/main.tf", "cluster_vpc_default_sg_inbound_cidrs"},
+	} {
+		t.Run(tc.file+"/"+tc.arg, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(repo, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Whitespace-insensitive: alignment inside module blocks shifts.
+			want := tc.arg + " = var." + tc.arg
+			found := false
+			for _, line := range strings.Split(string(body), "\n") {
+				if strings.Join(strings.Fields(line), " ") == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s does not pass %q through (want a line `%s`) — the variable is accepted and silently unused", tc.file, tc.arg, want)
+			}
+		})
+	}
+}
+
+// count→for_each renames a rule's state address, and destroy/create are
+// independent graph nodes — without these moved blocks every existing
+// deployment would drop its :80/:22/data-path rules for the window between
+// them. The default-changed tgw_vpc_default_sg_inbound_all rule is deliberately
+// absent: replacing it IS the #122 fix.
+func TestUnchangedDefaultRulesHaveMovedBlocks(t *testing.T) {
+	repo := filepath.Join("..", "..")
+	for _, tc := range []struct{ file, resource string }{
+		{"terraform/modules/roks_cluster/modules/cluster/main.tf", "cluster_tcp_80"},
+		{"terraform/modules/roks_cluster/modules/cluster/main.tf", "cluster_sg_inbound_all"},
+		{"terraform/modules/testing/main.tf", "tgw_jumphost_ssh_inbound"},
+		{"terraform/modules/testing/main.tf", "cluster_jumphost_ssh_inbound"},
+	} {
+		t.Run(tc.resource, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(repo, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			flat := strings.Join(strings.Fields(string(body)), " ")
+			want := `moved { from = ibm_is_security_group_rule.` + tc.resource + `[0] to = ibm_is_security_group_rule.` + tc.resource + `["0.0.0.0/0"] }`
+			if !strings.Contains(flat, want) {
+				t.Errorf("%s: no moved block renaming %s[0] → [\"0.0.0.0/0\"] — existing deployments would destroy-and-recreate the rule", tc.file, tc.resource)
+			}
+		})
+	}
+}

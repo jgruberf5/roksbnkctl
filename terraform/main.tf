@@ -54,8 +54,12 @@ module "roks_cluster" {
   existing_cluster_subnet_ids       = var.existing_cluster_subnet_ids
   cluster_vpc_cidr                  = var.cluster_vpc_cidr
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
-  kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
-  roksbnkctl_binary                 = var.roksbnkctl_binary
+
+  cluster_http_allowed_cidrs           = var.cluster_http_allowed_cidrs
+  cluster_vpc_default_sg_inbound_cidrs = var.cluster_vpc_default_sg_inbound_cidrs
+
+  kubeconfig_dir    = "${var.kubeconfig_dir}/cluster"
+  roksbnkctl_binary = var.roksbnkctl_binary
 }
 
 

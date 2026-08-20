@@ -791,8 +791,11 @@ A workspace-persistent override file is `~/.roksbnkctl/<ws>/terraform.tfvars.use
 
 ### Security-group source CIDRs, and why the defaults differ
 
-Four lists gate inbound access, and each defaults to what its own plane needs
-rather than to one blanket policy:
+Four lists gate inbound access. The name says what kind of rule it feeds:
+`*_allowed_cidrs` gates a single port (`:22`, `:80`), while `*_inbound_cidrs`
+gates a VPC **default** security group — all protocols, all ports, inherited by
+every resource later placed in that VPC without an explicit SG. Each list
+defaults to what its own plane needs rather than to one blanket policy:
 
 | plane | default | why |
 |---|---|---|
