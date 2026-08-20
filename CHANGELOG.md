@@ -37,6 +37,15 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Changed
 
+- **The `ROKSBNKCTL_*` env surface is a table, and enumerable.** `OverrideFromEnv` spelled each variable's name three times — to read it, to assign it, and to report it in the applied-overrides list — so the three could drift independently. The 21 genuinely uniform overrides now come from one table where the name is written once and the report string is derived, and `OverrideFromEnv` drops from 445 lines to 371 — 21 four-line blocks replaced by a seven-line loop.
+
+  The larger win is that the surface can now be **enumerated**. `SupportedOverrideNames()` is the authoritative list, and the guards that keep `.env.example` and the docs honest consume it instead of regex-scraping the source over two hard-coded filenames — a drift guard that was itself drifting, silently covering less whenever the override code changed shape. Switching it over immediately surfaced `IBMCLOUD_API_KEY`, which the old `ROKSBNKCTL_*`-bound regex had excluded by construction and which the parity guard therefore could never have reported.
+
+  Overrides that decode base64, parse an int or a bool, split a list, or validate keep their own blocks — forcing those through a table would trade one kind of repetition for a worse kind of indirection. They are declared in `bespokeOverrideNames`, and a guard asserts that list matches exactly what the code reads, so a new bespoke override cannot quietly stay out of the docs.
+
+  Verified behaviour-preserving by running the pre- and post-refactor code over all 21 overrides and diffing the resulting workspace and applied list: identical. (#114)
+
+
 - **Exit codes are one contract instead of eighteen decisions.** `os.Exit` was called from 18 places across five packages, each with its own policy. `roksbnkctl init` exited `130` on Ctrl-C while every other command turned the same interrupt into `1` — indistinguishable from a real failure, which matters because every demo and CI path in this repo branches on `$?`. `internal/remote` defined a meaningful `126`/`127` scheme that nothing else participated in. And because `os.Exit` terminates the test binary, none of it could be asserted: the inconsistencies went unnoticed because there was no way to notice.
 
   Commands now **return** a coded error (`internal/exitcode`) and one place maps it to a status. Three `os.Exit` calls remain, each with a stated reason: the root's mapping, the argv preflight (which runs before cobra exists to return an error to), and `init`'s SIGINT handler (which fires from a goroutine while a terminal read blocks, where there is no error to return from anywhere). All three take their value from the contract.

@@ -110,31 +110,17 @@ func repoRootForDemoTest(t *testing.T) string {
 	return root
 }
 
-func supportedOverrideNames(t *testing.T, root string) []string {
+func supportedOverrideNames(t *testing.T, _ string) []string {
 	t.Helper()
-	re := regexp.MustCompile(`envValue\("(ROKSBNKCTL_[A-Z0-9_]+)"\)|\{"(ROKSBNKCTL_[A-Z0-9_]+)",`)
-	seen := map[string]bool{}
-	var out []string
-	for _, f := range []string{"internal/config/envoverride.go", "internal/config/envoverride_flp.go"} {
-		b, err := os.ReadFile(filepath.Join(root, f))
-		if err != nil {
-			continue
-		}
-		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
-			name := m[1]
-			if name == "" {
-				name = m[2]
-			}
-			if name != "" && !seen[name] {
-				seen[name] = true
-				out = append(out, name)
-			}
-		}
+	// The authoritative list, not a regex over the source. The scrape this
+	// replaced hard-coded two filenames and two literal shapes, so it silently
+	// covered less whenever the override code changed shape — a guard against
+	// drift that was itself drifting.
+	names := SupportedOverrideNames()
+	if len(names) == 0 {
+		t.Fatal("SupportedOverrideNames() is empty — there is nothing to check")
 	}
-	if len(out) == 0 {
-		t.Fatal("found no overrides to check — the extraction regex has drifted")
-	}
-	return out
+	return names
 }
 
 func declaredInEnvExample(t *testing.T, path string) map[string]bool {
@@ -144,7 +130,11 @@ func declaredInEnvExample(t *testing.T, path string) map[string]bool {
 		t.Skipf(".env.example unreadable: %v", err)
 	}
 	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^(ROKSBNKCTL_[A-Z0-9_]+)=`).FindAllStringSubmatch(string(b), -1) {
+	// Prefix-agnostic: the supported surface is no longer all ROKSBNKCTL_* —
+	// IBMCLOUD_API_KEY is an override too, and the old prefix-bound regex
+	// excluded it by construction, so the guard could never have reported it
+	// missing.
+	for _, m := range regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]+)=`).FindAllStringSubmatch(string(b), -1) {
 		out[m[1]] = true
 	}
 	return out
@@ -157,7 +147,7 @@ func namesUsedUnder(t *testing.T, dir string) map[string]bool {
 	if err != nil {
 		return out
 	}
-	re := regexp.MustCompile(`ROKSBNKCTL_[A-Z0-9_]+`)
+	re := regexp.MustCompile(`\b[A-Z][A-Z0-9_]{3,}\b`)
 	for _, e := range entries {
 		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
