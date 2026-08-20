@@ -140,8 +140,8 @@ Set `cluster.vpc_cidr` (env `ROKSBNKCTL_CLUSTER_VPC_CIDR`) per cluster. A worked
 | VPC | Block | Per-zone prefixes |
 |---|---|---|
 | services (Harbor + FLP) | *existing, `auto`* | `10.241.0.0/18`, `.64.0/18`, `.128.0/18` |
-| first disconnected cluster | `10.242.0.0/16` | `10.242.0.0/18`, `.64.0/18`, `.128.0/18` |
-| second disconnected cluster | `10.243.0.0/16` | `10.243.0.0/18`, `.64.0/18`, `.128.0/18` |
+| first disconnected cluster | `10.245.0.0/16` | `10.245.0.0/18`, `.64.0/18`, `.128.0/18` |
+| second disconnected cluster | `10.247.0.0/16` | `10.247.0.0/18`, `.64.0/18`, `.128.0/18` |
 
 The block is split three ways, so **`/18` is the smallest usable value**. Leaving it blank keeps
 `auto`, which is fine for exactly one cluster per gateway. Since `v1.39.0` both `cluster up` and

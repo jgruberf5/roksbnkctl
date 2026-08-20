@@ -386,7 +386,8 @@ PYEOF
     echo "  intermittent image-pull timeouts from the mirror, with every security group and"
     echo "  ACL in the path allowing the traffic."
     echo
-    echo "  Pick a block none of the above uses, e.g. ROKSBNKCTL_CLUSTER_VPC_CIDR=10.243.0.0/16"
+    echo "  Pick a block none of the above uses — the list above is authoritative, so"
+    echo "  read it rather than reusing an example: ROKSBNKCTL_CLUSTER_VPC_CIDR=10.245.0.0/16"
     echo "  (split three ways per zone, so /18 is the smallest usable size)."; } >&2
   exit 2
 }
