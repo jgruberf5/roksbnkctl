@@ -6,6 +6,30 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.50.0 — 2026-08-20
+
+The output of an adversarial sweep of the codebase: twelve issues, filed first
+and fixed one PR at a time. Three are real security findings, and one of them —
+`config.yaml` written world-readable while holding an IBM Cloud API key — is
+worth acting on rather than just reading. **If a workspace on a shared host has
+held `ibmcloud.api_key_b64`, rotate that key**: this release tightens the mode
+and repairs existing workspaces on read, but it cannot un-expose what was
+already readable.
+
+Two behaviour changes for anything scripting this tool. Ctrl-C now exits **130**
+from any command that surfaces the interrupt rather than only `init`, and a
+malformed invocation exits **2** rather than 1 — so a script can tell "the
+operator stopped it" and "the command never ran" from "it broke". The testing
+client VPC's default security group also narrows from `0.0.0.0/0` to the RFC-1918
+ranges.
+
+A recurring theme is worth flagging, because it shaped what did *not* change:
+four of the twelve issues rested on figures from the sweep that did not survive
+measurement — `DefaultResources` is 12 lines and not 565, the comment ratio is
+25% and not 37%, `Sprint N`/`PRD N` citations resolve to in-repo documents, and
+"43 near-identical blocks" was 21. Each is called out where it applies. Nothing
+was churned to match a bad number.
+
 ### Security
 
 - **`bnkforge --insecure` sent the API token over an unauthenticated connection, silently.** The flag is genuinely opt-in and its purpose — self-signed lab installs — is legitimate. What it did not account for is what travels over the connection: the Forge session token goes on **every** request, so disabling verification leaves it encrypted but *unauthenticated*. Anyone positioned on the path can present a certificate for the Forge host, terminate TLS, and read the token. Nothing at use time said so, and `bnkforge.insecure: true` persists in `config.yaml` — typically set once for a lab and then forgotten, including when the same workspace is later pointed at a production Forge.
