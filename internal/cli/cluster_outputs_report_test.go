@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,9 +39,10 @@ func TestBothClusterUpPathsReportAFailedOutputsWrite(t *testing.T) {
 	}
 
 	// Both calls go through the reporting helper, so they cannot drift again.
-	direct := regexp.MustCompile(`[^y]persistClusterOutputs\(ctx`).FindAllString(fn, -1)
-	if len(direct) > 0 {
-		t.Errorf("runClusterUp calls persistClusterOutputs directly (%v); "+
+	// Lowercase p: tryPersistClusterOutputs spells it with a capital, so this
+	// matches only a direct call and needs no exclusion for the wrapper.
+	if direct := strings.Count(fn, "persistClusterOutputs(ctx"); direct > 0 {
+		t.Errorf("runClusterUp calls persistClusterOutputs directly %d time(s); "+
 			"use tryPersistClusterOutputs so both exit paths report identically", direct)
 	}
 	if n := strings.Count(fn, "tryPersistClusterOutputs("); n != 2 {
@@ -103,6 +105,13 @@ func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
 	}
 	// Split so this file does not match its own detection string.
 	needle := "prompts/" + "sprint"
+	// Derived, not hard-coded: a rename of this file would silently drop a
+	// hard-coded exclusion and leave the test failing on itself.
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve this file's own path")
+	}
+	selfRel := "internal/cli/" + filepath.Base(self)
 
 	var offenders []string
 	// Scoped to the Go source trees rather than the repo: walking everything
@@ -117,7 +126,7 @@ func TestNoCommentCitesTheDeletedPromptsDirectory(t *testing.T) {
 				return rerr
 			}
 			rel := strings.TrimPrefix(filepath.ToSlash(path), "../../")
-			if rel == "internal/cli/cluster_outputs_report_test.go" {
+			if rel == selfRel {
 				return nil
 			}
 			for _, line := range strings.Split(string(body), "\n") {
