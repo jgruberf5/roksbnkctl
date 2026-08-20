@@ -486,9 +486,11 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	}
 	renderBNKCertManager(w, ws)
 	renderBNKCOS(w, ws)
+	renderBNKDeployment(w, ws)
 	if err := renderBNKRegistryMirror(w, ws, mirror); err != nil {
 		return err
 	}
+	renderBNKSupplyChainFiles(w, ws)
 	if err := renderBNKLocalSupplyChain(w, ws); err != nil {
 		return err
 	}
@@ -499,10 +501,13 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	return nil
 }
 
-// renderBNKNamespaces emits the FLO / utility namespaces and the GSLB datacenter name.
+// renderBNKNamespaces emits the FLO / utility namespaces.
 func renderBNKNamespaces(w io.Writer, ws *config.Workspace) {
-	// FLO / utility namespaces + GSLB datacenter. Emitted only when set; unset
-	// leaves the terraform defaults (f5-bnk / f5-utils / unset).
+	// FLO / utility namespaces. Emitted only when set; unset leaves the
+	// terraform defaults (f5-bnk / f5-utils). The GSLB datacenter name is NOT
+	// emitted here — renderBNKGTM owns it, and emitting it from two renderers
+	// would render the key twice, which terraform rejects at plan time
+	// ("Attribute redefined") for the whole tfvars.
 	if ws.BNK.FLONamespace != "" {
 		fmt.Fprintf(w, "flo_namespace = %q\n", ws.BNK.FLONamespace)
 	}
@@ -539,7 +544,8 @@ func renderBNKTrustedProfile(w io.Writer, ws *config.Workspace) {
 	}
 }
 
-// renderBNKGTM emits the GTM / BIG-IP DNS connection (#51).
+// renderBNKGTM emits the GTM / BIG-IP DNS connection (#51) and the GSLB
+// datacenter name (emitted whenever set, even with no GTM URL).
 func renderBNKGTM(w io.Writer, ws *config.Workspace) error {
 	// GTM / BIG-IP DNS connection (#51). Emitted only when a URL is set, so a
 	// workspace that does not use GSLB renders exactly what it did before.
@@ -594,6 +600,14 @@ func renderBNKCOS(w io.Writer, ws *config.Workspace) {
 			fmt.Fprintf(w, "ibmcloud_cos_bucket_region = %q\n", cos.Region)
 		}
 	}
+}
+
+// renderBNKDeployment emits the CNE deployment size and the FAR repo URL —
+// the base coordinates every deployment renders, mirror or not. Kept apart
+// from renderBNKRegistryMirror below on purpose: far_repo_url is the fallback
+// the modules' coalesce() lands on when the mirror record is absent or
+// partial, so it must render regardless of what the mirror section decides.
+func renderBNKDeployment(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -639,6 +653,15 @@ func renderBNKRegistryMirror(w io.Writer, ws *config.Workspace, mirror *config.R
 			fmt.Fprintf(w, "registry_mirror_password = %q\n", string(raw))
 		}
 	}
+	return nil
+}
+
+// renderBNKSupplyChainFiles emits the manifest version and the COS object
+// names for the FAR auth tarball + subscription JWT. Every workspace that
+// deploys BNK renders these — they were previously tail lines of the
+// mirror-only renderer above, where a future early return on `mirror == nil`
+// would have silently dropped them from every non-air-gapped workspace.
+func renderBNKSupplyChainFiles(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.ManifestVersion != "" {
 		fmt.Fprintf(w, "f5_bigip_k8s_manifest_version = %q\n", ws.BNK.ManifestVersion)
 	}
@@ -648,7 +671,6 @@ func renderBNKRegistryMirror(w io.Writer, ws *config.Workspace, mirror *config.R
 	if ws.BNK.SubscriptionJWTFile != "" {
 		fmt.Fprintf(w, "f5_cne_subscription_jwt_file = %q\n", ws.BNK.SubscriptionJWTFile)
 	}
-	return nil
 }
 
 // renderBNKLocalSupplyChain emits the local-file supply chain, read here rather than downloaded.
