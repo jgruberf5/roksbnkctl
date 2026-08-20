@@ -153,6 +153,8 @@ locals {
   # The legacy single flp_vsi_allowed_cidrs, when set, seeds BOTH planes so existing
   # configs keep working (it takes precedence over the per-plane defaults, not over
   # an explicitly-set per-plane list).
+  # flp_rfc1918 is duplicated as testing_rfc1918 (modules/testing/main.tf); the
+  # modules share no parent to hoist it into. Change them TOGETHER or they drift.
   flp_rfc1918 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   flp_mgmt_cidrs = length(var.flp_vsi_management_allowed_cidrs) > 0 ? var.flp_vsi_management_allowed_cidrs : (
     length(var.flp_vsi_allowed_cidrs) > 0 ? var.flp_vsi_allowed_cidrs : ["0.0.0.0/0"]

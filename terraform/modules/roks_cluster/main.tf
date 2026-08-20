@@ -30,6 +30,9 @@ module "cluster" {
   create_transit_gateway = var.create_roks_transit_gateway
   create_cos_instance    = var.create_roks_registry_cos_instance
 
+  cluster_http_allowed_cidrs           = var.cluster_http_allowed_cidrs
+  cluster_vpc_default_sg_inbound_cidrs = var.cluster_vpc_default_sg_inbound_cidrs
+
   cluster_vpc_name     = var.roks_cluster_vpc_name
   transit_gateway_name = var.roks_transit_gateway_name
   cos_instance_name    = var.roks_cos_instance_name

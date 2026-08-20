@@ -54,8 +54,12 @@ module "roks_cluster" {
   existing_cluster_subnet_ids       = var.existing_cluster_subnet_ids
   cluster_vpc_cidr                  = var.cluster_vpc_cidr
   existing_cluster_vpc_id           = var.existing_cluster_vpc_id
-  kubeconfig_dir                    = "${var.kubeconfig_dir}/cluster"
-  roksbnkctl_binary                 = var.roksbnkctl_binary
+
+  cluster_http_allowed_cidrs           = var.cluster_http_allowed_cidrs
+  cluster_vpc_default_sg_inbound_cidrs = var.cluster_vpc_default_sg_inbound_cidrs
+
+  kubeconfig_dir    = "${var.kubeconfig_dir}/cluster"
+  roksbnkctl_binary = var.roksbnkctl_binary
 }
 
 
@@ -256,6 +260,8 @@ module "testing" {
   testing_client_vpc_region            = var.testing_client_vpc_region
   testing_tgw_jumphost_name            = var.testing_tgw_jumphost_name
   testing_cluster_jumphost_name_prefix = var.testing_cluster_jumphost_name_prefix
+  testing_jumphost_allowed_cidrs       = var.testing_jumphost_allowed_cidrs
+  testing_client_vpc_inbound_cidrs     = var.testing_client_vpc_inbound_cidrs
   cluster_vpc_id                       = module.roks_cluster.roks_cluster_vpc_id
   roks_cluster_dependency_id           = module.roks_cluster.cluster_ready_id
   create_roks_cluster                  = var.create_roks_cluster

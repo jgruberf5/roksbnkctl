@@ -156,3 +156,25 @@ variable "cluster_absent" {
   type        = bool
   default     = false
 }
+
+variable "testing_jumphost_allowed_cidrs" {
+  description = "Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open — the jumphosts carry a public floating IP and are reached from wherever the operator happens to be; access is key-only). Narrow this to the operator's public /32 on a shared account."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.testing_jumphost_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "testing_jumphost_allowed_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}
+
+variable "testing_client_vpc_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound to the testing client VPC's DEFAULT security group. Empty → the RFC-1918 private ranges, which is where in-fabric test traffic arrives from (the cluster reaches the client VPC over the Transit Gateway). Set explicitly only if a test needs a public source."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.testing_client_vpc_inbound_cidrs : can(cidrhost(c, 0))])
+    error_message = "testing_client_vpc_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}

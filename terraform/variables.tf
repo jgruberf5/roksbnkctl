@@ -977,3 +977,44 @@ variable "cluster_network_mode" {
     error_message = "cluster_network_mode must be single-nic or multi-nic."
   }
 }
+
+variable "testing_jumphost_allowed_cidrs" {
+  description = "Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open; access is key-only). Narrow to the operator's public /32 on a shared account."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.testing_jumphost_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "testing_jumphost_allowed_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}
+variable "testing_client_vpc_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound to the testing client VPC's default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.testing_client_vpc_inbound_cidrs : can(cidrhost(c, 0))])
+    error_message = "testing_client_vpc_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}
+variable "cluster_http_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.cluster_http_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "cluster_http_allowed_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}
+variable "cluster_vpc_default_sg_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.cluster_vpc_default_sg_inbound_cidrs : can(cidrhost(c, 0))])
+    error_message = "cluster_vpc_default_sg_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}

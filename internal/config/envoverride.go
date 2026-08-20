@@ -67,6 +67,10 @@ import (
 //	ROKSBNKCTL_GATEWAY_CONTROLLER_NAME → gateway.controller_name (empty derives it from the FLO namespace)
 //	ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES → gateway.route_examples (comma-separated: GRPCRoute,L4Route)
 //	ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT → gateway.l4_listener_port
+//	ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS       → resources.testing_jumphost_allowed_cidrs (comma-separated)
+//	ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS     → resources.testing_client_vpc_inbound_cidrs (comma-separated)
+//	ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS           → resources.cluster_http_allowed_cidrs (comma-separated)
+//	ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS → resources.cluster_vpc_default_sg_inbound_cidrs (comma-separated)
 //	ROKSBNKCTL_FLP_NAMESPACE        → bnk.flp.namespace
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
 //	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
@@ -431,19 +435,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 		ws.Gateway.ControllerName = v
 		applied = append(applied, "gateway.controller_name (ROKSBNKCTL_GATEWAY_CONTROLLER_NAME)")
 	}
-	// Comma-separated, matching ROKSBNKCTL_TRUSTED_PROFILE_ROLES — the one other
-	// list-valued override — so a caller does not have to learn a second
+	// Comma-separated, like the other list-valued overrides (TRUSTED_PROFILE_ROLES,
+	// the *_CIDRS set below), so a caller does not have to learn a second
 	// convention. Validation is terraform's: which kinds are valid depends on
 	// the Gateway API channel the BNK line installs, and that is knowledge the
 	// terraform already holds.
 	if v := envValue("ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES"); v != "" {
-		kinds := []string{}
-		for _, k := range strings.Split(v, ",") {
-			if k = strings.TrimSpace(k); k != "" {
-				kinds = append(kinds, k)
-			}
-		}
-		if len(kinds) > 0 {
+		if kinds := splitCommaList(v); len(kinds) > 0 {
 			ws.Gateway.RouteExamples = kinds
 			applied = append(applied, "gateway.route_examples (ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES)")
 		}
@@ -453,6 +451,40 @@ func OverrideFromEnv(ws *Workspace) []string {
 			ws.Gateway.L4ListenerPort = n
 			applied = append(applied, "gateway.l4_listener_port (ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT)")
 		}
+	}
+
+	// Security-group source CIDRs. Comma-separated like the overrides above.
+	// Each leaves the terraform module's own default standing when unset — the
+	// defaults differ per plane and that knowledge lives there. Values are
+	// validated by the terraform variables at plan time (can(cidrhost(...))),
+	// before anything is provisioned.
+	for _, o := range []struct {
+		env   string
+		field string
+		set   func([]string)
+	}{
+		{"ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS", "resources.testing_jumphost_allowed_cidrs",
+			func(v []string) { ws.Resources.TestingJumphostAllowedCIDRs = v }},
+		{"ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS", "resources.testing_client_vpc_inbound_cidrs",
+			func(v []string) { ws.Resources.TestingClientVPCInboundCIDRs = v }},
+		{"ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS", "resources.cluster_http_allowed_cidrs",
+			func(v []string) { ws.Resources.ClusterHTTPAllowedCIDRs = v }},
+		{"ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS", "resources.cluster_vpc_default_sg_inbound_cidrs",
+			func(v []string) { ws.Resources.ClusterVPCDefaultSGInboundCIDRs = v }},
+	} {
+		v := envValue(o.env)
+		if v == "" {
+			continue
+		}
+		cidrs := splitCommaList(v)
+		if len(cidrs) == 0 {
+			continue
+		}
+		if ws.Resources == nil {
+			ws.Resources = DefaultResources()
+		}
+		o.set(cidrs)
+		applied = append(applied, o.field+" ("+o.env+")")
 	}
 
 	// The foreign-proxy handoff (the "shared licensing cluster" topology). These

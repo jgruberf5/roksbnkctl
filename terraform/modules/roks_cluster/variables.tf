@@ -164,3 +164,24 @@ variable "existing_cluster_subnet_ids" {
   type        = list(string)
   default     = []
 }
+
+variable "cluster_http_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.cluster_http_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "cluster_http_allowed_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}
+variable "cluster_vpc_default_sg_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.cluster_vpc_default_sg_inbound_cidrs : can(cidrhost(c, 0))])
+    error_message = "cluster_vpc_default_sg_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
+  }
+}

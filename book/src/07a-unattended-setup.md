@@ -128,6 +128,10 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_ZONE<n>_EXT_VLAN_CIDR` … `_INTERNAL_SELFIP` | `bnk.network.zones[n-1]` | per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply) |
 | `ROKSBNKCTL_TESTING_SSH_KEY_NAME` | `resources.testing_ssh_key_name` | verbatim |
 | `ROKSBNKCTL_BNKFORGE_CA_B64` | `bnkforge.ca_b64` | PEM CA the BNK Forge server's certificate must chain to, base64-encoded. Pins a self-signed lab cert so the session token is not sent over an unauthenticated connection. Supersedes `bnkforge.insecure`. |
+| `ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS` | `resources.testing_jumphost_allowed_cidrs` | comma-separated source CIDRs for SSH (:22) to the testing jumphosts. Unset → open (they carry a public floating IP; access is key-only). Set to your public /32 on a shared account. |
+| `ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS` | `resources.testing_client_vpc_inbound_cidrs` | comma-separated; inbound to the testing client VPC's **default** SG. Unset → the RFC-1918 ranges (in-fabric test traffic arrives over the Transit Gateway). |
+| `ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS` | `resources.cluster_http_allowed_cidrs` | comma-separated; sources for :80 on the cluster SG. Unset → open (this is the ingress/ALB path). |
+| `ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS` | `resources.cluster_vpc_default_sg_inbound_cidrs` | comma-separated; inbound (all protocols/ports) to the cluster VPC's **default** SG. Unset → open, the historical behaviour. |
 | `ROKSBNKCTL_REGISTRY_TARGET` | `registry.target` | `icr` \| `generic` |
 | `ROKSBNKCTL_GENERIC_HOST` | `registry.generic_host` | verbatim, e.g. `harbor.example.com` |
 | `ROKSBNKCTL_GENERIC_REPO_PREFIX` | `registry.generic_repo_prefix` | verbatim — a Harbor project, an Artifactory repo key |

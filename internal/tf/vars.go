@@ -192,10 +192,38 @@ func renderSparseBody(w io.Writer, ws *config.Workspace, mirror *config.Registry
 		}
 	}
 
+	// Security-group source CIDRs render on BOTH paths: the sparse (legacy
+	// empty-Prefix) body can still create a cluster via create_roks_cluster, and
+	// an override the CLI reported as applied must not silently leave the module
+	// default (fail-open) standing.
+	renderSGCIDRFields(w, ws.Resources)
+
 	if err := renderBNKFields(w, ws, mirror); err != nil {
 		return err
 	}
 	return nil
+}
+
+// renderSGCIDRFields emits the security-group source CIDR lists, shared by the
+// sparse and full render bodies. Each is emitted only when set, so an unset
+// list leaves the module's own default standing — the defaults differ per
+// plane and that knowledge lives in the modules.
+func renderSGCIDRFields(w io.Writer, res *config.ResourcesCfg) {
+	if res == nil {
+		return
+	}
+	if len(res.TestingJumphostAllowedCIDRs) > 0 {
+		fmt.Fprintf(w, "testing_jumphost_allowed_cidrs = %s\n", hclStringList(res.TestingJumphostAllowedCIDRs))
+	}
+	if len(res.TestingClientVPCInboundCIDRs) > 0 {
+		fmt.Fprintf(w, "testing_client_vpc_inbound_cidrs = %s\n", hclStringList(res.TestingClientVPCInboundCIDRs))
+	}
+	if len(res.ClusterHTTPAllowedCIDRs) > 0 {
+		fmt.Fprintf(w, "cluster_http_allowed_cidrs = %s\n", hclStringList(res.ClusterHTTPAllowedCIDRs))
+	}
+	if len(res.ClusterVPCDefaultSGInboundCIDRs) > 0 {
+		fmt.Fprintf(w, "cluster_vpc_default_sg_inbound_cidrs = %s\n", hclStringList(res.ClusterVPCDefaultSGInboundCIDRs))
+	}
 }
 
 // renderFullBody is the Sprint 26 prefix-driven render body: it derives the
@@ -328,6 +356,8 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 	if res.ClientRegion != "" {
 		fmt.Fprintf(w, "testing_client_vpc_region = %q\n", res.ClientRegion)
 	}
+
+	renderSGCIDRFields(w, res)
 
 	// IBM Cloud VPC SSH key attached to the jumphosts (resolved by `init`).
 	if res.TestingSSHKeyName != "" {

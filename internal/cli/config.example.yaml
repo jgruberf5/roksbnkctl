@@ -79,6 +79,14 @@ resources:
   # testing_jumphost_profile: ""        # pin an instance profile for all jumphosts (blank = auto-select)
   # testing_min_vcpu_count: 4           # jumphost auto-select floor (blank = default 4)
   # testing_min_memory_gb: 8            # jumphost auto-select floor (blank = default 8)
+  #
+  # Security-group source CIDRs (all optional; empty keeps each plane's own default).
+  # *_allowed_cidrs gate a single port; *_inbound_cidrs gate a VPC DEFAULT security
+  # group (all protocols and ports). Env: ROKSBNKCTL_<KEY, uppercased>.
+  # testing_jumphost_allowed_cidrs: []       # SSH (:22) to the jumphosts. Empty = open (public floating IP, key-only access) — narrow to your public /32 on a shared account
+  # testing_client_vpc_inbound_cidrs: []     # testing client VPC default SG. Empty = RFC-1918 (test traffic arrives over the Transit Gateway)
+  # cluster_http_allowed_cidrs: []           # :80 on the cluster SG. Empty = open (the ingress/ALB path is meant to be reachable)
+  # cluster_vpc_default_sg_inbound_cidrs: [] # cluster VPC default SG. Empty = open (historical) — the one worth narrowing to your private ranges
 
 # ---- BNK install -----------------------------------------------------------
 bnk:
