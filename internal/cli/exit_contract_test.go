@@ -105,7 +105,7 @@ func TestRootMapsErrorsThroughTheContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fn := enclosingFuncBody(t, string(body), "Execute")
+	fn := funcBody(t, string(body), "Execute")
 
 	if !strings.Contains(fn, "exitcode.FromError(err)") {
 		t.Error("Execute does not resolve the status via exitcode.FromError — every coded error " +
@@ -154,26 +154,6 @@ func TestCommandsReturnContractCodesNotLiterals(t *testing.T) {
 	}
 }
 
-// enclosingFuncBody returns the body of `func <name>`, delimited by the closing
-// brace in column 0.
-//
-// Deliberately named apart from cluster_outputs_report_test.go's funcBody:
-// these two guards land on separate branches, and a shared name would make
-// whichever merges second fail to build for a reason unrelated to its change.
-func enclosingFuncBody(t *testing.T, src, name string) string {
-	t.Helper()
-	start := strings.Index(src, "func "+name+"(")
-	if start < 0 {
-		t.Fatalf("%s not found — this test can no longer detect the gap", name)
-	}
-	rest := src[start:]
-	end := strings.Index(rest, "\n}\n")
-	if end < 0 {
-		t.Fatalf("could not delimit %s", name)
-	}
-	return rest[:end]
-}
-
 // A malformed flag and a malformed argv-preflight token are the same class of
 // mistake — the invocation was rejected, nothing ran — so they must produce the
 // same code. The preflight exits Usage; this pins the cobra half, which
@@ -183,7 +163,7 @@ func TestFlagErrorsAreUsageErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fn := enclosingFuncBody(t, string(body), "Execute")
+	fn := funcBody(t, string(body), "Execute")
 	if !strings.Contains(fn, "SetFlagErrorFunc") || !strings.Contains(fn, "exitcode.Usage") {
 		t.Error("Execute does not wrap cobra flag errors in exitcode.Usage — `--bogus` would exit 1 " +
 			"while the argv preflight's typo check exits 2, splitting one class of mistake across two codes")
@@ -209,7 +189,7 @@ func TestTestFailureExitsPreferTheInterrupt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fn := enclosingFuncBody(t, string(body), tc.fn)
+			fn := funcBody(t, string(body), tc.fn)
 			if !strings.Contains(fn, "ctx.Err()") {
 				t.Errorf("%s does not consult ctx.Err() before deciding its exit — an interrupted "+
 					"run would report as a failed one", tc.fn)

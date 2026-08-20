@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -113,41 +112,4 @@ func TestDestructiveRegistryCommandsGuardAgainstAStaleRecord(t *testing.T) {
 			}
 		}
 	}
-}
-
-// packageFuncBody finds `func <name>` anywhere in the package and returns its
-// body, delimited by the closing brace in column 0.
-//
-// It searches every file rather than one named file because the registry
-// subcommands moved out of registry.go into one file each (#117) — and this
-// test, which had registry.go hard-coded, correctly refused to pass rather than
-// silently stop checking. Locating the function by name means the next move
-// costs nothing.
-func packageFuncBody(t *testing.T, name string) string {
-	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading the package directory: %v", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		src, rerr := os.ReadFile(e.Name())
-		if rerr != nil {
-			t.Fatalf("reading %s: %v", e.Name(), rerr)
-		}
-		body := string(src)
-		start := strings.Index(body, "func "+name+"(")
-		if start < 0 {
-			continue
-		}
-		end := strings.Index(body[start:], "\n}\n")
-		if end < 0 {
-			t.Fatalf("could not delimit %s in %s", name, e.Name())
-		}
-		return body[start : start+end]
-	}
-	t.Fatalf("%s not found in any file in this package — this test can no longer detect the gap", name)
-	return ""
 }

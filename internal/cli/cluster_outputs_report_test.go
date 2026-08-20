@@ -72,22 +72,6 @@ func TestTheOutputsWriteWarningNamesTheRecoveryCommand(t *testing.T) {
 	}
 }
 
-// funcBody returns the body of `func <name>`, delimited by the closing brace in
-// column 0.
-func funcBody(t *testing.T, src, name string) string {
-	t.Helper()
-	start := strings.Index(src, "func "+name+"(")
-	if start < 0 {
-		t.Fatalf("%s not found — this test can no longer detect the gap", name)
-	}
-	rest := src[start:]
-	end := strings.Index(rest, "\n}\n")
-	if end < 0 {
-		t.Fatalf("could not delimit %s", name)
-	}
-	return rest[:end]
-}
-
 // The three comments citing prompts/ pointed at a directory removed from the
 // repo at v1.12.0 (#120). One of them was the package comment on the binary's
 // entrypoint — the first thing a reader opens, opening with a dead end.
