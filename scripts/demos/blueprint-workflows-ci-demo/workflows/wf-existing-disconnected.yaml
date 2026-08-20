@@ -105,7 +105,7 @@ spec:
           # 10.243 the connected cluster, so the disconnected one takes 10.244.
           - { name: ROKSBNKCTL_PREFIX,           value: "bnk-cid" }
           - { name: ROKSBNKCTL_CLUSTER_NAME,     value: "bnk-cid" }
-          - { name: ROKSBNKCTL_CLUSTER_VPC_CIDR, value: "10.244.0.0/16" }
+          - { name: ROKSBNKCTL_CLUSTER_VPC_CIDR, value: "10.247.0.0/16" }
           - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
           - { name: ROKSBNKCTL_LICENSE_MODE,   value: "f5licenseproxy" }
           - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
@@ -150,7 +150,7 @@ spec:
           # 10.243 the connected cluster, so the disconnected one takes 10.244.
           - { name: ROKSBNKCTL_PREFIX,           value: "bnk-cid" }
           - { name: ROKSBNKCTL_CLUSTER_NAME,     value: "bnk-cid" }
-          - { name: ROKSBNKCTL_CLUSTER_VPC_CIDR, value: "10.244.0.0/16" }
+          - { name: ROKSBNKCTL_CLUSTER_VPC_CIDR, value: "10.247.0.0/16" }
           - { name: ROKSBNKCTL_CLUSTER_CREATE, value: "false" }
           - { name: ROKSBNKCTL_LICENSE_MODE,   value: "f5licenseproxy" }
           - { name: ROKSBNKCTL_HOME, value: "/work/.roksbnkctl" }
