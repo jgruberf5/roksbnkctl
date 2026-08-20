@@ -92,6 +92,28 @@ install** to the target: every chart and image resolves from your private
 registry instead of FAR, so BNK comes up with no external pulls. The air-gap
 acceptance is exactly this, with egress to the external registries blocked.
 
+The record is only used when it describes the mirror the workspace is
+**currently configured for** — same target kind, repository and host. A record
+outlives the mirror it describes: repoint `registry.generic_repo_prefix` at
+another repository, or switch `registry.target`, and the record on disk still
+names the old one. Nothing re-probes on read, so an unchecked record would
+redirect the whole install onto a registry nobody asked for, and terraform would
+apply it without complaint. `bnk up` refuses instead, naming both repositories:
+
+```
+the recorded registry mirror does not describe the configured mirror: it was
+written for repository "bnk-mirror", the configured repository is "docker-local".
+  Acting on it would use a mirror this workspace is not configured for.
+  Re-record it:   roksbnkctl -w prod registry replicate   (needs the FAR source)
+  Already filled: roksbnkctl -w prod registry adopt       (no source access needed)
+```
+
+The same check gates the node CA-trust install, which would otherwise push the
+old mirror's CA onto every worker. When the configured mirror cannot be resolved
+from config at all — an unset `generic_host`, an ICR region with no known
+registry host — the record is left alone: knowing less than the record is not
+grounds for discarding it.
+
 The target's own pull credential is wired in for you:
 
 - **ICR** — the cluster authenticates to `*.icr.io` with `iamapikey` + the

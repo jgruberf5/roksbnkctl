@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -128,6 +129,7 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	}
 	out = append(out, checkWorkspace(cctx))
 	if cctx.Workspace != nil {
+		out = append(out, checkWorkspacePerms(cctx))
 		out = append(out, checkAPIKey(cctx))
 		out = append(out, checkIBMAuth(ctx, cctx))
 		out = append(out, checkQuota(ctx, cctx))
@@ -250,6 +252,36 @@ func checkWorkspace(cctx *config.Context) withWhy {
 	c.Status = StatusOK
 	c.Detail = cctx.WorkspaceName
 	return withWhy{Check: c, Why: "per-environment config + state"}
+}
+
+// checkWorkspacePerms reports whether the workspace tree is owner-only.
+//
+// config.yaml can hold ibmcloud.api_key_b64 and registry.generic_password_b64,
+// both base64 rather than encrypted, so the file mode is the only protection
+// they have. LoadWorkspace repairs a loose tree on read; this check is what
+// makes the state visible rather than assumed, and it is the only thing that
+// reports a tree that could NOT be repaired.
+func checkWorkspacePerms(cctx *config.Context) withWhy {
+	const why = "credentials in the workspace are protected by file mode alone"
+	c := Check{Name: "workspace permissions"}
+	if runtime.GOOS == "windows" {
+		c.Status = StatusSkipped
+		c.Detail = "not applicable on Windows (no POSIX file modes)"
+		return withWhy{Check: c, Why: why}
+	}
+	fixed, err := config.SecureWorkspacePerms(cctx.WorkspaceName)
+	switch {
+	case err != nil:
+		c.Status = StatusError
+		c.Detail = fmt.Sprintf("readable by other users and could not be tightened: %v", err)
+	case len(fixed) > 0:
+		c.Status = StatusWarning
+		c.Detail = fmt.Sprintf("was readable by other users; tightened %d path(s) — rotate the API key if this host is shared", len(fixed))
+	default:
+		c.Status = StatusOK
+		c.Detail = "owner-only"
+	}
+	return withWhy{Check: c, Why: why}
 }
 
 func checkAPIKey(cctx *config.Context) withWhy {

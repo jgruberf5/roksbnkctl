@@ -83,9 +83,11 @@ The encoding exists for two reasons:
 1. **Visual.** A glancing `cat config.yaml` doesn't surface the literal API key.
 2. **Format.** API keys can contain `=` and other YAML-special characters that complicate inline storage. Base64 normalises them.
 
-`api_key_b64` is the fallback when the OS keychain isn't available — most commonly **WSL2 without libsecret**, **headless Linux servers**, and **CI runners** where bringing up a keychain daemon is more friction than it's worth. Treat the file like a plaintext credential: `chmod 0600`, never commit, never share.
+`api_key_b64` is the fallback when the OS keychain isn't available — most commonly **WSL2 without libsecret**, **headless Linux servers**, and **CI runners** where bringing up a keychain daemon is more friction than it's worth. Treat the file like a plaintext credential: never commit it, never share it.
 
-> **File-mode note**: `roksbnkctl init` writes `config.yaml` mode `0644` by default (chapter 12 §"File permissions"). When you populate `api_key_b64`, `chmod 0600` the file yourself — and re-chmod after any subsequent `roksbnkctl init` that re-writes the file, since `init` doesn't preserve the tightened mode. The keychain and env-var paths sidestep this entirely: nothing sensitive lands in `config.yaml`, so the default `0644` is fine.
+> **File-mode note**: `config.yaml` is written mode `0600` inside a `0700` workspace directory, and roksbnkctl tightens both on read for workspaces written by an earlier release — you no longer need to `chmod` it yourself or re-chmod after `init`. Verify with `roksbnkctl doctor` (the `workspace permissions` check).
+>
+> Releases before v1.50.0 wrote `0644` inside `0755`, so on any host you share with another account, **rotate an API key that has been sitting in `config.yaml`**. Tightening the mode now does not un-expose what was readable before. The keychain and env-var paths avoid the question entirely: nothing sensitive lands in `config.yaml` at all.
 
 The plaintext field name `api_key:` is **rejected** at workspace-load time:
 

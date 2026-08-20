@@ -12,7 +12,16 @@ Each workspace's config lives at:
 ~/.roksbnkctl/<workspace>/config.yaml
 ```
 
-Override the base directory with the `ROKSBNKCTL_HOME` env var (test fixtures use this; everyday users shouldn't need it). The file is created mode `0644` — readable by your user, the same trust posture as the surrounding workspace directory.
+Override the base directory with the `ROKSBNKCTL_HOME` env var (test fixtures use this; everyday users shouldn't need it). The file is created mode `0600`, inside a workspace directory created `0700` — owner-only, because this file can hold `ibmcloud.api_key_b64` and `registry.generic_password_b64`, and base64 is obfuscation rather than encryption.
+
+Workspaces created by a release before v1.50.0 are on disk at `0644`/`0755`. They are tightened in place the first time roksbnkctl reads them, and it says so once:
+
+```
+⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+```
+
+The repair fixes the mode from that point on; it does not undo the exposure that already happened. On a shared host, rotate the API key. `roksbnkctl doctor` reports the current state as the `workspace permissions` check, and is the only thing that reports a tree that could **not** be tightened (a read-only mount, or a filesystem with no POSIX modes). On Windows the check is skipped: Go's `Chmod` there only toggles the read-only bit, so there is no owner-only mode to assert.
 
 There's also a *global* `~/.roksbnkctl/config.yaml` at the top level — it holds the `current_workspace` pointer and other user-wide preferences. That's a different file with a different schema; this chapter is about the per-workspace one.
 

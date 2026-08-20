@@ -18,6 +18,7 @@ roksbnkctl doctor
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
+✓  workspace permissions  owner-only                                                          (credentials in the workspace are protected by file mode alone)
 ✓  ibmcloud api key  resolved                                                                 (auth for terraform + IBM SDK calls)
 ✓  ibm cloud auth    OK (account: 1a2b3c..., user: you@example.com)                           (verifies API key works against IBM IAM)
 ```
@@ -115,6 +116,19 @@ Reports the resolved workspace name and whether its `config.yaml` exists.
 - `✗ no config context` — the global config can't be loaded at all.
 
 The one-off `-w / --workspace` flag overrides which workspace `doctor` reports against. See [Chapter 6 — Workspaces](./06-workspaces.md).
+
+### `workspace permissions`
+
+Reports whether the workspace tree is owner-only, and tightens it if not.
+
+`config.yaml` can hold `ibmcloud.api_key_b64` and `registry.generic_password_b64`; `state/terraform.tfstate` holds whatever those resolve to. All of it is base64 at most, which is obfuscation and not encryption — the file mode is the only protection, so `config.yaml` is `0600` and the directories are `0700`.
+
+- `✓ owner-only` — nothing to do.
+- `⚠ was readable by other users; tightened N path(s)` — the workspace was written by a release before v1.50.0, which used `0644`/`0755`. The mode is fixed from here on. **The exposure that already happened is not undone**: on a host you share with another account, rotate the API key.
+- `✗ readable by other users and could not be tightened` — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (the `.bootstrap-state` directory on a WSL DrvFs mount hits this). Move the workspace onto a filesystem that can hold `0600`, or use the keychain or env-var credential paths so nothing sensitive lands in the file.
+- `– not applicable on Windows` — Go's `Chmod` on Windows only toggles the read-only bit, so there is no owner-only mode to assert.
+
+Reading a workspace tightens it too, so this check usually reports `✓` even on a tree that was loose a moment ago; the warning row is the one that tells you rotation is worth considering.
 
 ### `ibmcloud api key`
 

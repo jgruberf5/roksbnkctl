@@ -14,10 +14,10 @@ Every workspace lives under `~/.roksbnkctl/<name>/`:
 ~/.roksbnkctl/
   config.yaml                          # global; current_workspace pointer
   known_hosts                          # SSH host keys (shared across workspaces)
-  default/                             # workspace "default"
-    config.yaml                        # this workspace's inputs
+  default/                             # workspace "default" (mode 0700)
+    config.yaml                        # this workspace's inputs (mode 0600)
     cluster-outputs.json               # post-apply cluster identity (when present)
-    state/                             # BNK trial state
+    state/                             # BNK trial state (mode 0700)
       terraform.tfstate
       terraform.tfvars
       kubeconfig                       # admin kubeconfig (mode 0600)
