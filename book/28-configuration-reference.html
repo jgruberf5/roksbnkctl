@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -797,7 +797,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>url</code></td><td>string</td><td>(<code>BNK_FORGE_URL</code>)</td><td>The BNK Forge server URL. Empty ⇒ the <code>BNK_FORGE_URL</code> env var; with neither, registration errors.</td></tr>
 <tr><td><code>project</code></td><td>string</td><td>(the workspace name)</td><td>BNK Forge project to register the cluster under. Empty ⇒ a project named after the workspace, created if it does not exist.</td></tr>
 <tr><td><code>username</code></td><td>string</td><td>(<code>BNK_FORGE_USER</code>)</td><td>Forge login. The <strong>password</strong> is never stored in <code>config.yaml</code> — it comes from <code>BNK_FORGE_PASSWORD</code> or an interactive prompt, and only the resulting session token is cached (OS keychain).</td></tr>
-<tr><td><code>insecure</code></td><td>bool</td><td><code>false</code></td><td>Skip TLS verification. Forge installs commonly carry a self-signed certificate.</td></tr>
+<tr><td><code>insecure</code></td><td>bool</td><td><code>false</code></td><td>Disable TLS verification. The session token is sent on every request, so this leaves it encrypted but <strong>unauthenticated</strong> — anyone on the path can present a certificate for the Forge host and read it. Every request made with this set warns, naming the host. Prefer <code>ca_b64</code>.</td></tr>
+<tr><td><code>ca_b64</code></td><td>string</td><td>—</td><td>PEM CA the Forge server’s certificate must chain to, base64-encoded. The right answer for a self-signed lab install: you generated the CA, so pinning it <strong>authenticates</strong> the connection instead of abandoning authentication. Wins over <code>insecure</code>. Set with <code>bnkforge enable --forge-ca &lt;file&gt;</code> or <code>ROKSBNKCTL_BNKFORGE_CA_B64</code>. A certificate is public data, so unlike the credential <code>_b64</code> fields this is encoded only for single-line YAML safety.</td></tr>
 </tbody>
 </table>
 </div>
@@ -895,6 +896,10 @@ values. The resulting block looks like:</p>
 <tr><td><code>resources.client_region</code></td><td>string</td><td>(empty)</td><td>Region the testing client (TGW jumphost + client VPC) lives in → <code>testing_client_vpc_region</code>. Since <code>v1.9.0</code>.</td></tr>
 <tr><td><code>resources.testing_client_vpc_name</code></td><td>string</td><td>(empty)</td><td>Name for the testing client VPC when <code>client_vpc.create: true</code> → <code>testing_client_vpc_name</code>.</td></tr>
 <tr><td><code>resources.testing_ssh_key_name</code></td><td>string</td><td>(empty)</td><td>Existing IBM Cloud VPC SSH key attached to the jumphosts → <code>testing_ssh_key_name</code>. Resolved by <code>init</code>.</td></tr>
+<tr><td><code>resources.testing_jumphost_allowed_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed to SSH (<code>:22</code>) to the testing jumphosts → <code>testing_jumphost_allowed_cidrs</code>. Empty → <code>0.0.0.0/0</code>. They carry a public floating IP and are reached from wherever you are, and access is key-only — so open is the default. Narrow to your public <code>/32</code> on a shared account.</td></tr>
+<tr><td><code>resources.testing_client_vpc_inbound_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed inbound to the testing client VPC’s <strong>default</strong> security group → <code>testing_client_vpc_inbound_cidrs</code>. Empty → the RFC-1918 private ranges. The rule is all-protocol/all-port because a test can exercise any of them; the traffic arrives over the Transit Gateway, so it does not need a public source.</td></tr>
+<tr><td><code>resources.cluster_http_allowed_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs for <code>:80</code> on the cluster security group → <code>cluster_http_allowed_cidrs</code>. Empty → <code>0.0.0.0/0</code>; this is the ingress/ALB path and is meant to be publicly reachable.</td></tr>
+<tr><td><code>resources.cluster_vpc_default_sg_inbound_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed inbound (all protocols and ports) to the <strong>cluster VPC’s default</strong> security group → <code>cluster_vpc_default_sg_inbound_cidrs</code>. Empty → <code>0.0.0.0/0</code>, the historical behaviour. IBM ships a VPC default SG denying inbound, so this widens it for every resource later placed in the VPC without an explicit SG. See the note below.</td></tr>
 <tr><td><code>resources.testing_jumphost_profile</code></td><td>string</td><td>(empty ⇒ auto-select)</td><td>Pin an instance profile for <strong>all</strong> testing jumphosts → <code>testing_jumphost_profile</code>.</td></tr>
 <tr><td><code>resources.testing_min_vcpu_count</code></td><td>integer</td><td><code>4</code></td><td>Jumphost-profile auto-select floor (vCPUs) → <code>testing_min_vcpu_count</code>.</td></tr>
 <tr><td><code>resources.testing_min_memory_gb</code></td><td>integer</td><td><code>8</code></td><td>Jumphost-profile auto-select floor (GB) → <code>testing_min_memory_gb</code>.</td></tr>
@@ -1015,6 +1020,38 @@ values. The resulting block looks like:</p>
 <p><code>roksbnkctl up --var-file &lt;file&gt;</code> layers user-supplied tfvars <strong>after</strong> the auto-rendered tfvars derived from <code>config.yaml</code>. Later wins, terraform-style. Multiple <code>--var-file</code> flags are accepted and stack in command-line order.</p>
 <p>The auto-render path: <code>config.yaml</code> → typed <code>Workspace</code> struct → key/value tfvars → <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code>. The user’s <code>--var-file</code> is appended to the terraform invocation as an additional <code>-var-file=&lt;path&gt;</code> argument. See <a href="./13-terraform-variables.html">Chapter 13 — Terraform variables</a> for the layering rules.</p>
 <p>A workspace-persistent override file is <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> — when present, it’s auto-layered after the rendered tfvars and before any explicit <code>--var-file</code>. Useful for “always pass this <code>bigip_password</code> value when applying this workspace” without putting it in <code>config.yaml</code> (where the plaintext-secret rejection would reject it).</p>
+<h3 id="security-group-source-cidrs-and-why-the-defaults-differ"><a class="header" href="#security-group-source-cidrs-and-why-the-defaults-differ">Security-group source CIDRs, and why the defaults differ</a></h3>
+<p>Four lists gate inbound access. The name says what kind of rule it feeds:
+<code>*_allowed_cidrs</code> gates a single port (<code>:22</code>, <code>:80</code>), while <code>*_inbound_cidrs</code>
+gates a VPC <strong>default</strong> security group — all protocols, all ports, inherited by
+every resource later placed in that VPC without an explicit SG. Each list
+defaults to what its own plane needs rather than to one blanket policy:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>plane</th><th>default</th><th>why</th></tr>
+</thead>
+<tbody>
+<tr><td>jumphost SSH (<code>:22</code>)</td><td>open</td><td>You connect from wherever you are; access is key-only.</td></tr>
+<tr><td>testing client VPC default SG</td><td>RFC-1918</td><td>In-fabric test traffic arrives over the Transit Gateway.</td></tr>
+<tr><td>cluster <code>:80</code></td><td>open</td><td>The ingress/ALB path is meant to be publicly reachable.</td></tr>
+<tr><td>cluster VPC default SG</td><td>open</td><td>Historical. <strong>The one worth narrowing.</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>The last row is a deliberate exception. A VPC default security group ships from
+IBM denying inbound; widening it to all protocols and ports from <code>0.0.0.0/0</code>
+inverts that for every resource later placed in the VPC without an explicit
+security group — a fail-open default waiting for the first VSI that gets a
+floating IP. It stays open by default only because that security group governs
+the VPC the cluster’s own data path runs in, and changing it on every existing
+deployment is not something to do without validating against a live cluster.</p>
+<p>If nothing in your cluster VPC needs a public source — which is the usual case —
+set it:</p>
+<pre><code class="language-yaml">resources:
+  cluster_vpc_default_sg_inbound_cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+</code></pre>
+<p>Then verify ingress and the BNK data path still behave before relying on it.</p>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./12-workspace-config.html">Chapter 12 — Workspace config</a> — the teaching counterpart to this lookup.</li>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -184,7 +184,12 @@
 <p>Each workspace’s config lives at:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml
 </code></pre>
-<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0644</code> — readable by your user, the same trust posture as the surrounding workspace directory.</p>
+<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0600</code>, inside a workspace directory created <code>0700</code> — owner-only, because this file can hold <code>ibmcloud.api_key_b64</code> and <code>registry.generic_password_b64</code>, and base64 is obfuscation rather than encryption.</p>
+<p>Workspaces created by a release before v1.50.0 are on disk at <code>0644</code>/<code>0755</code>. They are tightened in place the first time roksbnkctl reads them, and it says so once:</p>
+<pre><code>⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+</code></pre>
+<p>The repair fixes the mode from that point on; it does not undo the exposure that already happened. On a shared host, rotate the API key. <code>roksbnkctl doctor</code> reports the current state as the <code>workspace permissions</code> check, and is the only thing that reports a tree that could <strong>not</strong> be tightened (a read-only mount, or a filesystem with no POSIX modes). On Windows the check is skipped: Go’s <code>Chmod</code> there only toggles the read-only bit, so there is no owner-only mode to assert.</p>
 <p>There’s also a <em>global</em> <code>~/.roksbnkctl/config.yaml</code> at the top level — it holds the <code>current_workspace</code> pointer and other user-wide preferences. That’s a different file with a different schema; this chapter is about the per-workspace one.</p>
 <h2 id="when-it-gets-written"><a class="header" href="#when-it-gets-written">When it gets written</a></h2>
 <div class="table-wrapper">

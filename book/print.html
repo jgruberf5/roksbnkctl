@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -722,6 +722,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
+✓  workspace permissions  owner-only                                                          (credentials in the workspace are protected by file mode alone)
 ✓  ibmcloud api key  resolved                                                                 (auth for terraform + IBM SDK calls)
 ✓  ibm cloud auth    OK (account: 1a2b3c..., user: you@example.com)                           (verifies API key works against IBM IAM)
 </code></pre>
@@ -784,6 +785,21 @@ choco install kubernetes-helm
 <li><code>✗ no config context</code> — the global config can’t be loaded at all.</li>
 </ul>
 <p>The one-off <code>-w / --workspace</code> flag overrides which workspace <code>doctor</code> reports against. See <a href="#workspaces">Chapter 6 — Workspaces</a>.</p>
+<h3 id="workspace-permissions"><a class="header" href="#workspace-permissions"><code>workspace permissions</code></a></h3>
+<p>Reports whether the workspace tree is owner-only, and tightens it if not.</p>
+<p><code>config.yaml</code> can hold <code>ibmcloud.api_key_b64</code> and <code>registry.generic_password_b64</code>; <code>state/terraform.tfstate</code> holds whatever those resolve to. All of it is base64 at most, which is obfuscation and not encryption — the file mode is the only protection, so <code>config.yaml</code> is <code>0600</code> and the directories are <code>0700</code>.</p>
+<p>The check is <strong>read-only</strong>. Loading a workspace already tightens what it can, so anything still loose by the time <code>doctor</code> looks is something the repair could <em>not</em> fix — which is exactly what is worth reporting.</p>
+<ul>
+<li><code>✓ owner-only</code> — nothing to do.</li>
+<li><code>✗ &lt;path&gt; readable by other users and could not be tightened (N path(s))</code> — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (a WSL DrvFs mount without metadata, an SMB share). Move the workspace onto a filesystem that can hold <code>0600</code>, or use the keychain or env-var credential paths so nothing sensitive lands in the file at all.</li>
+</ul>
+<p>The row is <strong>absent on Windows</strong>: Go’s <code>Chmod</code> there only toggles the read-only bit, so there is no owner-only mode to assert and a permanent unactionable warning would be worse than no row.</p>
+<p>The scope is the workspace directory and its immediate children: <code>config.yaml</code>, <code>registry-mirror.json</code>, <code>cluster-outputs.json</code>, <code>ssh/</code>, and every <code>state-*</code> tree. Children are enumerated rather than matched against a list of known names, so a state tree added by a future phase is covered the day it appears. Owner-only on a state directory makes everything inside it unreachable regardless of those files’ own modes, which is why the check does not walk deeper.</p>
+<p>The <strong>repair</strong> happens on load, not here, and announces itself once:</p>
+<pre><code>⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+</code></pre>
+<p>Workspaces written by a release before v1.50.0 are <code>0644</code>/<code>0755</code> on disk and will produce that line the first time they are read. <strong>The exposure that already happened is not undone</strong> — on a shared host, rotate the API key.</p>
 <h3 id="ibmcloud-api-key"><a class="header" href="#ibmcloud-api-key"><code>ibmcloud api key</code></a></h3>
 <p>Resolves the API key via the chain documented in <a href="#credentials-and-the-resolver-chain">Chapter 14 — Credentials</a>: env var → OS keychain → workspace config (base64) → TTY prompt.</p>
 <p>Pass condition: the chain produces a non-empty key. The key value is <strong>never</strong> printed — only the source (“resolved”).</p>
@@ -877,10 +893,10 @@ fi
 <pre><code>~/.roksbnkctl/
   config.yaml                          # global; current_workspace pointer
   known_hosts                          # SSH host keys (shared across workspaces)
-  default/                             # workspace "default"
-    config.yaml                        # this workspace's inputs
+  default/                             # workspace "default" (mode 0700)
+    config.yaml                        # this workspace's inputs (mode 0600)
     cluster-outputs.json               # post-apply cluster identity (when present)
-    state/                             # BNK trial state
+    state/                             # BNK trial state (mode 0700)
       terraform.tfstate
       terraform.tfvars
       kubeconfig                       # admin kubeconfig (mode 0600)
@@ -1412,6 +1428,42 @@ roksbnkctl init -w ci-run-42 \
   --override-from-env
 </code></pre>
 <p>No secret ever lands in git; the same template seeds every account.</p>
+<h2 id="exit-codes"><a class="header" href="#exit-codes">Exit codes</a></h2>
+<p>Unattended callers branch on <code>$?</code>, so the codes are an interface:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">code</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right"><code>0</code></td><td>The command did what was asked.</td></tr>
+<tr><td style="text-align: right"><code>1</code></td><td>It went wrong. The default for anything without a more specific code.</td></tr>
+<tr><td style="text-align: right"><code>2</code></td><td>The <strong>invocation</strong> was rejected — a malformed flag, an argument the command cannot accept. Nothing was attempted.</td></tr>
+<tr><td style="text-align: right"><code>126</code></td><td>Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused.</td></tr>
+<tr><td style="text-align: right"><code>127</code></td><td>The target could not be reached at all.</td></tr>
+<tr><td style="text-align: right"><code>130</code></td><td>The operator interrupted it (Ctrl-C / <code>SIGINT</code>).</td></tr>
+<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs.</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>130</code> is worth wiring into CI cleanup: it distinguishes <em>“someone stopped this”</em>
+from <em>“it broke”</em>, which a job that retries on failure should treat differently.
+Before v1.50.0 only <code>roksbnkctl init</code> produced it — every other command turned
+the same Ctrl-C into <code>1</code>.</p>
+<p><code>2</code> is similarly worth separating. It means the command never ran, so retrying
+the same invocation will fail the same way; the fix is in the script, not the
+environment.</p>
+<p>A command that propagates a wrapped tool’s status does not print its own error
+on top — <code>terraform</code>’s diagnostics have already gone to stderr, and a second
+<code>roksbnkctl: ...</code> line would only add noise. Check the stream, not just the
+code.</p>
+<h3 id="the-interrupt-outranks-everything-else"><a class="header" href="#the-interrupt-outranks-everything-else">The interrupt outranks everything else</a></h3>
+<p>A failure that happens <em>because</em> of the Ctrl-C reports the interrupt, not the
+failure class it landed in: a connect aborted mid-handshake is <code>130</code>, not
+<code>127</code>; a test suite cut off mid-run is <code>130</code>, not a red <code>1</code>; a child killed by
+the signal propagates <code>130</code> (<code>128+SIGINT</code>, the shell convention), not <code>255</code>.
+So <code>$? -eq 130</code> is reliable — a job does not need to trap <code>SIGINT</code> itself to
+tell “someone stopped this” from “it broke”.</p>
 <h2 id="--config-file"><a class="header" href="#--config-file"><code>--config-file</code></a></h2>
 <p><code>--config-file</code> parses the supplied YAML strictly — <strong>unknown fields are
 rejected</strong>, not silently dropped — into the workspace <code>config.yaml</code>, and skips
@@ -1483,6 +1535,11 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>
 <tr><td><code>ROKSBNKCTL_ZONE&lt;n&gt;_EXT_VLAN_CIDR</code> … <code>_INTERNAL_SELFIP</code></td><td><code>bnk.network.zones[n-1]</code></td><td>per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply)</td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_SSH_KEY_NAME</code></td><td><code>resources.testing_ssh_key_name</code></td><td>verbatim</td></tr>
+<tr><td><code>ROKSBNKCTL_BNKFORGE_CA_B64</code></td><td><code>bnkforge.ca_b64</code></td><td>PEM CA the BNK Forge server’s certificate must chain to, base64-encoded. Pins a self-signed lab cert so the session token is not sent over an unauthenticated connection. Supersedes <code>bnkforge.insecure</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS</code></td><td><code>resources.testing_jumphost_allowed_cidrs</code></td><td>comma-separated source CIDRs for SSH (:22) to the testing jumphosts. Unset → open (they carry a public floating IP; access is key-only). Set to your public /32 on a shared account.</td></tr>
+<tr><td><code>ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS</code></td><td><code>resources.testing_client_vpc_inbound_cidrs</code></td><td>comma-separated; inbound to the testing client VPC’s <strong>default</strong> SG. Unset → the RFC-1918 ranges (in-fabric test traffic arrives over the Transit Gateway).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS</code></td><td><code>resources.cluster_http_allowed_cidrs</code></td><td>comma-separated; sources for :80 on the cluster SG. Unset → open (this is the ingress/ALB path).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS</code></td><td><code>resources.cluster_vpc_default_sg_inbound_cidrs</code></td><td>comma-separated; inbound (all protocols/ports) to the cluster VPC’s <strong>default</strong> SG. Unset → open, the historical behaviour.</td></tr>
 <tr><td><code>ROKSBNKCTL_REGISTRY_TARGET</code></td><td><code>registry.target</code></td><td><code>icr</code> | <code>generic</code></td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_HOST</code></td><td><code>registry.generic_host</code></td><td>verbatim, e.g. <code>harbor.example.com</code></td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td><td><code>registry.generic_repo_prefix</code></td><td>verbatim — a Harbor project, an Artifactory repo key</td></tr>
@@ -3059,6 +3116,24 @@ digest, idempotently — re-running only moves what changed (after a BNK version
 install</strong> to the target: every chart and image resolves from your private
 registry instead of FAR, so BNK comes up with no external pulls. The air-gap
 acceptance is exactly this, with egress to the external registries blocked.</p>
+<p>The record is only used when it describes the mirror the workspace is
+<strong>currently configured for</strong> — same target kind, repository and host. A record
+outlives the mirror it describes: repoint <code>registry.generic_repo_prefix</code> at
+another repository, or switch <code>registry.target</code>, and the record on disk still
+names the old one. Nothing re-probes on read, so an unchecked record would
+redirect the whole install onto a registry nobody asked for, and terraform would
+apply it without complaint. <code>bnk up</code> refuses instead, naming both repositories:</p>
+<pre><code>the recorded registry mirror does not describe the configured mirror: it was
+written for repository "bnk-mirror", the configured repository is "docker-local".
+  Acting on it would use a mirror this workspace is not configured for.
+  Re-record it:   roksbnkctl -w prod registry replicate   (needs the FAR source)
+  Already filled: roksbnkctl -w prod registry adopt       (no source access needed)
+</code></pre>
+<p>The same check gates the node CA-trust install, which would otherwise push the
+old mirror’s CA onto every worker. When the configured mirror cannot be resolved
+from config at all — an unset <code>generic_host</code>, an ICR region with no known
+registry host — the record is left alone: knowing less than the record is not
+grounds for discarding it.</p>
 <p>The target’s own pull credential is wired in for you:</p>
 <ul>
 <li>
@@ -4156,7 +4231,12 @@ roksbnkctl down --auto -w preexisting
 <p>Each workspace’s config lives at:</p>
 <pre><code>~/.roksbnkctl/&lt;workspace&gt;/config.yaml
 </code></pre>
-<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0644</code> — readable by your user, the same trust posture as the surrounding workspace directory.</p>
+<p>Override the base directory with the <code>ROKSBNKCTL_HOME</code> env var (test fixtures use this; everyday users shouldn’t need it). The file is created mode <code>0600</code>, inside a workspace directory created <code>0700</code> — owner-only, because this file can hold <code>ibmcloud.api_key_b64</code> and <code>registry.generic_password_b64</code>, and base64 is obfuscation rather than encryption.</p>
+<p>Workspaces created by a release before v1.50.0 are on disk at <code>0644</code>/<code>0755</code>. They are tightened in place the first time roksbnkctl reads them, and it says so once:</p>
+<pre><code>⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+</code></pre>
+<p>The repair fixes the mode from that point on; it does not undo the exposure that already happened. On a shared host, rotate the API key. <code>roksbnkctl doctor</code> reports the current state as the <code>workspace permissions</code> check, and is the only thing that reports a tree that could <strong>not</strong> be tightened (a read-only mount, or a filesystem with no POSIX modes). On Windows the check is skipped: Go’s <code>Chmod</code> there only toggles the read-only bit, so there is no owner-only mode to assert.</p>
 <p>There’s also a <em>global</em> <code>~/.roksbnkctl/config.yaml</code> at the top level — it holds the <code>current_workspace</code> pointer and other user-wide preferences. That’s a different file with a different schema; this chapter is about the per-workspace one.</p>
 <h2 id="when-it-gets-written"><a class="header" href="#when-it-gets-written">When it gets written</a></h2>
 <div class="table-wrapper">
@@ -5063,9 +5143,10 @@ $ keyring set roksbnkctl dev/ibmcloud_api_key
 <li><strong>Visual.</strong> A glancing <code>cat config.yaml</code> doesn’t surface the literal API key.</li>
 <li><strong>Format.</strong> API keys can contain <code>=</code> and other YAML-special characters that complicate inline storage. Base64 normalises them.</li>
 </ol>
-<p><code>api_key_b64</code> is the fallback when the OS keychain isn’t available — most commonly <strong>WSL2 without libsecret</strong>, <strong>headless Linux servers</strong>, and <strong>CI runners</strong> where bringing up a keychain daemon is more friction than it’s worth. Treat the file like a plaintext credential: <code>chmod 0600</code>, never commit, never share.</p>
+<p><code>api_key_b64</code> is the fallback when the OS keychain isn’t available — most commonly <strong>WSL2 without libsecret</strong>, <strong>headless Linux servers</strong>, and <strong>CI runners</strong> where bringing up a keychain daemon is more friction than it’s worth. Treat the file like a plaintext credential: never commit it, never share it.</p>
 <blockquote>
-<p><strong>File-mode note</strong>: <code>roksbnkctl init</code> writes <code>config.yaml</code> mode <code>0644</code> by default (chapter 12 §“File permissions”). When you populate <code>api_key_b64</code>, <code>chmod 0600</code> the file yourself — and re-chmod after any subsequent <code>roksbnkctl init</code> that re-writes the file, since <code>init</code> doesn’t preserve the tightened mode. The keychain and env-var paths sidestep this entirely: nothing sensitive lands in <code>config.yaml</code>, so the default <code>0644</code> is fine.</p>
+<p><strong>File-mode note</strong>: <code>config.yaml</code> is written mode <code>0600</code> inside a <code>0700</code> workspace directory, and roksbnkctl tightens both on read for workspaces written by an earlier release — you no longer need to <code>chmod</code> it yourself or re-chmod after <code>init</code>. Verify with <code>roksbnkctl doctor</code> (the <code>workspace permissions</code> check).</p>
+<p>Releases before v1.50.0 wrote <code>0644</code> inside <code>0755</code>, so on any host you share with another account, <strong>rotate an API key that has been sitting in <code>config.yaml</code></strong>. Tightening the mode now does not un-expose what was readable before. The keychain and env-var paths avoid the question entirely: nothing sensitive lands in <code>config.yaml</code> at all.</p>
 </blockquote>
 <p>The plaintext field name <code>api_key:</code> is <strong>rejected</strong> at workspace-load time:</p>
 <pre><code>$ roksbnkctl up
@@ -8976,6 +9057,39 @@ the cluster’s identity first:</p>
 Step 4 is the one that changed in v1.42.0 — <code>roksbnkctl</code> prefers the in-place <code>PUT</code>
 so the cluster id survives, and only falls back to <code>DELETE</code> + <code>POST</code> against a Forge
 build that has no <code>PUT</code> route.</p>
+<h2 id="tls-pin-the-ca-dont-disable-verification"><a class="header" href="#tls-pin-the-ca-dont-disable-verification">TLS: pin the CA, don’t disable verification</a></h2>
+<p>Forge installs commonly carry a self-signed certificate, and <code>--insecure</code> makes
+that connect. What it costs is easy to miss: <strong>the session token is sent on
+every request</strong>, so disabling verification leaves the connection encrypted but
+<em>unauthenticated</em>. Anyone positioned on the path can present a certificate for
+the Forge host, terminate TLS, and read the token. Encryption without
+authentication protects the traffic from a passive observer and not from an
+active one.</p>
+<p>That would matter less if the setting were transient, but <code>bnkforge.insecure: true</code> persists in <code>config.yaml</code> — it is typically set once for a lab and then
+forgotten, including when the same workspace is later pointed at a production
+Forge. So every request made with it prints a warning naming the host:</p>
+<pre><code>⚠ BNK Forge TLS verification is DISABLED for forge.lab.example.com:8443 — the API token
+  is sent over a connection that is encrypted but NOT authenticated.
+  Anyone able to intercept it can present any certificate for that host and read the token.
+  Pin the Forge CA instead — `roksbnkctl bnkforge enable --forge-ca &lt;file&gt;` — then drop --insecure.
+</code></pre>
+<p><strong>Pin the CA instead.</strong> For a self-signed Forge you generated the CA, so you
+already hold it — and pinning it authenticates the connection rather than
+abandoning authentication:</p>
+<pre><code class="language-bash">roksbnkctl bnkforge enable --url https://forge.lab.example.com:8443 --forge-ca ./forge-ca.pem
+</code></pre>
+<p>That stores the PEM as <code>bnkforge.ca_b64</code> (base64 only for single-line YAML
+safety — a certificate is public data) and clears <code>insecure</code>. <code>--forge-ca</code> also
+works as a one-shot on <code>bnkforge register</code> and <code>unregister</code>. When both are set
+the pin wins and the certificate <em>is</em> verified.</p>
+<p>Non-interactively, set <code>ROKSBNKCTL_BNKFORGE_CA_B64</code> (<code>base64 -w0 forge-ca.pem</code>).</p>
+<p><code>roksbnkctl bnkforge status</code> reports which of the three is in force:</p>
+<pre><code>tls:         verified (pinned CA from bnkforge.ca_b64)
+tls:         verified (system roots)
+tls:         NOT VERIFIED (insecure: true) — the API token is sent over an unauthenticated connection; pin a CA with `bnkforge enable --forge-ca &lt;file&gt;`
+</code></pre>
+<p>If the pinned CA is wrong, the connection fails at the handshake with an
+<code>x509</code> error rather than silently falling back — which is the point.</p>
 <h2 id="behaviour-notes"><a class="header" href="#behaviour-notes">Behaviour notes</a></h2>
 <ul>
 <li><strong>Best-effort — it never blocks or fails the deploy.</strong> Whatever happens with
@@ -9805,7 +9919,8 @@ registered stays on Forge’s Kubernetes page — to remove it, use
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (ensured-or-created)</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (e.g. https://forge.example.com)</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username</td></tr>
@@ -9825,7 +9940,8 @@ registered stays on Forge’s Kubernetes page — to remove it, use
 </thead>
 <tbody>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes)</td></tr>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
@@ -9857,7 +9973,8 @@ run twice or run late.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>skip TLS verification (self-signed Forge cert)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge base URL</td></tr>
@@ -12452,7 +12569,8 @@ values. The resulting block looks like:</p>
 <tr><td><code>url</code></td><td>string</td><td>(<code>BNK_FORGE_URL</code>)</td><td>The BNK Forge server URL. Empty ⇒ the <code>BNK_FORGE_URL</code> env var; with neither, registration errors.</td></tr>
 <tr><td><code>project</code></td><td>string</td><td>(the workspace name)</td><td>BNK Forge project to register the cluster under. Empty ⇒ a project named after the workspace, created if it does not exist.</td></tr>
 <tr><td><code>username</code></td><td>string</td><td>(<code>BNK_FORGE_USER</code>)</td><td>Forge login. The <strong>password</strong> is never stored in <code>config.yaml</code> — it comes from <code>BNK_FORGE_PASSWORD</code> or an interactive prompt, and only the resulting session token is cached (OS keychain).</td></tr>
-<tr><td><code>insecure</code></td><td>bool</td><td><code>false</code></td><td>Skip TLS verification. Forge installs commonly carry a self-signed certificate.</td></tr>
+<tr><td><code>insecure</code></td><td>bool</td><td><code>false</code></td><td>Disable TLS verification. The session token is sent on every request, so this leaves it encrypted but <strong>unauthenticated</strong> — anyone on the path can present a certificate for the Forge host and read it. Every request made with this set warns, naming the host. Prefer <code>ca_b64</code>.</td></tr>
+<tr><td><code>ca_b64</code></td><td>string</td><td>—</td><td>PEM CA the Forge server’s certificate must chain to, base64-encoded. The right answer for a self-signed lab install: you generated the CA, so pinning it <strong>authenticates</strong> the connection instead of abandoning authentication. Wins over <code>insecure</code>. Set with <code>bnkforge enable --forge-ca &lt;file&gt;</code> or <code>ROKSBNKCTL_BNKFORGE_CA_B64</code>. A certificate is public data, so unlike the credential <code>_b64</code> fields this is encoded only for single-line YAML safety.</td></tr>
 </tbody>
 </table>
 </div>
@@ -12550,6 +12668,10 @@ values. The resulting block looks like:</p>
 <tr><td><code>resources.client_region</code></td><td>string</td><td>(empty)</td><td>Region the testing client (TGW jumphost + client VPC) lives in → <code>testing_client_vpc_region</code>. Since <code>v1.9.0</code>.</td></tr>
 <tr><td><code>resources.testing_client_vpc_name</code></td><td>string</td><td>(empty)</td><td>Name for the testing client VPC when <code>client_vpc.create: true</code> → <code>testing_client_vpc_name</code>.</td></tr>
 <tr><td><code>resources.testing_ssh_key_name</code></td><td>string</td><td>(empty)</td><td>Existing IBM Cloud VPC SSH key attached to the jumphosts → <code>testing_ssh_key_name</code>. Resolved by <code>init</code>.</td></tr>
+<tr><td><code>resources.testing_jumphost_allowed_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed to SSH (<code>:22</code>) to the testing jumphosts → <code>testing_jumphost_allowed_cidrs</code>. Empty → <code>0.0.0.0/0</code>. They carry a public floating IP and are reached from wherever you are, and access is key-only — so open is the default. Narrow to your public <code>/32</code> on a shared account.</td></tr>
+<tr><td><code>resources.testing_client_vpc_inbound_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed inbound to the testing client VPC’s <strong>default</strong> security group → <code>testing_client_vpc_inbound_cidrs</code>. Empty → the RFC-1918 private ranges. The rule is all-protocol/all-port because a test can exercise any of them; the traffic arrives over the Transit Gateway, so it does not need a public source.</td></tr>
+<tr><td><code>resources.cluster_http_allowed_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs for <code>:80</code> on the cluster security group → <code>cluster_http_allowed_cidrs</code>. Empty → <code>0.0.0.0/0</code>; this is the ingress/ALB path and is meant to be publicly reachable.</td></tr>
+<tr><td><code>resources.cluster_vpc_default_sg_inbound_cidrs</code></td><td>list</td><td>(empty)</td><td>Source CIDRs allowed inbound (all protocols and ports) to the <strong>cluster VPC’s default</strong> security group → <code>cluster_vpc_default_sg_inbound_cidrs</code>. Empty → <code>0.0.0.0/0</code>, the historical behaviour. IBM ships a VPC default SG denying inbound, so this widens it for every resource later placed in the VPC without an explicit SG. See the note below.</td></tr>
 <tr><td><code>resources.testing_jumphost_profile</code></td><td>string</td><td>(empty ⇒ auto-select)</td><td>Pin an instance profile for <strong>all</strong> testing jumphosts → <code>testing_jumphost_profile</code>.</td></tr>
 <tr><td><code>resources.testing_min_vcpu_count</code></td><td>integer</td><td><code>4</code></td><td>Jumphost-profile auto-select floor (vCPUs) → <code>testing_min_vcpu_count</code>.</td></tr>
 <tr><td><code>resources.testing_min_memory_gb</code></td><td>integer</td><td><code>8</code></td><td>Jumphost-profile auto-select floor (GB) → <code>testing_min_memory_gb</code>.</td></tr>
@@ -12670,6 +12792,38 @@ values. The resulting block looks like:</p>
 <p><code>roksbnkctl up --var-file &lt;file&gt;</code> layers user-supplied tfvars <strong>after</strong> the auto-rendered tfvars derived from <code>config.yaml</code>. Later wins, terraform-style. Multiple <code>--var-file</code> flags are accepted and stack in command-line order.</p>
 <p>The auto-render path: <code>config.yaml</code> → typed <code>Workspace</code> struct → key/value tfvars → <code>~/.roksbnkctl/&lt;ws&gt;/state/terraform.tfvars</code>. The user’s <code>--var-file</code> is appended to the terraform invocation as an additional <code>-var-file=&lt;path&gt;</code> argument. See <a href="#terraform-variables-terraformtfvars">Chapter 13 — Terraform variables</a> for the layering rules.</p>
 <p>A workspace-persistent override file is <code>~/.roksbnkctl/&lt;ws&gt;/terraform.tfvars.user</code> — when present, it’s auto-layered after the rendered tfvars and before any explicit <code>--var-file</code>. Useful for “always pass this <code>bigip_password</code> value when applying this workspace” without putting it in <code>config.yaml</code> (where the plaintext-secret rejection would reject it).</p>
+<h3 id="security-group-source-cidrs-and-why-the-defaults-differ"><a class="header" href="#security-group-source-cidrs-and-why-the-defaults-differ">Security-group source CIDRs, and why the defaults differ</a></h3>
+<p>Four lists gate inbound access. The name says what kind of rule it feeds:
+<code>*_allowed_cidrs</code> gates a single port (<code>:22</code>, <code>:80</code>), while <code>*_inbound_cidrs</code>
+gates a VPC <strong>default</strong> security group — all protocols, all ports, inherited by
+every resource later placed in that VPC without an explicit SG. Each list
+defaults to what its own plane needs rather than to one blanket policy:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>plane</th><th>default</th><th>why</th></tr>
+</thead>
+<tbody>
+<tr><td>jumphost SSH (<code>:22</code>)</td><td>open</td><td>You connect from wherever you are; access is key-only.</td></tr>
+<tr><td>testing client VPC default SG</td><td>RFC-1918</td><td>In-fabric test traffic arrives over the Transit Gateway.</td></tr>
+<tr><td>cluster <code>:80</code></td><td>open</td><td>The ingress/ALB path is meant to be publicly reachable.</td></tr>
+<tr><td>cluster VPC default SG</td><td>open</td><td>Historical. <strong>The one worth narrowing.</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>The last row is a deliberate exception. A VPC default security group ships from
+IBM denying inbound; widening it to all protocols and ports from <code>0.0.0.0/0</code>
+inverts that for every resource later placed in the VPC without an explicit
+security group — a fail-open default waiting for the first VSI that gets a
+floating IP. It stays open by default only because that security group governs
+the VPC the cluster’s own data path runs in, and changing it on every existing
+deployment is not something to do without validating against a live cluster.</p>
+<p>If nothing in your cluster VPC needs a public source — which is the usual case —
+set it:</p>
+<pre><code class="language-yaml">resources:
+  cluster_vpc_default_sg_inbound_cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+</code></pre>
+<p>Then verify ingress and the BNK data path still behave before relying on it.</p>
 <h2 id="cross-references-21"><a class="header" href="#cross-references-21">Cross-references</a></h2>
 <ul>
 <li><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> — the teaching counterpart to this lookup.</li>
@@ -14897,7 +15051,7 @@ spec:
   serviceAccountName: bnk-runner
   arguments:
     parameters:
-      - {name: runner-image,   value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.1}
+      - {name: runner-image,   value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.50.0}
       - {name: bnk-version,    value: 2.3.0-3.2598.3-0.0.170}
       - {name: cos-instance,   value: bnk-supply-chain}
       - {name: cos-bucket,     value: ""}          # account-specific; no default

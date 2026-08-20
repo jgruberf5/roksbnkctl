@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -228,6 +228,42 @@ roksbnkctl init -w ci-run-42 \
   --override-from-env
 </code></pre>
 <p>No secret ever lands in git; the same template seeds every account.</p>
+<h2 id="exit-codes"><a class="header" href="#exit-codes">Exit codes</a></h2>
+<p>Unattended callers branch on <code>$?</code>, so the codes are an interface:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th style="text-align: right">code</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align: right"><code>0</code></td><td>The command did what was asked.</td></tr>
+<tr><td style="text-align: right"><code>1</code></td><td>It went wrong. The default for anything without a more specific code.</td></tr>
+<tr><td style="text-align: right"><code>2</code></td><td>The <strong>invocation</strong> was rejected — a malformed flag, an argument the command cannot accept. Nothing was attempted.</td></tr>
+<tr><td style="text-align: right"><code>126</code></td><td>Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused.</td></tr>
+<tr><td style="text-align: right"><code>127</code></td><td>The target could not be reached at all.</td></tr>
+<tr><td style="text-align: right"><code>130</code></td><td>The operator interrupted it (Ctrl-C / <code>SIGINT</code>).</td></tr>
+<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs.</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>130</code> is worth wiring into CI cleanup: it distinguishes <em>“someone stopped this”</em>
+from <em>“it broke”</em>, which a job that retries on failure should treat differently.
+Before v1.50.0 only <code>roksbnkctl init</code> produced it — every other command turned
+the same Ctrl-C into <code>1</code>.</p>
+<p><code>2</code> is similarly worth separating. It means the command never ran, so retrying
+the same invocation will fail the same way; the fix is in the script, not the
+environment.</p>
+<p>A command that propagates a wrapped tool’s status does not print its own error
+on top — <code>terraform</code>’s diagnostics have already gone to stderr, and a second
+<code>roksbnkctl: ...</code> line would only add noise. Check the stream, not just the
+code.</p>
+<h3 id="the-interrupt-outranks-everything-else"><a class="header" href="#the-interrupt-outranks-everything-else">The interrupt outranks everything else</a></h3>
+<p>A failure that happens <em>because</em> of the Ctrl-C reports the interrupt, not the
+failure class it landed in: a connect aborted mid-handshake is <code>130</code>, not
+<code>127</code>; a test suite cut off mid-run is <code>130</code>, not a red <code>1</code>; a child killed by
+the signal propagates <code>130</code> (<code>128+SIGINT</code>, the shell convention), not <code>255</code>.
+So <code>$? -eq 130</code> is reliable — a job does not need to trap <code>SIGINT</code> itself to
+tell “someone stopped this” from “it broke”.</p>
 <h2 id="--config-file"><a class="header" href="#--config-file"><code>--config-file</code></a></h2>
 <p><code>--config-file</code> parses the supplied YAML strictly — <strong>unknown fields are
 rejected</strong>, not silently dropped — into the workspace <code>config.yaml</code>, and skips
@@ -299,6 +335,11 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>
 <tr><td><code>ROKSBNKCTL_ZONE&lt;n&gt;_EXT_VLAN_CIDR</code> … <code>_INTERNAL_SELFIP</code></td><td><code>bnk.network.zones[n-1]</code></td><td>per-zone VLAN/SNAT/VIP CIDRs + self-IPs (n = 1…3; all six fields required for a zone to apply)</td></tr>
 <tr><td><code>ROKSBNKCTL_TESTING_SSH_KEY_NAME</code></td><td><code>resources.testing_ssh_key_name</code></td><td>verbatim</td></tr>
+<tr><td><code>ROKSBNKCTL_BNKFORGE_CA_B64</code></td><td><code>bnkforge.ca_b64</code></td><td>PEM CA the BNK Forge server’s certificate must chain to, base64-encoded. Pins a self-signed lab cert so the session token is not sent over an unauthenticated connection. Supersedes <code>bnkforge.insecure</code>.</td></tr>
+<tr><td><code>ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS</code></td><td><code>resources.testing_jumphost_allowed_cidrs</code></td><td>comma-separated source CIDRs for SSH (:22) to the testing jumphosts. Unset → open (they carry a public floating IP; access is key-only). Set to your public /32 on a shared account.</td></tr>
+<tr><td><code>ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS</code></td><td><code>resources.testing_client_vpc_inbound_cidrs</code></td><td>comma-separated; inbound to the testing client VPC’s <strong>default</strong> SG. Unset → the RFC-1918 ranges (in-fabric test traffic arrives over the Transit Gateway).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS</code></td><td><code>resources.cluster_http_allowed_cidrs</code></td><td>comma-separated; sources for :80 on the cluster SG. Unset → open (this is the ingress/ALB path).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS</code></td><td><code>resources.cluster_vpc_default_sg_inbound_cidrs</code></td><td>comma-separated; inbound (all protocols/ports) to the cluster VPC’s <strong>default</strong> SG. Unset → open, the historical behaviour.</td></tr>
 <tr><td><code>ROKSBNKCTL_REGISTRY_TARGET</code></td><td><code>registry.target</code></td><td><code>icr</code> | <code>generic</code></td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_HOST</code></td><td><code>registry.generic_host</code></td><td>verbatim, e.g. <code>harbor.example.com</code></td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_REPO_PREFIX</code></td><td><code>registry.generic_repo_prefix</code></td><td>verbatim — a Harbor project, an Artifactory repo key</td></tr>

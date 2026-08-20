@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -260,6 +260,24 @@ digest, idempotently — re-running only moves what changed (after a BNK version
 install</strong> to the target: every chart and image resolves from your private
 registry instead of FAR, so BNK comes up with no external pulls. The air-gap
 acceptance is exactly this, with egress to the external registries blocked.</p>
+<p>The record is only used when it describes the mirror the workspace is
+<strong>currently configured for</strong> — same target kind, repository and host. A record
+outlives the mirror it describes: repoint <code>registry.generic_repo_prefix</code> at
+another repository, or switch <code>registry.target</code>, and the record on disk still
+names the old one. Nothing re-probes on read, so an unchecked record would
+redirect the whole install onto a registry nobody asked for, and terraform would
+apply it without complaint. <code>bnk up</code> refuses instead, naming both repositories:</p>
+<pre><code>the recorded registry mirror does not describe the configured mirror: it was
+written for repository "bnk-mirror", the configured repository is "docker-local".
+  Acting on it would use a mirror this workspace is not configured for.
+  Re-record it:   roksbnkctl -w prod registry replicate   (needs the FAR source)
+  Already filled: roksbnkctl -w prod registry adopt       (no source access needed)
+</code></pre>
+<p>The same check gates the node CA-trust install, which would otherwise push the
+old mirror’s CA onto every worker. When the configured mirror cannot be resolved
+from config at all — an unset <code>generic_host</code>, an ICR region with no known
+registry host — the record is left alone: knowing less than the record is not
+grounds for discarding it.</p>
 <p>The target’s own pull credential is wired in for you:</p>
 <ul>
 <li>

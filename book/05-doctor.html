@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6f6febb3.js";
+            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-b51fc22b.js"></script>
@@ -191,6 +191,7 @@
 ✓  ibmcloud          /usr/local/bin/ibmcloud (ibmcloud 2.43.0 ...)                            (optional; `roksbnkctl ibmcloud` passthrough)
 ✓  kubeconfig        /home/jgruber/.kube/config                                               (needed for cluster-side ops)
 ✓  workspace         default                                                                  (per-environment config + state)
+✓  workspace permissions  owner-only                                                          (credentials in the workspace are protected by file mode alone)
 ✓  ibmcloud api key  resolved                                                                 (auth for terraform + IBM SDK calls)
 ✓  ibm cloud auth    OK (account: 1a2b3c..., user: you@example.com)                           (verifies API key works against IBM IAM)
 </code></pre>
@@ -253,6 +254,21 @@ choco install kubernetes-helm
 <li><code>✗ no config context</code> — the global config can’t be loaded at all.</li>
 </ul>
 <p>The one-off <code>-w / --workspace</code> flag overrides which workspace <code>doctor</code> reports against. See <a href="./06-workspaces.html">Chapter 6 — Workspaces</a>.</p>
+<h3 id="workspace-permissions"><a class="header" href="#workspace-permissions"><code>workspace permissions</code></a></h3>
+<p>Reports whether the workspace tree is owner-only, and tightens it if not.</p>
+<p><code>config.yaml</code> can hold <code>ibmcloud.api_key_b64</code> and <code>registry.generic_password_b64</code>; <code>state/terraform.tfstate</code> holds whatever those resolve to. All of it is base64 at most, which is obfuscation and not encryption — the file mode is the only protection, so <code>config.yaml</code> is <code>0600</code> and the directories are <code>0700</code>.</p>
+<p>The check is <strong>read-only</strong>. Loading a workspace already tightens what it can, so anything still loose by the time <code>doctor</code> looks is something the repair could <em>not</em> fix — which is exactly what is worth reporting.</p>
+<ul>
+<li><code>✓ owner-only</code> — nothing to do.</li>
+<li><code>✗ &lt;path&gt; readable by other users and could not be tightened (N path(s))</code> — the only case that needs your hands. A read-only mount, or a filesystem with no POSIX modes (a WSL DrvFs mount without metadata, an SMB share). Move the workspace onto a filesystem that can hold <code>0600</code>, or use the keychain or env-var credential paths so nothing sensitive lands in the file at all.</li>
+</ul>
+<p>The row is <strong>absent on Windows</strong>: Go’s <code>Chmod</code> there only toggles the read-only bit, so there is no owner-only mode to assert and a permanent unactionable warning would be worse than no row.</p>
+<p>The scope is the workspace directory and its immediate children: <code>config.yaml</code>, <code>registry-mirror.json</code>, <code>cluster-outputs.json</code>, <code>ssh/</code>, and every <code>state-*</code> tree. Children are enumerated rather than matched against a list of known names, so a state tree added by a future phase is covered the day it appears. Owner-only on a state directory makes everything inside it unreachable regardless of those files’ own modes, which is why the check does not walk deeper.</p>
+<p>The <strong>repair</strong> happens on load, not here, and announces itself once:</p>
+<pre><code>⚠ workspace "prod" was readable by other users on this host; tightened 3 path(s) to owner-only.
+  config.yaml can hold your IBM Cloud API key and registry password. If this host is shared, rotate them.
+</code></pre>
+<p>Workspaces written by a release before v1.50.0 are <code>0644</code>/<code>0755</code> on disk and will produce that line the first time they are read. <strong>The exposure that already happened is not undone</strong> — on a shared host, rotate the API key.</p>
 <h3 id="ibmcloud-api-key"><a class="header" href="#ibmcloud-api-key"><code>ibmcloud api key</code></a></h3>
 <p>Resolves the API key via the chain documented in <a href="./14-credentials-resolver.html">Chapter 14 — Credentials</a>: env var → OS keychain → workspace config (base64) → TTY prompt.</p>
 <p>Pass condition: the chain produces a non-empty key. The key value is <strong>never</strong> printed — only the source (“resolved”).</p>
