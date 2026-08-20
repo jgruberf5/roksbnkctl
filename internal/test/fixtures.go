@@ -196,7 +196,7 @@ func renderHTTPRoute(name, ns, gateway, section, svc string, port int) string {
 	if section != "" {
 		sec = fmt.Sprintf("\n    sectionName: %s", section)
 	}
-	return fmt.Sprintf(`apiVersion: gateway.networking.k8s.io/v1
+	return fmt.Sprintf(`apiVersion: %[8]s
 kind: HTTPRoute
 metadata:
   name: %[1]s
@@ -210,7 +210,7 @@ spec:
   - backendRefs:
     - name: %[5]s
       port: %[6]d
-`, name, ns, gateway, sec, svc, port, labelsBlock("  "))
+`, name, ns, gateway, sec, svc, port, labelsBlock("  "), HTTPRouteKind.APIVersion())
 }
 
 // renderL4Route emits BNK's L4Route, not a Gateway API TCPRoute.
@@ -229,7 +229,7 @@ func renderL4Route(name, ns, gateway, section, svc string, port int) string {
 	if section != "" {
 		sec = fmt.Sprintf("\n    sectionName: %s", section)
 	}
-	return fmt.Sprintf(`apiVersion: gateway.k8s.f5net.com/v1
+	return fmt.Sprintf(`apiVersion: %[8]s
 kind: L4Route
 metadata:
   name: %[1]s
@@ -244,7 +244,7 @@ spec:
   - backendRefs:
     - name: %[5]s
       port: %[6]d
-`, name, ns, gateway, sec, svc, port, labelsBlock("  "))
+`, name, ns, gateway, sec, svc, port, labelsBlock("  "), L4RouteKind.APIVersion())
 }
 
 func renderTLSSecret(name, ns string, certPEM, keyPEM []byte) string {

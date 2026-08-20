@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"k8s.io/cli-runtime/pkg/genericiooptions"
@@ -116,8 +117,12 @@ func teardownMatrixFixtures(spec *test.MatrixSpec) {
 	if ns == "" {
 		ns = "default"
 	}
+	// The route CRDs come from test.FixtureRouteCRDs, not a literal. This list
+	// named a route CRD BNK never installs (#99) long after the fixture that
+	// created it was corrected, because the two were written apart and nothing
+	// tied them together. Deriving both from one declaration is what ties them.
 	del := &k8s.DeleteOptions{
-		Args:          []string{"deployments,services,secrets,httproutes.gateway.networking.k8s.io,tcproutes.gateway.networking.k8s.io"},
+		Args:          []string{strings.Join(append([]string{"deployments", "services", "secrets"}, test.FixtureRouteCRDs()...), ",")},
 		Namespace:     ns,
 		LabelSelector: test.FixtureLabelKey + "=" + test.FixtureLabelValue,
 		IOStreams: genericiooptions.IOStreams{
