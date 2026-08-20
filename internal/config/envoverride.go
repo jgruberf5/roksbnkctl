@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -49,6 +50,8 @@ import (
 //	ROKSBNKCTL_CLIENT_VPC_CREATE    → resources.client_vpc.create (bool)
 //	ROKSBNKCTL_CLIENT_VPC_NAME      → resources.client_vpc.existing (adopt a client VPC)
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
+//	ROKSBNKCTL_TESTING_VPC_NAME     → resources.testing_client_vpc_name (name the created testing client VPC)
+//	ROKSBNKCTL_TRANSIT_GATEWAY_NAME → resources.transit_gateway.existing (create:false — adopt a shared TGW by name or id)
 //	ROKSBNKCTL_BNKFORGE_CA_B64      → bnkforge.ca_b64 (PEM CA pinning the Forge server)
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
@@ -60,6 +63,11 @@ import (
 //	ROKSBNKCTL_GTM_URL              → bnk.gtm.url (BIG-IP DNS for GSLB; #51)
 //	ROKSBNKCTL_GTM_USERNAME         → bnk.gtm.username
 //	ROKSBNKCTL_GTM_PASSWORD         → bnk.gtm.password_b64 (raw, base64-encoded)
+//	ROKSBNKCTL_BIGIP_URL            → bnk.cis.bigip_url (the BNK CIS controller's BIG-IP target)
+//	ROKSBNKCTL_BIGIP_USERNAME       → bnk.cis.bigip_username
+//	ROKSBNKCTL_BIGIP_PASSWORD       → bnk.cis.bigip_password_b64 (raw, base64-encoded)
+//	ROKSBNKCTL_REACHABILITY_RETRY_SECONDS → bnk.preflight.reachability_retry_seconds (0 = one-shot)
+//	ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS → bnk.preflight.reachability_timeout_seconds
 //	ROKSBNKCTL_LICENSE_MODE         → bnk.license_mode (connected|disconnected|f5licenseproxy)
 //	ROKSBNKCTL_FLO_NAMESPACE        → bnk.flo_namespace (set both to one value for a
 //	ROKSBNKCTL_FLO_UTILS_NAMESPACE  → bnk.flo_utils_namespace   single shared namespace)
@@ -99,36 +107,26 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "ibmcloud.api_key_b64 (IBMCLOUD_API_KEY)")
 	}
 
-	if v := envValue("ROKSBNKCTL_PREFIX"); v != "" {
-		ws.Prefix = v
-		applied = append(applied, "prefix (ROKSBNKCTL_PREFIX)")
-	}
-	if v := envValue("ROKSBNKCTL_REGION"); v != "" {
-		ws.IBMCloud.Region = v
-		applied = append(applied, "ibmcloud.region (ROKSBNKCTL_REGION)")
-	}
-	if v := envValue("ROKSBNKCTL_RESOURCE_GROUP"); v != "" {
-		ws.IBMCloud.ResourceGroup = v
-		applied = append(applied, "ibmcloud.resource_group (ROKSBNKCTL_RESOURCE_GROUP)")
+	// The uniform overrides: read one env var, assign one field. Driven from a
+	// table so each variable's NAME is written once — the read, the assignment
+	// and the "what was applied" report all derive from the same row, and the
+	// three can no longer disagree.
+	for _, o := range stringOverrides {
+		if v := envValue(o.env); v != "" {
+			o.set(ws, v)
+			applied = append(applied, o.field+" ("+o.env+")")
+		}
 	}
 
 	// Cluster identity — the fields a non-interactive (`--non-interactive`)
 	// init needs that the seed/interview would otherwise supply. Lets an
 	// argv+env runner (e.g. a CI / BNK Forge container step) seed config.yaml
 	// from env alone.
-	if v := envValue("ROKSBNKCTL_CLUSTER_NAME"); v != "" {
-		ws.Cluster.Name = v
-		applied = append(applied, "cluster.name (ROKSBNKCTL_CLUSTER_NAME)")
-	}
 	if v := envValue("ROKSBNKCTL_CLUSTER_CREATE"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			ws.Cluster.Create = b
 			applied = append(applied, "cluster.create (ROKSBNKCTL_CLUSTER_CREATE)")
 		}
-	}
-	if v := envValue("ROKSBNKCTL_OPENSHIFT_VERSION"); v != "" {
-		ws.Cluster.OpenShiftVersion = v
-		applied = append(applied, "cluster.openshift_version (ROKSBNKCTL_OPENSHIFT_VERSION)")
 	}
 	if v := envValue("ROKSBNKCTL_WORKERS_PER_ZONE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -147,25 +145,6 @@ func OverrideFromEnv(ws *Workspace) []string {
 			ws.Cluster.PublicGateway = &b
 			applied = append(applied, "cluster.public_gateway (ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY)")
 		}
-	}
-
-	// The block the cluster VPC's per-zone prefixes come from. Without it every
-	// roksbnkctl-created VPC in a region gets the SAME prefixes, so two clusters
-	// cannot share a Transit Gateway — the norm for disconnected installs, which
-	// must reach their mirror over one. An env-only runner had no way to say so.
-	if v := envValue("ROKSBNKCTL_CLUSTER_VPC_CIDR"); v != "" {
-		ws.Cluster.VPCCIDR = v
-		applied = append(applied, "cluster.vpc_cidr (ROKSBNKCTL_CLUSTER_VPC_CIDR)")
-	}
-
-	// How the worker nodes are attached. Present for the same reason vpc_cidr is:
-	// the CI runners drive a whole deployment from the environment and never
-	// write a config.yaml, so without this there is no way for them to ask for a
-	// multi-nic cluster at all. An invalid value is caught by `cluster up`, which
-	// is where the value has to be right.
-	if v := envValue("ROKSBNKCTL_CLUSTER_NETWORK_MODE"); v != "" {
-		ws.Cluster.NetworkMode = v
-		applied = append(applied, "cluster.network_mode (ROKSBNKCTL_CLUSTER_NETWORK_MODE)")
 	}
 
 	// The CNE controller's Trusted Profile. Present for the same reason the other
@@ -216,34 +195,8 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
-	// The FLO namespaces. Both are settable together to ONE value, which
-	// collapses the two namespaces into one — verified working against BNK 2.3,
-	// where FLO tolerates sharedComponentNamespace equalling its own namespace
-	// (#66).
-	//
-	// Without these the capability shipped in v1.44.0 was unreachable from any
-	// env-driven runner: `init --non-interactive` builds config.yaml from the
-	// environment alone, so a field with no override cannot be set, and every
-	// BNK Forge module configures the tool exactly that way. Same gap as #64.
-	if v := envValue("ROKSBNKCTL_FLO_NAMESPACE"); v != "" {
-		ws.BNK.FLONamespace = v
-		applied = append(applied, "bnk.flo_namespace (ROKSBNKCTL_FLO_NAMESPACE)")
-	}
-	if v := envValue("ROKSBNKCTL_FLO_UTILS_NAMESPACE"); v != "" {
-		ws.BNK.FLOUtilsNamespace = v
-		applied = append(applied, "bnk.flo_utils_namespace (ROKSBNKCTL_FLO_UTILS_NAMESPACE)")
-	}
-
 	// GTM / BIG-IP DNS connection for GSLB (#51). Same shape as the CIS BIG-IP
 	// credentials: the password arrives RAW and is stored base64.
-	if v := envValue("ROKSBNKCTL_GTM_URL"); v != "" {
-		gtmCfg(ws).URL = v
-		applied = append(applied, "bnk.gtm.url (ROKSBNKCTL_GTM_URL)")
-	}
-	if v := envValue("ROKSBNKCTL_GTM_USERNAME"); v != "" {
-		gtmCfg(ws).Username = v
-		applied = append(applied, "bnk.gtm.username (ROKSBNKCTL_GTM_USERNAME)")
-	}
 	if v := envValue("ROKSBNKCTL_GTM_PASSWORD"); v != "" {
 		gtmCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "bnk.gtm.password_b64 (ROKSBNKCTL_GTM_PASSWORD)")
@@ -361,48 +314,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
-	// The registry mirror. A CI job needs to name its registry without a config
-	// file: these four plus ROKSBNKCTL_GENERIC_PASSWORD are the whole surface for
-	// `registry replicate --target generic` and the install that pulls back out of
-	// it. Setting only the password (the pre-v1.19 surface) meant a pipeline still
-	// had to shell out to four `registry target` subcommands to say WHERE.
-	if v := envValue("ROKSBNKCTL_REGISTRY_TARGET"); v != "" {
-		registryCfg(ws).Target = v
-		applied = append(applied, "registry.target (ROKSBNKCTL_REGISTRY_TARGET)")
-	}
-	if v := envValue("ROKSBNKCTL_GENERIC_HOST"); v != "" {
-		registryCfg(ws).GenericHost = v
-		applied = append(applied, "registry.generic_host (ROKSBNKCTL_GENERIC_HOST)")
-	}
-	if v := envValue("ROKSBNKCTL_GENERIC_REPO_PREFIX"); v != "" {
-		registryCfg(ws).GenericRepoPrefix = v
-		applied = append(applied, "registry.generic_repo_prefix (ROKSBNKCTL_GENERIC_REPO_PREFIX)")
-	}
-	if v := envValue("ROKSBNKCTL_GENERIC_USERNAME"); v != "" {
-		registryCfg(ws).GenericUsername = v
-		applied = append(applied, "registry.generic_username (ROKSBNKCTL_GENERIC_USERNAME)")
-	}
 	// Generic OCI registry password (e.g. an Artifactory access token) — raw in
-	// the env, base64-encoded into the config like the API key.
+	// the env, base64-encoded into the config like the API key. The rest of the
+	// registry surface is uniform and lives in stringOverrides.
 	if v := envValue("ROKSBNKCTL_GENERIC_PASSWORD"); v != "" {
 		registryCfg(ws).GenericPasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
 		applied = append(applied, "registry.generic_password_b64 (ROKSBNKCTL_GENERIC_PASSWORD)")
 	}
-	// The mirror's CA and/or its fingerprint. Without these an env-only runner
-	// facing a SELF-SIGNED mirror has no way to supply trust out of band, and
-	// `registry replicate` refuses to adopt a captured CA (it would be installed
-	// into every node's trust store). _CA_B64 is the PEM chain, already base64 and
-	// passed verbatim — a certificate is public data, encoded only so it survives
-	// as a single env value.
-	if v := envValue("ROKSBNKCTL_GENERIC_CA_B64"); v != "" {
-		registryCfg(ws).GenericCAB64 = v
-		applied = append(applied, "registry.generic_ca_b64 (ROKSBNKCTL_GENERIC_CA_B64)")
-	}
-	if v := envValue("ROKSBNKCTL_GENERIC_CA_SHA256"); v != "" {
-		registryCfg(ws).GenericCASHA256 = v
-		applied = append(applied, "registry.generic_ca_sha256 (ROKSBNKCTL_GENERIC_CA_SHA256)")
-	}
-
 	// License mode (optional; connected|disconnected|f5licenseproxy). f5licenseproxy
 	// also seeds an flp block so the FLP phase deploys into a namespace, overridable
 	// by ROKSBNKCTL_FLP_NAMESPACE. Empty → the JWT/connected default is unchanged.
@@ -421,20 +339,6 @@ func OverrideFromEnv(ws *Workspace) []string {
 		applied = append(applied, "bnk.flp.namespace (ROKSBNKCTL_FLP_NAMESPACE)")
 	}
 
-	// Gateway-phase identity. GatewayClass is CLUSTER-scoped, so two BNK installs
-	// sharing a cluster need distinct class names — which a CI matrix has to set
-	// per job, not per committed config.yaml. The controller name is the value
-	// the CNE controller matches itself against; leaving it empty derives it from
-	// the FLO namespace, which is right for every deployment that installs its
-	// own controller.
-	if v := envValue("ROKSBNKCTL_GATEWAY_CLASS_NAME"); v != "" {
-		ws.Gateway.ClassName = v
-		applied = append(applied, "gateway.class_name (ROKSBNKCTL_GATEWAY_CLASS_NAME)")
-	}
-	if v := envValue("ROKSBNKCTL_GATEWAY_CONTROLLER_NAME"); v != "" {
-		ws.Gateway.ControllerName = v
-		applied = append(applied, "gateway.controller_name (ROKSBNKCTL_GATEWAY_CONTROLLER_NAME)")
-	}
 	// Comma-separated, like the other list-valued overrides (TRUSTED_PROFILE_ROLES,
 	// the *_CIDRS set below), so a caller does not have to learn a second
 	// convention. Validation is terraform's: which kinds are valid depends on
@@ -453,25 +357,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
-	// Security-group source CIDRs. Comma-separated like the overrides above.
+	// Security-group source CIDRs (sgCIDROverrides). Comma-separated like the
+	// overrides above.
 	// Each leaves the terraform module's own default standing when unset — the
 	// defaults differ per plane and that knowledge lives there. Values are
 	// validated by the terraform variables at plan time (can(cidrhost(...))),
 	// before anything is provisioned.
-	for _, o := range []struct {
-		env   string
-		field string
-		set   func([]string)
-	}{
-		{"ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS", "resources.testing_jumphost_allowed_cidrs",
-			func(v []string) { ws.Resources.TestingJumphostAllowedCIDRs = v }},
-		{"ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS", "resources.testing_client_vpc_inbound_cidrs",
-			func(v []string) { ws.Resources.TestingClientVPCInboundCIDRs = v }},
-		{"ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS", "resources.cluster_http_allowed_cidrs",
-			func(v []string) { ws.Resources.ClusterHTTPAllowedCIDRs = v }},
-		{"ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS", "resources.cluster_vpc_default_sg_inbound_cidrs",
-			func(v []string) { ws.Resources.ClusterVPCDefaultSGInboundCIDRs = v }},
-	} {
+	for _, o := range sgCIDROverrides {
 		v := envValue(o.env)
 		if v == "" {
 			continue
@@ -483,25 +375,8 @@ func OverrideFromEnv(ws *Workspace) []string {
 		if ws.Resources == nil {
 			ws.Resources = DefaultResources()
 		}
-		o.set(cidrs)
+		o.set(ws, cidrs)
 		applied = append(applied, o.field+" ("+o.env+")")
-	}
-
-	// The foreign-proxy handoff (the "shared licensing cluster" topology). These
-	// two are what one CI job hands the NEXT one: the job that owns the proxy
-	// emits `flp output flp_external_endpoint` + `flp_root_ca`, and the job that
-	// installs BNK receives them as ordinary pipeline variables. Without an env
-	// surface a pipeline would have to template a config.yaml just to pass two
-	// values between jobs.
-	if v := envValue("ROKSBNKCTL_FLP_EXTERNAL_URL"); v != "" {
-		flpExternal(ws).URL = v
-		applied = append(applied, "bnk.flp.external.url (ROKSBNKCTL_FLP_EXTERNAL_URL)")
-	}
-	// Already base64 (that is how `flp output flp_root_ca` emits it), so it is
-	// stored verbatim — unlike the raw-secret vars above, which get encoded here.
-	if v := envValue("ROKSBNKCTL_FLP_ROOT_CA_B64"); v != "" {
-		flpExternal(ws).RootCAB64 = v
-		applied = append(applied, "bnk.flp.external.root_ca_b64 (ROKSBNKCTL_FLP_ROOT_CA_B64)")
 	}
 
 	// The reachability gate's tunables (issue #57). They belong on the env surface for
@@ -614,6 +489,39 @@ func overrideCISFromEnv(ws *Workspace) []string {
 // … ROKSBNKCTL_ZONE3_*). IBM multi-zone regions have up to 3 zones.
 const maxNetworkZones = 3
 
+// zoneOverridePrefix is the literal half of the computed per-zone variable
+// names (ROKSBNKCTL_ZONE1_EXT_VLAN_CIDR, …). Held apart from the loop so
+// zoneOverrideNames below enumerates exactly what overrideNetworkZonesFromEnv
+// reads — the two derive from this one declaration and zoneFields.
+const zoneOverridePrefix = "ROKSBNKCTL_ZONE"
+
+// zoneFields maps each per-zone variable suffix to the BNKZoneCfg field it
+// fills. The reader and the surface both range over this — a suffix added here
+// is read AND reported without a second list to remember.
+var zoneFields = []struct {
+	suffix string
+	set    func(*BNKZoneCfg, string)
+}{
+	{"EXT_VLAN_CIDR", func(z *BNKZoneCfg, v string) { z.ExtVLANCIDR = v }},
+	{"INT_VLAN_CIDR", func(z *BNKZoneCfg, v string) { z.IntVLANCIDR = v }},
+	{"INT_SNAT_CIDR", func(z *BNKZoneCfg, v string) { z.IntSNATCIDR = v }},
+	{"INT_VIP_CIDR", func(z *BNKZoneCfg, v string) { z.IntVIPCIDR = v }},
+	{"EXTERNAL_SELFIP", func(z *BNKZoneCfg, v string) { z.ExternalSelfIP = v }},
+	{"INTERNAL_SELFIP", func(z *BNKZoneCfg, v string) { z.InternalSelfIP = v }},
+}
+
+// zoneOverrideNames enumerates the whole computed family
+// (maxNetworkZones × zoneFields) for SupportedOverrideNames.
+func zoneOverrideNames() []string {
+	out := make([]string, 0, maxNetworkZones*len(zoneFields))
+	for i := 1; i <= maxNetworkZones; i++ {
+		for _, f := range zoneFields {
+			out = append(out, zoneOverridePrefix+strconv.Itoa(i)+"_"+f.suffix)
+		}
+	}
+	return out
+}
+
 // overrideNetworkZonesFromEnv assembles bnk.network.zones from the fixed indexed
 // env vars. Each zone needs all six fields set (a partial zone is skipped so the
 // rendered cneinstance_network_zones object is never half-populated). When any
@@ -621,17 +529,18 @@ const maxNetworkZones = 3
 func overrideNetworkZonesFromEnv(ws *Workspace) []string {
 	var zones []BNKZoneCfg
 	for i := 1; i <= maxNetworkZones; i++ {
-		p := "ROKSBNKCTL_ZONE" + strconv.Itoa(i) + "_"
-		z := BNKZoneCfg{
-			ExtVLANCIDR:    envValue(p + "EXT_VLAN_CIDR"),
-			IntVLANCIDR:    envValue(p + "INT_VLAN_CIDR"),
-			IntSNATCIDR:    envValue(p + "INT_SNAT_CIDR"),
-			IntVIPCIDR:     envValue(p + "INT_VIP_CIDR"),
-			ExternalSelfIP: envValue(p + "EXTERNAL_SELFIP"),
-			InternalSelfIP: envValue(p + "INTERNAL_SELFIP"),
+		p := zoneOverridePrefix + strconv.Itoa(i) + "_"
+		var z BNKZoneCfg
+		complete := true
+		for _, f := range zoneFields {
+			v := envValue(p + f.suffix)
+			if v == "" {
+				complete = false
+				break
+			}
+			f.set(&z, v)
 		}
-		if z.ExtVLANCIDR == "" || z.IntVLANCIDR == "" || z.IntSNATCIDR == "" ||
-			z.IntVIPCIDR == "" || z.ExternalSelfIP == "" || z.InternalSelfIP == "" {
+		if !complete {
 			continue // skip a partially-specified zone
 		}
 		zones = append(zones, z)
@@ -689,14 +598,7 @@ func overrideVLANPrefixLenFromEnv(ws *Workspace) []string {
 // against the zone CIDRs.
 func overrideVLANPrefixLenPerVLANFromEnv(ws *Workspace) []string {
 	var applied []string
-	for _, f := range []struct {
-		env   string
-		label string
-		set   func(*BNKNetworkCfg, *int)
-	}{
-		{"ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL", "bnk.network.vlan_prefixlen_external", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenExternal = n }},
-		{"ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL", "bnk.network.vlan_prefixlen_internal", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenInternal = n }},
-	} {
+	for _, f := range vlanPerVLANOverrides {
 		v := envValue(f.env)
 		if v == "" {
 			continue
@@ -718,4 +620,196 @@ func overrideVLANPrefixLenPerVLANFromEnv(ws *Workspace) []string {
 // unset or whitespace-only.
 func envValue(name string) string {
 	return strings.TrimSpace(os.Getenv(name))
+}
+
+// stringOverride is one uniform env override: read o.env, assign it verbatim to
+// one config field.
+//
+// The table exists for two reasons. It writes each variable's name ONCE — the
+// read, the assignment and the report all derive from the same row, where
+// before each was spelled separately and could drift. And it makes the surface
+// ENUMERABLE: the drift guards that keep .env.example and the docs honest used
+// to discover overrides by regex-scraping this file, which meant they silently
+// covered less whenever the code's shape changed.
+//
+// Only the genuinely uniform ones live here. An override that decodes base64,
+// parses an int, splits a list, or validates its input keeps its own block
+// below — forcing those through a table would trade one kind of repetition for
+// a worse kind of indirection.
+type stringOverride struct {
+	env   string
+	field string // config path, for the applied-overrides report
+	set   func(ws *Workspace, v string)
+}
+
+var stringOverrides = []stringOverride{
+	{"ROKSBNKCTL_PREFIX", "prefix", func(ws *Workspace, v string) { ws.Prefix = v }},
+	{"ROKSBNKCTL_REGION", "ibmcloud.region", func(ws *Workspace, v string) { ws.IBMCloud.Region = v }},
+	{"ROKSBNKCTL_RESOURCE_GROUP", "ibmcloud.resource_group", func(ws *Workspace, v string) { ws.IBMCloud.ResourceGroup = v }},
+	{"ROKSBNKCTL_CLUSTER_NAME", "cluster.name", func(ws *Workspace, v string) { ws.Cluster.Name = v }},
+	{"ROKSBNKCTL_OPENSHIFT_VERSION", "cluster.openshift_version", func(ws *Workspace, v string) { ws.Cluster.OpenShiftVersion = v }},
+	// vpc_cidr is the block the cluster VPC's per-zone prefixes come from.
+	// Without it every roksbnkctl-created VPC in a region gets the SAME
+	// prefixes, so two clusters cannot share a Transit Gateway — the norm for
+	// disconnected installs, which must reach their mirror over one.
+	{"ROKSBNKCTL_CLUSTER_VPC_CIDR", "cluster.vpc_cidr", func(ws *Workspace, v string) { ws.Cluster.VPCCIDR = v }},
+	// How the worker nodes are attached. An invalid value is caught by
+	// `cluster up`, which is where the value has to be right.
+	{"ROKSBNKCTL_CLUSTER_NETWORK_MODE", "cluster.network_mode", func(ws *Workspace, v string) { ws.Cluster.NetworkMode = v }},
+	// The FLO namespaces. Both are settable together to ONE value, which
+	// collapses the two namespaces into one — verified working against BNK 2.3,
+	// where FLO tolerates sharedComponentNamespace equalling its own namespace
+	// (#66).
+	{"ROKSBNKCTL_FLO_NAMESPACE", "bnk.flo_namespace", func(ws *Workspace, v string) { ws.BNK.FLONamespace = v }},
+	{"ROKSBNKCTL_FLO_UTILS_NAMESPACE", "bnk.flo_utils_namespace", func(ws *Workspace, v string) { ws.BNK.FLOUtilsNamespace = v }},
+	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
+	{"ROKSBNKCTL_GTM_USERNAME", "bnk.gtm.username", func(ws *Workspace, v string) { gtmCfg(ws).Username = v }},
+	// The registry mirror. A CI job needs to name its registry without a
+	// config file: these four plus the bespoke ROKSBNKCTL_GENERIC_PASSWORD are
+	// the whole surface for `registry replicate --target generic` and the
+	// install that pulls back out of it.
+	{"ROKSBNKCTL_REGISTRY_TARGET", "registry.target", func(ws *Workspace, v string) { registryCfg(ws).Target = v }},
+	{"ROKSBNKCTL_GENERIC_HOST", "registry.generic_host", func(ws *Workspace, v string) { registryCfg(ws).GenericHost = v }},
+	{"ROKSBNKCTL_GENERIC_REPO_PREFIX", "registry.generic_repo_prefix", func(ws *Workspace, v string) { registryCfg(ws).GenericRepoPrefix = v }},
+	{"ROKSBNKCTL_GENERIC_USERNAME", "registry.generic_username", func(ws *Workspace, v string) { registryCfg(ws).GenericUsername = v }},
+	// The mirror's CA and/or its fingerprint — how an env-only runner facing a
+	// SELF-SIGNED mirror supplies trust out of band. _CA_B64 is the PEM chain,
+	// already base64 and stored verbatim: a certificate is public data, encoded
+	// only so it survives as a single env value.
+	{"ROKSBNKCTL_GENERIC_CA_B64", "registry.generic_ca_b64", func(ws *Workspace, v string) { registryCfg(ws).GenericCAB64 = v }},
+	{"ROKSBNKCTL_GENERIC_CA_SHA256", "registry.generic_ca_sha256", func(ws *Workspace, v string) { registryCfg(ws).GenericCASHA256 = v }},
+	// Gateway-phase identity. GatewayClass is CLUSTER-scoped, so two BNK
+	// installs sharing a cluster need distinct class names — which a CI matrix
+	// sets per job, not per committed config.yaml. The controller name is what
+	// the CNE controller matches itself against; empty derives it from the FLO
+	// namespace, right for every deployment that installs its own controller.
+	{"ROKSBNKCTL_GATEWAY_CLASS_NAME", "gateway.class_name", func(ws *Workspace, v string) { ws.Gateway.ClassName = v }},
+	{"ROKSBNKCTL_GATEWAY_CONTROLLER_NAME", "gateway.controller_name", func(ws *Workspace, v string) { ws.Gateway.ControllerName = v }},
+	// The foreign-proxy handoff (the "shared licensing cluster" topology):
+	// what one CI job hands the NEXT one. The job that owns the proxy emits
+	// `flp output flp_external_endpoint` + `flp_root_ca`; the job installing
+	// BNK receives them as ordinary pipeline variables. The CA is already
+	// base64 (that is how `flp output` emits it), so it is stored verbatim —
+	// unlike the raw-secret vars, which get encoded on the way in.
+	{"ROKSBNKCTL_FLP_EXTERNAL_URL", "bnk.flp.external.url", func(ws *Workspace, v string) { flpExternal(ws).URL = v }},
+	{"ROKSBNKCTL_FLP_ROOT_CA_B64", "bnk.flp.external.root_ca_b64", func(ws *Workspace, v string) { flpExternal(ws).RootCAB64 = v }},
+}
+
+// sgCIDROverrides are the security-group source-CIDR lists — uniform except
+// for the comma-list split, so they keep their own table. Package-level so
+// SupportedOverrideNames can enumerate them: an earlier revision declared this
+// table inline in OverrideFromEnv, and the four names silently dropped out of
+// the reported surface.
+var sgCIDROverrides = []struct {
+	env   string
+	field string
+	set   func(*Workspace, []string)
+}{
+	{"ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS", "resources.testing_jumphost_allowed_cidrs",
+		func(ws *Workspace, v []string) { ws.Resources.TestingJumphostAllowedCIDRs = v }},
+	{"ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS", "resources.testing_client_vpc_inbound_cidrs",
+		func(ws *Workspace, v []string) { ws.Resources.TestingClientVPCInboundCIDRs = v }},
+	{"ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS", "resources.cluster_http_allowed_cidrs",
+		func(ws *Workspace, v []string) { ws.Resources.ClusterHTTPAllowedCIDRs = v }},
+	{"ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS", "resources.cluster_vpc_default_sg_inbound_cidrs",
+		func(ws *Workspace, v []string) { ws.Resources.ClusterVPCDefaultSGInboundCIDRs = v }},
+}
+
+// vlanPerVLANOverrides are the per-VLAN TMM prefix-length overrides — uniform
+// except for the bounded-int parse. Package-level for the same reason as
+// sgCIDROverrides.
+var vlanPerVLANOverrides = []struct {
+	env   string
+	label string
+	set   func(*BNKNetworkCfg, *int)
+}{
+	{"ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL", "bnk.network.vlan_prefixlen_external", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenExternal = n }},
+	{"ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL", "bnk.network.vlan_prefixlen_internal", func(c *BNKNetworkCfg, n *int) { c.VLANPrefixLenInternal = n }},
+}
+
+// bespokeOverrideNames are the ROKSBNKCTL_* variables handled by their own
+// block rather than by one of the tables (stringOverrides, sgCIDROverrides,
+// vlanPerVLANOverrides, and envoverride_flp.go's flpVSIStringOverrides /
+// cosOverrides), because each does something beyond what its table's shape
+// expresses — base64-encodes, parses a bool or an int, or validates.
+//
+// Declared so SupportedOverrideNames can report the WHOLE surface. A guard test
+// checks the surface bidirectionally against every ROKSBNKCTL_* literal the
+// code carries, so an override added in any shape — bespoke block, table row,
+// or the computed zone family — fails rather than quietly leaving the docs and
+// the demo allowlist behind.
+var bespokeOverrideNames = []string{
+	"IBMCLOUD_API_KEY",
+	"ROKSBNKCTL_API_KEY_B64",
+	"ROKSBNKCTL_BIGIP_PASSWORD",
+	"ROKSBNKCTL_BIGIP_URL",
+	"ROKSBNKCTL_BIGIP_USERNAME",
+	"ROKSBNKCTL_BNKFORGE_CA_B64",
+	"ROKSBNKCTL_CLIENT_VPC_CREATE",
+	"ROKSBNKCTL_CLIENT_VPC_NAME",
+	"ROKSBNKCTL_CLUSTER_CREATE",
+	"ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY",
+	"ROKSBNKCTL_CLUSTER_VPC_ID",
+	"ROKSBNKCTL_EXISTING_SUBNET_IDS",
+	"ROKSBNKCTL_FAR_AUTH_FILE",
+	"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE",
+	"ROKSBNKCTL_FLP_MODE",
+	"ROKSBNKCTL_FLP_NAMESPACE",
+	"ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB",
+	"ROKSBNKCTL_FLP_VSI_CREATE_VPC",
+	"ROKSBNKCTL_FLP_VSI_FLOATING_IP",
+	"ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS",
+	"ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS",
+	"ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT",
+	"ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES",
+	"ROKSBNKCTL_GENERIC_PASSWORD",
+	"ROKSBNKCTL_GTM_PASSWORD",
+	"ROKSBNKCTL_LICENSE_MODE",
+	"ROKSBNKCTL_MANIFEST_VERSION",
+	"ROKSBNKCTL_REACHABILITY_RETRY_SECONDS",
+	"ROKSBNKCTL_REACHABILITY_TIMEOUT_SECONDS",
+	"ROKSBNKCTL_SUBSCRIPTION_JWT_FILE",
+	"ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE",
+	"ROKSBNKCTL_TESTING_SSH_KEY_NAME",
+	"ROKSBNKCTL_TESTING_VPC_NAME",
+	"ROKSBNKCTL_TGW_JUMPHOST_CREATE",
+	"ROKSBNKCTL_TRANSIT_GATEWAY_NAME",
+	"ROKSBNKCTL_TRUSTED_PROFILE_ROLES",
+	"ROKSBNKCTL_TRUSTED_PROFILE_SA",
+	"ROKSBNKCTL_VLAN_PREFIXLEN",
+	"ROKSBNKCTL_WORKERS_PER_ZONE",
+}
+
+// SupportedOverrideNames returns every ROKSBNKCTL_* (and IBMCLOUD_API_KEY)
+// variable OverrideFromEnv honours — the uniform tables here and in
+// envoverride_flp.go, the bespoke blocks, and the computed per-zone family,
+// enumerated.
+//
+// This is the authoritative list. It is what the .env.example parity guard and
+// the documentation guard enumerate, so a new override is covered by them the
+// moment it exists rather than whenever a scraping regex happens to match it.
+// An earlier revision summed only stringOverrides + bespokeOverrideNames and
+// silently reported 19 fewer names than the code honoured — which is why the
+// surface guard now checks this list against the source bidirectionally.
+func SupportedOverrideNames() []string {
+	var out []string
+	for _, o := range stringOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range sgCIDROverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range vlanPerVLANOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range flpVSIStringOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range cosOverrides {
+		out = append(out, o.env)
+	}
+	out = append(out, bespokeOverrideNames...)
+	out = append(out, zoneOverrideNames()...)
+	sort.Strings(out)
+	return out
 }

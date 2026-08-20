@@ -8,18 +8,13 @@ import (
 )
 
 func TestOverrideFromEnv(t *testing.T) {
-	// Isolate from the ambient environment: clear every mapped var, then set
-	// only what each sub-case exercises.
+	// Isolate from the ambient environment: clear EVERY supported override,
+	// then set only what each sub-case exercises. Ranging the authoritative
+	// list keeps this self-maintaining — the previous 16-name hand copy meant
+	// an ambient ROKSBNKCTL_GTM_URL failed "unset vars are inert" spuriously,
+	// the exact drift disease #114 removed from the production code.
 	clearAll := func(t *testing.T) {
-		for _, e := range []string{
-			"IBMCLOUD_API_KEY", "ROKSBNKCTL_API_KEY_B64", "ROKSBNKCTL_PREFIX",
-			"ROKSBNKCTL_REGION", "ROKSBNKCTL_RESOURCE_GROUP", "ROKSBNKCTL_TESTING_SSH_KEY_NAME",
-			"ROKSBNKCTL_GENERIC_PASSWORD", "ROKSBNKCTL_LICENSE_MODE", "ROKSBNKCTL_FLP_NAMESPACE",
-			"ROKSBNKCTL_REGISTRY_TARGET", "ROKSBNKCTL_GENERIC_HOST",
-			"ROKSBNKCTL_GENERIC_REPO_PREFIX", "ROKSBNKCTL_GENERIC_USERNAME",
-			"ROKSBNKCTL_FLP_EXTERNAL_URL", "ROKSBNKCTL_FLP_ROOT_CA_B64",
-			"ROKSBNKCTL_BNKFORGE_CA_B64",
-		} {
+		for _, e := range SupportedOverrideNames() {
 			t.Setenv(e, "")
 		}
 	}
