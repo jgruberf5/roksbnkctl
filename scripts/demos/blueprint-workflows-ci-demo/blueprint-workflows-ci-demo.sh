@@ -32,7 +32,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-bnk-ci}"
-RUNNER_TAG="${RUNNER_TAG:-v1.49.1}"
+RUNNER_TAG="${RUNNER_TAG:-v1.50.0}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 
 # ============================ helpers ========================================

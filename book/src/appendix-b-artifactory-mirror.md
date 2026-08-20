@@ -193,7 +193,7 @@ spec:
   serviceAccountName: bnk-runner
   arguments:
     parameters:
-      - {name: runner-image,   value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.49.1}
+      - {name: runner-image,   value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.50.0}
       - {name: bnk-version,    value: 2.3.0-3.2598.3-0.0.170}
       - {name: cos-instance,   value: bnk-supply-chain}
       - {name: cos-bucket,     value: ""}          # account-specific; no default
