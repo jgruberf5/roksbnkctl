@@ -1,9 +1,11 @@
 package test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -69,7 +71,6 @@ var scannedExts = map[string]bool{
 // kinds so they can be checked for, and this file explains why each remaining
 // mention is prose rather than a manifest. A new one has to justify itself.
 func TestNoReferenceToARouteKindBNKDoesNotInstall(t *testing.T) {
-
 	absent := absentKindRE()
 
 	var offenders []string
@@ -96,7 +97,7 @@ func TestNoReferenceToARouteKindBNKDoesNotInstall(t *testing.T) {
 			}
 			for i, line := range strings.Split(string(body), "\n") {
 				if absent.MatchString(line) {
-					offenders = append(offenders, rel+":"+itoa(i+1)+": "+strings.TrimSpace(line))
+					offenders = append(offenders, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
 				}
 			}
 			return nil
@@ -143,7 +144,7 @@ func TestFixtureTeardownCoversEveryInstalledRouteKind(t *testing.T) {
 		t.Fatalf("FixtureRouteCRDs returned %d entries for %d kinds", len(crds), len(InstalledRouteKinds))
 	}
 	for _, r := range InstalledRouteKinds {
-		if !contains(crds, r.CRD()) {
+		if !slices.Contains(crds, r.CRD()) {
 			t.Errorf("%s (%s) is created but never torn down", r.Kind, r.CRD())
 		}
 	}
@@ -176,25 +177,4 @@ func TestRenderedRoutesUseTheContractsAPIVersions(t *testing.T) {
 	if strings.Contains(l4, GatewayAPIGroup) {
 		t.Errorf("the L4 fixture references %s; BNK's L4Route is its own CRD:\n%s", GatewayAPIGroup, l4)
 	}
-}
-
-func contains(hay []string, needle string) bool {
-	for _, h := range hay {
-		if h == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
