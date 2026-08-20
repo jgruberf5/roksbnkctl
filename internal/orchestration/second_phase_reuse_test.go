@@ -117,10 +117,9 @@ func TestWriteBnkPhaseOverride_TurnsAllClusterSharedOff(t *testing.T) {
 }
 
 // TestWriteBnkPhaseOverride_SuppressesRegistryCOSAndJumphostKey is the
-// Sprint 23 regression: the 2026-05-27 live evidence
-// shows two cluster-shared resources
-// landing as MANAGED entries in the trial state on every Split-shape
-// `roksbnkctl up` —
+// Sprint 23 regression: the 2026-05-27 live evidence shows two
+// cluster-shared resources landing as MANAGED entries in the trial state
+// on every Split-shape `roksbnkctl up` —
 // `module.roks_cluster.module.cluster.ibm_resource_instance.cos_instance`
 // and `module.testing.tls_private_key.jumphost_shared_key`. The fix has
 // two halves and this test pins the override half:

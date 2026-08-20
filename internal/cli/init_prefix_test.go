@@ -1,5 +1,5 @@
 // Sprint 26 validator Issue 1 — hermetic coverage for the prefix-driven
-// `init` interview staff shipped in internal/cli/init.go
+// `init` interview staff shipped in internal/cli/init.go.
 // Additive new file; never edits any
 // pre-existing _test.go (parity discipline carried from Sprints 18–24).
 //

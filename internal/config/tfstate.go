@@ -128,7 +128,7 @@ func DetectShape(workspace string) (WorkspaceShape, error) {
 // combinatorial WorkspaceShape enum for the three-phase dispatchers
 // (Cluster / BNK / Testing). Each field is an independent boolean
 // derived purely from the per-phase state dir — no terraform / cloud
-// calls, same contract as DetectShape. See
+// calls, same contract as DetectShape.
 type Presence struct {
 	Cluster bool // state-cluster/ has a managed ibm_container_vpc_cluster (the ROKS cluster itself)
 	BNK     bool // state/ has managed BNK resources

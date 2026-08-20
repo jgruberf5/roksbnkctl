@@ -75,7 +75,7 @@ func TestClient_PerBucketRegion_FakeResolver_Issue3AC2(t *testing.T) {
 }
 
 // TestClient_PerBucketRegion_NilResolver_HomeRegionFallback pins the
-// Behaviour preservation: when no resolver is wired
+// preserved behaviour: when no resolver is wired
 // (the round-1 code path, and the production path when the operator
 // hasn't configured a real lookup), s3ForBucket falls back to the
 // home region — so workspaces where the bucket and cluster share a

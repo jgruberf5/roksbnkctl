@@ -120,8 +120,8 @@ func New(apiKey, region, instanceCRN string) (*Client, error) {
 // the test can prove the per-bucket S3 client is built against the
 // resolved region, not the workspace's home region.
 //
-// resolver may be nil; nil → home-region fallback (same shape as
-// behaviour).
+// resolver may be nil; nil → home-region fallback — the original
+// behaviour, unchanged for same-region buckets.
 func NewWithResolver(apiKey, region, instanceCRN string, resolver BucketRegionResolver) (*Client, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("api key is empty")

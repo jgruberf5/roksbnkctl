@@ -30,7 +30,7 @@ type Workspace struct {
 	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
 	Agent    *AgentCfg            `yaml:"agent,omitempty"`
 
-	// Prefix is the workspace's account-scoped resource-name base
+	// Prefix is the workspace's account-scoped resource-name base.
 	// When non-empty, the
 	// tfvars render derives every IBM Cloud resource name from it via
 	// internal/naming.Derive and emits the full name set, so two

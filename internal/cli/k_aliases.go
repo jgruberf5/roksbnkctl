@@ -20,7 +20,7 @@ package cli
 //     `apply` command runs `terraform apply` (Sprint 0/1 lifecycle
 //     surface). Adding a second `apply` would shadow that and break
 //     `roksbnkctl up` muscle memory. Users get the k8s apply via
-//     `roksbnkctl k apply` explicitly. Tracked in
+//     `roksbnkctl k apply` explicitly.
 //
 // `exec` is intentionally NOT aliased: host-side `roksbnkctl exec
 // <cmd>` already exists (Sprint 1), and shadowing it would break user

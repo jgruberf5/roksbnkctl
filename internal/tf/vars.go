@@ -72,7 +72,7 @@ func WriteTFVarsForWorkspace(path, workspaceName string, ws *config.Workspace, k
 //
 //   - ws.Prefix == "" (legacy config): the SPARSE render — only the fields
 //     the user explicitly set in config.yaml are emitted; every resource
-//     name falls through to the upstream TF module defaults. This path is
+//     name falls through to the upstream TF module defaults. This path
 //     is unchanged from before prefixes existed, and is what an un-migrated
 //     config.yaml renders.
 //   - ws.Prefix != "" (Sprint 26 prefix-driven config): the FULL render —

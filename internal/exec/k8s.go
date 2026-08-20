@@ -621,7 +621,7 @@ func buildJobSpecWithArgs(ns string, jobName, image string, cmd, args []string, 
 						// 1000680000-1000689999); pinning 65532 collides
 						// and the Job is rejected at admission with
 						// "Invalid value: 65532: must be in the ranges
-						// [...]" — see PRD 05 §"Risks" + Sprint 5 staff
+						// [...]" — see PRD 05 §"Risks".
 						// Leaving RunAsUser unset
 						// lets the SCC mutating-admission webhook pick
 						// a valid UID per namespace.

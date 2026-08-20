@@ -24,8 +24,8 @@
 //     before any RunE — no subprocess needed, no preflight
 //     involvement.
 //
-// Sub-test → acceptance-criterion map (where validator-Issue-1 AC
-// AC numbering below is the validator's; staff-Issue-1 AC is the staff review's):
+// Sub-test → acceptance-criterion map (the "validator AC" numbers below
+// are the validator's; the "staff AC" numbers are the staff review's):
 //
 //	StuckTogether_WS_RejectedWithActionableError
 //	    → validator AC1 (stuck-together rejected; stderr names
