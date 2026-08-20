@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"testing"
 )
 
@@ -33,14 +34,47 @@ func TestFromErrorResolvesTheContract(t *testing.T) {
 
 		// A deadline is a failure, not an interrupt: nobody pressed anything.
 		{"a deadline", context.DeadlineExceeded, Failure},
-		// An explicit code wins over the context inference.
-		{"a coded cancellation", Wrap(Usage, context.Canceled), Usage},
+		// Cancellation outranks the code. A coded error wrapping
+		// context.Canceled is a failure that happened BECAUSE of the Ctrl-C —
+		// a connect aborted mid-handshake gets coded ConnectFailed on its way
+		// out — and reporting 127 for a deliberate interrupt sends a CI
+		// wrapper retrying an unreachable-looking target the operator just
+		// stopped. No call site can accidentally code a cancellation into
+		// something else.
+		{"a coded cancellation", Wrap(ConnectFailed, context.Canceled), Interrupted},
+		{"a coded error whose chain carries the cancellation",
+			Newf(AuthFailed, "remote run: %w", fmt.Errorf("session: %w", context.Canceled)), Interrupted},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := FromError(tc.err); got != tc.want {
 				t.Errorf("FromError(%v) = %d, want %d", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// A signal-killed child's ExitCode() is -1, and os.Exit(-1) becomes shell
+// status 255 with no explanation. FromChildExit maps it to 128+signum (the
+// shell convention), so a SIGINT-killed child propagates Interrupted=130.
+func TestFromChildExitMapsSignalsToShellConvention(t *testing.T) {
+	run := func(t *testing.T, script string) *exec.ExitError {
+		t.Helper()
+		err := exec.Command("sh", "-c", script).Run()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("expected *exec.ExitError, got %v", err)
+		}
+		return ee
+	}
+
+	if got := FromChildExit(run(t, "exit 3")); got != 3 {
+		t.Errorf("a plain exit code must pass through: got %d, want 3", got)
+	}
+	if got := FromChildExit(run(t, "kill -INT $$")); got != Interrupted {
+		t.Errorf("a SIGINT-killed child = %d, want %d (128+SIGINT, the shell convention)", got, Interrupted)
+	}
+	if got := FromChildExit(run(t, "kill -KILL $$")); got != 137 {
+		t.Errorf("a SIGKILL-killed child = %d, want 137 (128+SIGKILL)", got)
 	}
 }
 

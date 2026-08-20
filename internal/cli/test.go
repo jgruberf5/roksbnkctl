@@ -166,8 +166,9 @@ func runTestAllCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	_ = cctx
-	all := test.RunAll(cmdContext(cmd), hosts, flagInsecureTLS)
-	return outputAll(all)
+	ctx := cmdContext(cmd)
+	all := test.RunAll(ctx, hosts, flagInsecureTLS)
+	return outputAll(ctx, all)
 }
 
 func runTestConnectivityCmd(cmd *cobra.Command, _ []string) error {
@@ -175,8 +176,9 @@ func runTestConnectivityCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	s := test.RunConnectivity(cmdContext(cmd), hosts, flagInsecureTLS)
-	return outputSuite(s)
+	ctx := cmdContext(cmd)
+	s := test.RunConnectivity(ctx, hosts, flagInsecureTLS)
+	return outputSuite(ctx, s)
 }
 
 func runTestDNSCmd(cmd *cobra.Command, _ []string) error {
@@ -192,8 +194,9 @@ func runTestDNSCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	s := test.RunDNS(cmdContext(cmd), hosts)
-	return outputSuite(s)
+	ctx := cmdContext(cmd)
+	s := test.RunDNS(ctx, hosts)
+	return outputSuite(ctx, s)
 }
 
 // dnsFlagDriven decides whether the user invoked the new flag surface.
@@ -293,6 +296,12 @@ func runDNSSingleVantage(ctx context.Context, cctx *config.Context, target strin
 	// in the text rendering at printDNSVantageText); the exit code mirrors
 	// that classification. Pinned by e2e step LD3 (NXDOMAIN must exit 1).
 	if res.Err != "" || res.Rcode != "NOERROR" {
+		// The probe stringifies a cancelled context into res.Err ("TIMEOUT"),
+		// so a Ctrl-C'd hung query would read as a red result — report the
+		// interrupt instead.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
@@ -359,6 +368,11 @@ func runDNSGSLBCompare(ctx context.Context, cctx *config.Context, target string,
 		}
 	} else {
 		printDNSCompareText(os.Stderr, cmp)
+	}
+	// An interrupted compare is not a failed one: vantage errors caused by
+	// the cancellation are stringified into the results and invisible below.
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	// --require-divergence inverts the exit code: 0 only if divergence
 	// was observed. Otherwise default exit code follows whether ANY
@@ -601,20 +615,23 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 	// jumphost.
 	switch {
 	case backendSpec == "" || backendSpec == "local":
-		s := test.RunThroughput(cmdContext(cmd), opts)
-		return outputSuite(s)
+		ctx := cmdContext(cmd)
+		s := test.RunThroughput(ctx, opts)
+		return outputSuite(ctx, s)
 	case backendSpec == "k8s":
-		s, err := runIperf3ClientK8s(cmdContext(cmd), kc, image, opts)
+		ctx := cmdContext(cmd)
+		s, err := runIperf3ClientK8s(ctx, kc, image, opts)
 		if err != nil {
 			return err
 		}
-		return outputSuite(s)
+		return outputSuite(ctx, s)
 	case strings.HasPrefix(backendSpec, "ssh:"):
-		s, err := runIperf3ClientSSH(cmdContext(cmd), backendSpec, opts)
+		ctx := cmdContext(cmd)
+		s, err := runIperf3ClientSSH(ctx, backendSpec, opts)
 		if err != nil {
 			return err
 		}
-		return outputSuite(s)
+		return outputSuite(ctx, s)
 	}
 	// Unreachable — backendSpec validation above filters to the four
 	// supported values. Belt-and-braces for refactor safety.
@@ -797,7 +814,7 @@ func loadHosts() (*config.Context, []string, error) {
 
 // outputSuite writes a SuiteRun in JSON (to stdout) or text (to stderr)
 // per -o, then exits non-zero if the suite failed.
-func outputSuite(s test.SuiteRun) error {
+func outputSuite(ctx context.Context, s test.SuiteRun) error {
 	if flagOutput == "json" {
 		if err := test.WriteJSON(os.Stdout, s); err != nil {
 			return err
@@ -806,6 +823,13 @@ func outputSuite(s test.SuiteRun) error {
 		test.PrintSuiteText(os.Stderr, s)
 	}
 	if s.Overall == test.StatusFail {
+		// An interrupted suite is not a red suite. The runners stringify a
+		// cancelled context into result data (result.Err = ctx.Err().Error()),
+		// so by the time it reaches here the cancellation is invisible in the
+		// error chain — ask the context directly.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil
@@ -900,7 +924,7 @@ func printDNSCompareText(w io.Writer, c test.DNSCompareResult) {
 
 // outputAll handles AllRun output (multi-suite). Same JSON-on-stdout vs
 // text-on-stderr split, then exits non-zero on any-fail.
-func outputAll(all test.AllRun) error {
+func outputAll(ctx context.Context, all test.AllRun) error {
 	if flagOutput == "json" {
 		if err := test.WriteJSON(os.Stdout, all); err != nil {
 			return err
@@ -918,6 +942,10 @@ func outputAll(all test.AllRun) error {
 		fmt.Fprintf(os.Stderr, "\n%s overall (%d/%d suites passed)\n", all.Overall, passed, len(all.Suites))
 	}
 	if all.Overall == test.StatusFail {
+		// See outputSuite: an interrupted run reports the interrupt.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return exitcode.Silent(exitcode.Failure)
 	}
 	return nil

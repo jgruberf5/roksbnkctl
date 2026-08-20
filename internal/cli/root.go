@@ -169,6 +169,16 @@ func Execute() {
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
 		"roksbnkctl {{.Version}} (commit %s, built %s)\nDocs: %s\n",
 		Commit, BuildDate, DocsURL))
+	// A malformed flag is a Usage error: the invocation was rejected and
+	// nothing was attempted. Without this, cobra hands the parse error back as
+	// a plain error and it exits Failure=1 while the argv preflight's typo
+	// check (cmd/roksbnkctl/main.go) exits Usage=2 — two malformed
+	// invocations, two different codes, and a script branching on $?==2 per
+	// the contract misclassifies one of them.
+	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return exitcode.Wrap(exitcode.Usage, err)
+	})
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := rootCmd.ExecuteContext(ctx); err != nil {

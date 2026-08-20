@@ -173,3 +173,47 @@ func enclosingFuncBody(t *testing.T, src, name string) string {
 	}
 	return rest[:end]
 }
+
+// A malformed flag and a malformed argv-preflight token are the same class of
+// mistake — the invocation was rejected, nothing ran — so they must produce the
+// same code. The preflight exits Usage; this pins the cobra half, which
+// otherwise surfaces flag parse errors as plain Failure=1.
+func TestFlagErrorsAreUsageErrors(t *testing.T) {
+	body, err := os.ReadFile("root.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := enclosingFuncBody(t, string(body), "Execute")
+	if !strings.Contains(fn, "SetFlagErrorFunc") || !strings.Contains(fn, "exitcode.Usage") {
+		t.Error("Execute does not wrap cobra flag errors in exitcode.Usage — `--bogus` would exit 1 " +
+			"while the argv preflight's typo check exits 2, splitting one class of mistake across two codes")
+	}
+}
+
+// The test runners stringify a cancelled context into result data
+// (result.Err = ctx.Err().Error()), so by the time a suite reads as
+// StatusFail the interrupt is invisible in any error chain — each failure
+// exit has to ask the context directly, or a Ctrl-C'd hung suite exits 1,
+// indistinguishable from a red run. This pins the check at every site that
+// turns a test failure into a status.
+func TestTestFailureExitsPreferTheInterrupt(t *testing.T) {
+	for _, tc := range []struct{ file, fn string }{
+		{"test.go", "outputSuite"},
+		{"test.go", "outputAll"},
+		{"test.go", "runDNSSingleVantage"},
+		{"test.go", "runDNSGSLBCompare"},
+		{"test_matrix.go", "outputMatrix"},
+	} {
+		t.Run(tc.fn, func(t *testing.T) {
+			body, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fn := enclosingFuncBody(t, string(body), tc.fn)
+			if !strings.Contains(fn, "ctx.Err()") {
+				t.Errorf("%s does not consult ctx.Err() before deciding its exit — an interrupted "+
+					"run would report as a failed one", tc.fn)
+			}
+		})
+	}
+}

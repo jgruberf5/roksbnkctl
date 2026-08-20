@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
+	"syscall"
 )
 
 // The contract. Values follow shell convention where one exists, so a script
@@ -90,20 +92,43 @@ func IsSilent(err error) bool {
 
 // FromError resolves the status a command's error should produce.
 //
-// A coded error wins. Otherwise a cancelled context means the operator
-// interrupted us — that is the case that used to collapse into a generic 1,
-// leaving a script unable to tell a Ctrl-C from a real failure. Everything else
-// is Failure.
+// Cancellation outranks a code: an error whose chain carries context.Canceled
+// happened BECAUSE the operator pressed Ctrl-C — the connect that was aborted,
+// the child that was killed — and reporting the failure class it happened to
+// land in (127, 126, …) would send a script retrying or rotating credentials
+// over a deliberate interrupt. Checking it first means no call site can
+// accidentally code a cancellation into something else. A Silent child status
+// is unaffected (it wraps no error), and a deadline is a real failure — nobody
+// pressed anything. After that a coded error wins, and everything else is
+// Failure.
 func FromError(err error) int {
 	if err == nil {
 		return OK
+	}
+	if errors.Is(err, context.Canceled) {
+		return Interrupted
 	}
 	var e *Error
 	if errors.As(err, &e) {
 		return e.Code
 	}
-	if errors.Is(err, context.Canceled) {
-		return Interrupted
+	return Failure
+}
+
+// FromChildExit maps a finished child's *exec.ExitError to the status the
+// parent should propagate: the child's own exit code, or 128+signum when the
+// child died to a signal — the shell convention, which makes a SIGINT-killed
+// child propagate Interrupted=130.
+//
+// The naive ee.ExitCode() is -1 for a signal death, and exiting with -1
+// becomes shell status 255 with no explanation; that is the bug this helper
+// exists to keep out of the call sites.
+func FromChildExit(ee *exec.ExitError) int {
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	if c := ee.ExitCode(); c >= 0 {
+		return c
 	}
 	return Failure
 }

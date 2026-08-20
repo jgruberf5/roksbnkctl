@@ -82,14 +82,14 @@ on top — `terraform`'s diagnostics have already gone to stderr, and a second
 `roksbnkctl: ...` line would only add noise. Check the stream, not just the
 code.
 
-### A limit worth knowing
+### The interrupt outranks everything else
 
-`130` requires the command to *surface* the interrupt. Commands that run a
-child process or a cancellable API call do. A few convert a cancelled context
-into an error of their own — `test dns` reports its per-query timeout, for
-instance — and those still exit `1`. If your job needs to distinguish an
-interrupt reliably, trap `SIGINT` in the script rather than inferring it from
-the exit code alone.
+A failure that happens *because* of the Ctrl-C reports the interrupt, not the
+failure class it landed in: a connect aborted mid-handshake is `130`, not
+`127`; a test suite cut off mid-run is `130`, not a red `1`; a child killed by
+the signal propagates `130` (`128+SIGINT`, the shell convention), not `255`.
+So `$? -eq 130` is reliable — a job does not need to trap `SIGINT` itself to
+tell "someone stopped this" from "it broke".
 
 ## `--config-file`
 

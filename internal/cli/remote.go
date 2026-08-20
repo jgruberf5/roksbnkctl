@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 
+	"golang.org/x/term"
+
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/cred"
 	execbackend "github.com/jgruberf5/roksbnkctl/internal/exec"
@@ -40,8 +42,10 @@ func rejectOnFlag(cmdName string) error {
 }
 
 // dispatchRemote opens an SSH connection to the named target, runs argv
-// remotely, streams I/O, and exits roksbnkctl with the remote process's
-// exit code (or with 126/127 on auth/connect failures per PRD 01).
+// remotely, streams I/O, and returns the outcome as a coded error per the
+// internal/exitcode contract: the remote process's own status (silent — its
+// diagnostics already streamed), AuthFailed/ConnectFailed on a rejected or
+// unreachable connect, the bare cancellation when the operator interrupted.
 //
 // envExtra MUST be machine-portable (values, not local filesystem
 // paths): IBMCLOUD_API_KEY / IC_API_KEY / IBMCLOUD_REGION /
@@ -64,9 +68,6 @@ func rejectOnFlag(cmdName string) error {
 // "ibmcloud not logged in" on the remote should configure AcceptEnv on
 // the jumphost (see chapter 16, "Behaviour details" in
 // book/src/16-on-flag-ssh-jumphosts.md).
-//
-// On success this function does NOT return — it calls os.Exit. The
-// remote-side exit code is the only useful thing for scripts and CI.
 func dispatchRemote(ctx context.Context, target string, argv []string, envExtra []string, tty bool) error {
 	// THE single SSH-boundary assertion (Sprint 15 chokepoint): strip
 	// every local-path-valued var per the one
@@ -111,7 +112,7 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 
 	client, err := remote.Connect(ctx, t)
 	if err != nil {
-		return exitcode.Newf(exitcode.ConnectFailed, "connect %s: %w", t.Name, err)
+		return codeConnectError(ctx, t.Name, err)
 	}
 	defer client.Close()
 
@@ -154,7 +155,14 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 			}
 		}
 		if herr := maybeSelfHealRemoteKubeconfig(ctx, clientRunner{client}, argv, clusterID, apiKey, region, resourceGroup); herr != nil {
-			return exitcode.Newf(exitcode.AuthFailed, "remote kubeconfig self-heal: %w", herr)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// Uncoded (Failure): this used to be AuthFailed, but a heal runs
+			// AFTER authentication succeeded at Connect — its failures are
+			// remote-command failures, and telling automation "credential
+			// refused" for one sends it rotating keys.
+			return fmt.Errorf("remote kubeconfig self-heal: %w", herr)
 		}
 	}
 
@@ -166,7 +174,16 @@ func dispatchRemote(ctx context.Context, target string, argv []string, envExtra 
 		TTY:    tty,
 	})
 	if err != nil {
-		return exitcode.Newf(exitcode.AuthFailed, "remote run: %w", err)
+		if ctx.Err() != nil {
+			// The Run error is fallout of the interrupt (the cancel goroutine
+			// SIGKILLs the session); report the interrupt itself.
+			return ctx.Err()
+		}
+		// Uncoded (Failure), NOT AuthFailed: authentication happens at Connect
+		// — what reaches here is the class ssh.go documents as "transport
+		// error, signal kill", the least auth-like failures on the path. A
+		// mid-command network blip must not tell automation to rotate keys.
+		return fmt.Errorf("remote run: %w", err)
 	}
 	if code != 0 {
 		// The wrapped command already wrote its own diagnostics to the inherited
@@ -205,15 +222,44 @@ func dispatchRemoteShell(ctx context.Context, target string) error {
 
 	client, err := remote.Connect(ctx, t)
 	if err != nil {
-		return exitcode.Newf(exitcode.ConnectFailed, "connect %s: %w", t.Name, err)
+		return codeConnectError(ctx, t.Name, err)
 	}
 	defer client.Close()
+
+	// Raw mode for the interactive session, so ^C travels to the REMOTE
+	// foreground process as a byte instead of raising local SIGINT — which
+	// cancelled our context, tore the session down, and exited 1 with a
+	// spurious "remote command exited without exit status", never delivering
+	// the ^C to the command the user aimed it at. Restored before the exit
+	// status is decided, so the error path prints on a sane terminal.
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		oldState, rerr := term.MakeRaw(fd)
+		if rerr == nil {
+			defer func() { _ = term.Restore(fd, oldState) }()
+		}
+	}
 
 	return client.Shell(ctx, remote.ShellOpts{
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 	})
+}
+
+// codeConnectError classifies a remote.Connect failure per the contract: the
+// operator's interrupt stays a bare cancellation (Interrupted), a rejection —
+// the target answered and refused us — is AuthFailed, and everything else
+// (unreachable, timeout) is ConnectFailed. The one classification for both
+// dispatch paths, so they cannot drift.
+func codeConnectError(ctx context.Context, name string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	code := exitcode.ConnectFailed
+	if remote.IsAuthError(err) {
+		code = exitcode.AuthFailed
+	}
+	return exitcode.Newf(code, "connect %s: %w", name, err)
 }
 
 // loadTFOutputsForTarget pulls a flat map[string]string of TF outputs
