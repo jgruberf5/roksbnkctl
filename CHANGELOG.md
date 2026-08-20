@@ -13,6 +13,7 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Every request made with verification disabled now warns, naming the host, once per client — attached to the requests that actually carry the credential rather than to construction, since a client that is built and never used has disclosed nothing. When the host is an IP literal that is routable on the public internet the warning says that too; a hostname is left unclassified rather than guessed at.
 
   **`--forge-ca <file>` / `bnkforge.ca_b64` / `ROKSBNKCTL_BNKFORGE_CA_B64` is the replacement.** For a self-signed Forge you generated the CA, so you already hold it, and pinning it *authenticates* the connection instead of abandoning authentication — the same shape the registry path already uses for self-signed mirrors. A pinned CA wins over `insecure`, `bnkforge enable --forge-ca` clears the flag rather than leaving it stale, and the PEM is parsed where it is supplied so a wrong file fails there instead of at the next connection. `bnkforge status` now reports which of the three modes is in force. (#113)
+
 - **Security-group sources were hard-coded to `0.0.0.0/0` with no way to narrow them.** Five rules across the testing and cluster modules took their source from a literal. The starkest was `tgw_vpc_default_sg_inbound_all`, which carried **no protocol and no port** — every port, every protocol, from anywhere — on a VPC default security group. IBM ships those denying inbound, so the rule inverted a safe default for any resource later placed in that VPC. Nothing is currently attached to it, which makes it a fail-open default rather than an open door, but it is one floating IP away from being one. The cluster VPC's default SG carried the same all-protocol rule, and the jumphosts' `:22` was open with no allowlist.
 
   All five are now driven by list variables, surfaced through the five layers (module + root tfvars, `config.yaml`, `ROKSBNKCTL_*` + doc table, `.env.example`, book) — the pattern the `flp_vsi` module already had and these did not.
@@ -49,7 +50,6 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   Verified behaviour-preserving by running the pre- and post-refactor code over the full surface (98 variables including all three zones) and diffing the resulting workspace and applied list: identical, except the single intended change — `name_prefix` now applies without `CREATE_VPC`. (#114)
 
-
 - **Exit codes are one contract instead of eighteen decisions.** `os.Exit` was called from 18 places across five packages, each with its own policy. `roksbnkctl init` exited `130` on Ctrl-C while every other command turned the same interrupt into `1` — indistinguishable from a real failure, which matters because every demo and CI path in this repo branches on `$?`. `internal/remote` defined a meaningful `126`/`127` scheme that nothing else participated in. And because `os.Exit` terminates the test binary, none of it could be asserted: the inconsistencies went unnoticed because there was no way to notice.
 
   Commands now **return** a coded error (`internal/exitcode`) and one place maps it to a status. Three `os.Exit` calls remain, each with a stated reason: the root's mapping, the argv preflight (which runs before cobra exists to return an error to), and `init`'s SIGINT handler (which fires from a goroutine while a terminal read blocks, where there is no error to return from anywhere). All three take their value from the contract.
@@ -58,27 +58,22 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   Returning rather than exiting also fixes a quieter bug: `os.Exit` skips deferred cleanup, so the SSH error paths in `internal/cli/remote.go` were leaving `client.Close()` unrun. (#118)
 
+- **`renderBNKFields` and `registry.go` split along the seams they already had.** `renderBNKFields` was one 298-line function emitting eleven unrelated groups of terraform variables; it is now a twenty-line dispatcher plus one renderer per group, so a change to the GTM fields touches `renderBNKGTM` and nothing else. `internal/cli/registry.go` was 1,311 lines holding nine subcommands that share only helpers; each subcommand now has its own file and the shared helpers stay in `registry.go` (690 lines).
+
+  Pure moves — no behaviour change, and a **golden test** proves it: the whole rendered tfvars body is pinned byte-for-byte against a workspace that populates every section. That assertion exists because the per-line tests could not have caught this class of mistake. Verified by breaking it three ways — dropping a section from the dispatcher, reordering two, and emitting one twice — each of which the existing tests pass and the golden fails. A companion test checks the fixture still exercises every section, so the golden cannot quietly pin an empty render.
+
+  Two claims in the issue did **not** survive measurement and are not acted on: `DefaultResources` is 12 lines, not 565 — the sweep that filed it measured to the next `func`, sweeping in the type declarations that follow — and `internal/config/workspace.go` is 32 type declarations with doc comments against 10 functions, which is what a config schema file should look like. Splitting either would have been churn justified by a bad number. (#117)
+
 ### Fixed
 
 - **`cluster up` reported a failed `cluster-outputs.json` write on one exit path and discarded it on the other.** The changed path warned and named the recovery command; the no-change path fifteen lines away did `_ = persistClusterOutputs(...)`. The silent one is the likelier to be hit — re-running `cluster up` against an already-converged cluster is routine, and it is exactly the run where nothing else on screen would hint that the record had not been refreshed. What it costs is not hypothetical: `cluster-outputs.json` is where `cluster_id` lives, and without it the admission-policy sweep falls back to resolving the cluster by **name**, which `admission_sweep.go` documents as how a sweep once misdirected every delete at the wrong cluster and landed zero. Both paths now go through one reporting helper, so they cannot diverge again. (#119)
-
-### Documentation
-
-- **Comments citing documents that are not in this repo.** Two families: `prompts/sprintNN/README.md`, removed at v1.12.0 and fixed in #120, and `issues/issue_sprintNN_<role>.md` — per-sprint review trackers that **never shipped at all**, cited from 33 places across Go source and tests. A reader of the current release cannot follow either, so where the reasoning should be they find a dead end. Each citation is removed and the reasoning it pointed at is now stated inline. `TestNoCommentCitesAnAbsentDocument` fails on both families.
-
-  Also gone: `pre-Sprint-N behaviour` (15 sites), which told a reader to compare against a state no document records — they now state the property directly ("the original behaviour", "unchanged for same-region buckets"); the `<role> Issue N carry-over` tracker references (7); and bare `Sprint N:` prefixes on sentences that stand without them (12).
-
-  **Two of the issue's premises did not survive measurement, and are deliberately not acted on.** The comment ratio is **25%**, not 37% — healthy for Go, so there was no volume problem to solve. And `Sprint N` / `PRD N` on their own **resolve**: `docs/PLAN.md` carries 37 per-sprint sections and `docs/prd/` holds 19 specs, both cited from this file's header. Those are navigable references, and stripping 250 of them would have destroyed working links on the strength of a bad number. CONTRIBUTING now records the distinction: the test is not "is this about the past?" but "can the reader act on it?" — a comment explaining why a past bug must not be reintroduced is the most valuable kind here, not the least. (#111)
-
-
-- **Four comments cited `prompts/`, a directory removed from the repo at v1.12.0.** One was the package comment on the binary's entrypoint — the first thing a reader opens, opening with a dead end. In each case the rationale was already stated inline, so the citation added nothing but a path the reader cannot follow. A guard test now scans every Go file, tests included: the sweep that filed the issue looked only at non-test source and missed a fourth citation, which the guard found on its first run. (#120)
-
 
 - **Ctrl-C did not cancel credential and `terraform output` calls.** `root.go` builds the process context with `signal.NotifyContext`, so every command receives something that cancels on interrupt. Eight call sites discarded it and started a fresh `context.Background()`, including credential resolution — which can block on the OS keychain — and a `terraform output` shell-out. While one was blocked, Ctrl-C was accepted by the signal handler and then ignored, because the work was running on a context that could not hear it. `ibmcloud login` on the passthrough path was worse still: `exec.Command` with no context at all, so a hang on a wedged IAM endpoint was uninterruptible and unbounded.
 
   The context is now threaded through `openIBMClient`, `WorkspaceEnv`/`WorkspaceEnvCore`, the SSH backend's target resolver, `init`'s interview and per-call bounds, `ensureIBMCloudLoggedIn`, and doctor's binary probes. `init`'s interview context keeps its deliberate absence of a wall-clock deadline — it derives via `WithCancel`, which adds no deadline while restoring cancellation, so slow human answers still never expire a call.
 
   A guard test walks `internal/` and fails on any new `context.Background()` outside an allowlist, since the defect is invisible in review — a detached context looks identical whether or not the caller had one to thread. The allowlist holds only the root context and cleanup that runs *because* the parent is already cancelled, and a second test drops entries that stop applying. (#116)
+
 - **The perf matrix's teardown still named a CRD BNK never installs.** #99 corrected the fixture that emitted `gateway.networking.k8s.io/v1alpha2 TCPRoute` and left `tcproutes.gateway.networking.k8s.io` in the matrix teardown's delete list, one package away, for two more releases. The emitter and the delete list were written apart with nothing tying them together.
 
   The route contract now lives in one place (`internal/test/gatewayapi.go`): which kinds BNK's pinned Gateway API 1.4.1 **standard** channel provides, which upstream kinds it does **not**, and the CRD names for each. Fixtures render from it, teardown deletes from it, and the tests assert against it — so a change to the pinned channel moves all of them together instead of leaving one behind.
@@ -86,7 +81,6 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Teardown also issues **one delete per type group** rather than one comma-joined delete. cli-runtime's builder resolves every requested type before removing anything and returns on the first unknown one, so a single call naming a CRD the cluster lacks deleted nothing at all — leaking the deployments, services and secrets alongside it, on exactly the cluster where cleanup matters most: one where the BNK install failed or was removed. The pre-existing `tcproutes` entry meant this aborted on *every* BNK cluster.
 
   Three comments in `internal/test/matrix.go` still described the fixtures as rendering `TCPRoute`; a repo-wide guard test found them. That guard fails on any reference to a route kind outside the standard channel, across Go, YAML, Terraform and shell, with an exemption list where each entry states why the mention is prose rather than a manifest — and a companion test that drops entries which stop applying. It is a repo scan rather than a package test on purpose: #99's own fix missed a file one package away, and a package-scoped test would not have looked there. (#115)
-
 
 - **`remoteHealCommand` carried a dead positional counter.** The `sh -c` self-heal command numbers its parameters so the IBM Cloud API key travels as a positional value rather than interpolated into the script text. The counter tracking those numbers ran alongside the args slice it described, and its final increment was never read — staticcheck v0.8.0 flags it (SA4006). The index now derives from `len(args)`, so there is no second thing to keep in step, and a new test pins the property the counter existed to maintain: every `"$N"` in the script resolves to the value actually at that argv position, and the key never appears in the literal.
 
@@ -97,6 +91,14 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   **`registry delete` and `registry prune` had the same flaw, destructively.** Both take their artifact list from the record and act on the *configured* target, so a record describing another mirror deletes one registry's contents out of a different one — and `delete`'s confirmation prompt names the **record's** host, so it would state the wrong destination while doing it. Both now **refuse** rather than discard: a read-only `diff` can afford to shrug and report everything missing, an unrecoverable delete cannot.
 
   `diff` also now states what its answer is based on. It reads the record, so "in sync" means *nothing left to replicate according to what was last replicated* — not *every artifact is present*. Only `verify` establishes the latter, and the output now says so. (#109)
+
+### Documentation
+
+- **Comments citing documents that are not in this repo.** Two families, and both were dead ends where the reasoning should be. `prompts/sprintNN/README.md` was removed at v1.12.0 — four citations survived it, one of them the package comment on the binary's entrypoint, the first thing a reader opens. `issues/issue_sprintNN_<role>.md` is worse: those per-sprint review trackers **never shipped at all**, and were cited from 33 places across source and tests.
+
+  Every citation is gone and the reasoning each pointed at is stated inline. `TestNoCommentCitesAnAbsentDocument` fails on both families, and found a fifth `prompts/` citation on its first run that the manual sweep had missed by looking only at non-test source. Also removed: `pre-Sprint-N behaviour` (15 sites, asking a reader to compare against a state no document records), `<role> Issue N carry-over` (7), and bare `Sprint N:` prefixes on sentences that stand without them (12).
+
+  **Two of the issue's premises did not survive measurement, and are deliberately not acted on.** The comment ratio is **25%**, not 37% — healthy for Go, so there was no volume problem to solve. And `Sprint N` / `PRD N` on their own **resolve**: `docs/PLAN.md` carries 37 per-sprint sections and `docs/prd/` holds 19 specs, both cited from this file's header. Stripping 250 working links on the strength of a bad number would have been the damage, not the fix. CONTRIBUTING records the distinction: the test is not "is this about the past?" but "can the reader act on it?" — a comment explaining why a past bug must not be reintroduced is the most valuable kind here, not the least. (#111, #120)
 
 ## v1.49.1 — 2026-08-20
 
@@ -312,13 +314,6 @@ Preparation for BNK 2.4 and multi-NIC ROKS, neither of which has shipped. Everyt
 - **Per-BNK-line terraform overlays** — `terraform/lines/<line>/` is layered onto the base tree at extraction: same path replaces, new path is added, nothing is removed. It ships **empty**, because no supported release needs different HCL, and a test pins that the extracted tree is byte-identical without one. This replaces the branch-per-release model, which forked the whole tool to express a difference living in a handful of `.tf` files.
 
 ### Changed
-
-- **`renderBNKFields` and `registry.go` split along the seams they already had.** `renderBNKFields` was one 298-line function emitting eleven unrelated groups of terraform variables; it is now a twenty-line dispatcher plus one renderer per group, so a change to the GTM fields touches `renderBNKGTM` and nothing else. `internal/cli/registry.go` was 1,311 lines holding nine subcommands that share only helpers; each subcommand now has its own file and the shared helpers stay in `registry.go` (690 lines).
-
-  Pure moves — no behaviour change, and a **golden test** proves it: the whole rendered tfvars body is pinned byte-for-byte against a workspace that populates every section. That assertion exists because the per-line tests could not have caught this class of mistake. Verified by breaking it three ways — dropping a section from the dispatcher, reordering two, and emitting one twice — each of which the existing tests pass and the golden fails. A companion test checks the fixture still exercises every section, so the golden cannot quietly pin an empty render.
-
-  Two claims in the issue did **not** survive measurement and are not acted on: `DefaultResources` is 12 lines, not 565 — the sweep that filed it measured to the next `func`, sweeping in the type declarations that follow — and `internal/config/workspace.go` is 32 type declarations with doc comments against 10 functions, which is what a config schema file should look like. Splitting either would have been churn justified by a bad number. (#117)
-
 
 - **`cluster.vpc_cidr` now warns when it changes after the cluster exists.** It has always been documented as create-time-only and was never enforced; the warning is the deprecation, and the refusal follows it in a later release rather than arriving without one. It fires only on a genuine disagreement with the recorded block, so a workspace that set it once and left it alone stays silent.
 
