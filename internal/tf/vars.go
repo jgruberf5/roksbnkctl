@@ -470,7 +470,37 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
 // Each is emitted only when set in config.yaml, so neither render path
 // duplicates a variable.
+// renderBNKFields emits the bnk.* half of the tfvars body, one section per
+// renderer below. The split follows the grouping the output already had: each
+// renderer owns one block of related variables, so a change to the GTM fields
+// touches renderBNKGTM and nothing else.
+//
+// Order is load-bearing — terraform tolerates any order, but a stable one
+// keeps a rendered tfvars diffable across runs, so these are called in the
+// same sequence the single function emitted them.
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
+	renderBNKNamespaces(w, ws, mirror)
+	renderBNKTrustedProfile(w, ws, mirror)
+	if err := renderBNKGTM(w, ws, mirror); err != nil {
+		return err
+	}
+	renderBNKCertManager(w, ws, mirror)
+	renderBNKCOS(w, ws, mirror)
+	if err := renderBNKRegistryMirror(w, ws, mirror); err != nil {
+		return err
+	}
+	if err := renderBNKLocalSupplyChain(w, ws, mirror); err != nil {
+		return err
+	}
+	renderBNKLicenseMode(w, ws, mirror)
+	renderBNKFLP(w, ws, mirror)
+	renderBNKNetwork(w, ws, mirror)
+	renderBNKCIS(w, ws, mirror)
+	return nil
+}
+
+// renderBNKNamespaces emits the FLO / utility namespaces and the GSLB datacenter name.
+func renderBNKNamespaces(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// FLO / utility namespaces + GSLB datacenter. Emitted only when set; unset
 	// leaves the terraform defaults (f5-bnk / f5-utils / unset).
 	if ws.BNK.FLONamespace != "" {
@@ -479,6 +509,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
+}
+
+// renderBNKTrustedProfile emits FLO's Trusted Profile service account and roles.
+func renderBNKTrustedProfile(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// Trusted Profile. Emitted only when set; absent leaves the HCL defaults,
 	// which reproduce today's behaviour exactly — the service account derives
 	// FLO's own long name rather than a static short one.
@@ -503,7 +537,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
+}
 
+// renderBNKGTM emits the GTM / BIG-IP DNS connection (#51).
+func renderBNKGTM(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	// GTM / BIG-IP DNS connection (#51). Emitted only when a URL is set, so a
 	// workspace that does not use GSLB renders exactly what it did before.
 	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) != "" {
@@ -523,6 +560,11 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.GSLBDatacenterName != "" {
 		fmt.Fprintf(w, "cneinstance_gslb_datacenter_name = %q\n", ws.BNK.GSLBDatacenterName)
 	}
+	return nil
+}
+
+// renderBNKCertManager emits cert-manager's namespace and chart version.
+func renderBNKCertManager(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// cert-manager namespace / chart version. Emitted only when a cert_manager
 	// block is present; the install/skip toggle stays on resources.cert_manager.
 	if cm := ws.BNK.CertManager; cm != nil {
@@ -533,6 +575,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			fmt.Fprintf(w, "cert_manager_version = %q\n", cm.Version)
 		}
 	}
+}
+
+// renderBNKCOS emits the orchestration COS coordinates — the FAR auth key and JWT source.
+func renderBNKCOS(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// Orchestration COS coordinates (the FAR auth key + JWT source). Emitted only
 	// when a cos block supplies them; unset leaves the terraform defaults. The
 	// `registry` FAR resolver reads the same cos block, so a customer-owned bucket
@@ -554,7 +600,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.FARRepoURL != "" {
 		fmt.Fprintf(w, "far_repo_url = %q\n", ws.BNK.FARRepoURL)
 	}
+}
 
+// renderBNKRegistryMirror emits the air-gap registry-mirror redirect.
+func renderBNKRegistryMirror(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	// Sprint 29 air-gap registry-mirror redirect. When a populated mirror
 	// record exists, point chart pulls at the registry route (ChartHost) and
 	// image pulls at the in-cluster registry service (ImageHost), and flip
@@ -599,6 +648,11 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.SubscriptionJWTFile != "" {
 		fmt.Fprintf(w, "f5_cne_subscription_jwt_file = %q\n", ws.BNK.SubscriptionJWTFile)
 	}
+	return nil
+}
+
+// renderBNKLocalSupplyChain emits the local-file supply chain, read here rather than downloaded.
+func renderBNKLocalSupplyChain(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	// Local-file supply chain (no COS). When both local files are set, read them
 	// HERE (Go — no curl/tar/grep) and inject the FAR service account + JWT
 	// content directly, disabling the COS download path. Fail loudly: the operator
@@ -617,6 +671,11 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 		fmt.Fprintf(w, "far_service_account_b64 = %q\n", strings.TrimSpace(saB64))
 		fmt.Fprintf(w, "f5_cne_subscription_jwt = %q\n", strings.TrimSpace(string(jwtBytes)))
 	}
+	return nil
+}
+
+// renderBNKLicenseMode emits the license operation mode.
+func renderBNKLicenseMode(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// License operation mode. Emitted only when set; empty leaves the terraform
 	// default ("connected"), keeping existing JWT configs byte-identical. The FLP
 	// endpoint + root CA needed for "f5licenseproxy" mode are NOT rendered here —
@@ -625,6 +684,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	if ws.BNK.LicenseMode != "" {
 		fmt.Fprintf(w, "license_mode = %q\n", ws.BNK.LicenseMode)
 	}
+}
+
+// renderBNKFLP emits the F5 License Proxy phase settings.
+func renderBNKFLP(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// F5 License Proxy phase settings. Emitted only when an flp block is present;
 	// deploy_flp itself is forced by the phase override (true for `flp up`, false
 	// everywhere else), so these lines are harmless no-ops in the other phases.
@@ -729,6 +792,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
+}
+
+// renderBNKNetwork emits the cloud-network mapping, VLAN zones and TMM VLAN/route knobs.
+func renderBNKNetwork(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// Cloud-network-mapping + VLAN zones + TMM VLAN/route knobs (BNK install-guide
 	// "Configuration"). Each is emitted only when config.yaml supplies it; absent →
 	// the terraform module's install-guide defaults apply (existing configs unchanged).
@@ -751,6 +818,10 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			fmt.Fprintf(w, "cneinstance_tmm_k8s_routes = %q\n", net.TMMK8SRoutes)
 		}
 	}
+}
+
+// renderBNKCIS emits the BNK CIS controller's BIG-IP target.
+func renderBNKCIS(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) {
 	// BNK CIS controller's BIG-IP target. Emitted only when configured; absent →
 	// the bigip_* vars stay at their terraform defaults (blank = BNK without CIS).
 	if cis := ws.BNK.CIS; cis != nil {
@@ -766,7 +837,6 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 			}
 		}
 	}
-	return nil
 }
 
 // renderNetworkZones emits the cneinstance_network_zones HCL list-of-objects
