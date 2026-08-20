@@ -702,7 +702,7 @@ func runIperf3ClientSSH(ctx context.Context, backendSpec string, opts test.Throu
 		return test.SuiteRun{}, err
 	}
 	target := execbackend.SpecTarget(backendSpec)
-	cctx, _, _ := workspaceEnv()
+	cctx, _, _ := workspaceEnv(ctx)
 	wsName := ""
 	if cctx != nil {
 		wsName = cctx.WorkspaceName

@@ -47,7 +47,7 @@ users:
 
 func TestEnsureFreshKubeconfig_NoFileFallsBack(t *testing.T) {
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
-	in := &ClusterInputs{OpenIBMClient: func() (*config.Context, *ibm.Client, error) {
+	in := &ClusterInputs{OpenIBMClient: func(context.Context) (*config.Context, *ibm.Client, error) {
 		t.Fatal("OpenIBMClient must not be called when there is no forge kubeconfig")
 		return nil, nil, nil
 	}}
@@ -59,7 +59,7 @@ func TestEnsureFreshKubeconfig_NoFileFallsBack(t *testing.T) {
 func TestEnsureFreshKubeconfig_FreshIsNoOp(t *testing.T) {
 	path := writeForge(t, jwt(time.Now().Add(48*time.Hour)))
 	before, _ := os.ReadFile(path)
-	in := &ClusterInputs{OpenIBMClient: func() (*config.Context, *ibm.Client, error) {
+	in := &ClusterInputs{OpenIBMClient: func(context.Context) (*config.Context, *ibm.Client, error) {
 		t.Fatal("OpenIBMClient must not be called when the token is still fresh (no network)")
 		return nil, nil, nil
 	}}
@@ -78,7 +78,7 @@ func TestEnsureFreshKubeconfig_StaleRefreshFailureFallsBack(t *testing.T) {
 	// the caller uses the admin/default config rather than a dead token.
 	writeForge(t, jwt(time.Now().Add(-time.Hour)))
 	called := false
-	in := &ClusterInputs{OpenIBMClient: func() (*config.Context, *ibm.Client, error) {
+	in := &ClusterInputs{OpenIBMClient: func(context.Context) (*config.Context, *ibm.Client, error) {
 		called = true
 		return nil, nil, fmt.Errorf("offline")
 	}}
@@ -94,7 +94,7 @@ func TestEnsureFreshKubeconfig_ForceTriggersRefresh(t *testing.T) {
 	// Even a fresh token must attempt a refresh when force is set.
 	writeForge(t, jwt(time.Now().Add(48*time.Hour)))
 	called := false
-	in := &ClusterInputs{OpenIBMClient: func() (*config.Context, *ibm.Client, error) {
+	in := &ClusterInputs{OpenIBMClient: func(context.Context) (*config.Context, *ibm.Client, error) {
 		called = true
 		return nil, nil, fmt.Errorf("offline")
 	}}

@@ -126,7 +126,7 @@ func installMockClientFactory(t *testing.T, m *mockRemoteClient) (cleanup func()
 // workspace config loader.
 func installFakeTargetResolver(t *testing.T) (cleanup func()) {
 	t.Helper()
-	resolver := func(_, name string) (*remote.Target, map[string][]byte, error) {
+	resolver := func(_ context.Context, _, name string) (*remote.Target, map[string][]byte, error) {
 		return &remote.Target{Name: name, Host: "127.0.0.1", User: "tester"}, nil, nil
 	}
 	SetSSHTargetResolver(resolver)

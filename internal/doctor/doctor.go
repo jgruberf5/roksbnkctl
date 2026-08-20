@@ -90,7 +90,7 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	// runtime — `--backend docker` runs upstream `hashicorp/terraform`
 	// in a container, but the local backend still needs a host
 	// install.
-	out = append(out, checkBinary("terraform", true, "required for `roksbnkctl up` (local backend); `--backend docker` runs containerised but the local path needs a host install"))
+	out = append(out, checkBinary(ctx, "terraform", true, "required for `roksbnkctl up` (local backend); `--backend docker` runs containerised but the local path needs a host install"))
 
 	// REQUIRED: helm is invoked by terraform's `null_resource` +
 	// `local-exec` provisioners during `roksbnkctl up`. The bundled
@@ -105,16 +105,16 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 	// hashicorp/helm provider speaks the Helm 3 protocol via an
 	// embedded Go runtime). Tracked in docs/PLAN.md §"What's
 	// deliberately deferred to post-v1.0".
-	out = append(out, checkBinary("helm", true, "required for `roksbnkctl up`; terraform's null_resource+local-exec provisioners (cert_manager / flo / cne_instance) shell out to `helm upgrade --install`. `--backend docker` runs terraform containerised but the local-exec still needs a host install."))
+	out = append(out, checkBinary(ctx, "helm", true, "required for `roksbnkctl up`; terraform's null_resource+local-exec provisioners (cert_manager / flo / cne_instance) shell out to `helm upgrade --install`. `--backend docker` runs terraform containerised but the local-exec still needs a host install."))
 
 	// INFORMATIONAL: every other tool. Missing surfaces as StatusOK
 	// with a "(internalised; …)" detail explaining the alternative.
 	// Present surfaces as StatusOK with the path/version.
-	out = append(out, checkBinaryInformational("kubectl", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
-	out = append(out, checkBinaryInformational("oc", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
-	out = append(out, checkBinaryInformational("ibmcloud", "bundled image runnable via `--backend docker` or `--backend ssh:<target>`; host install used only for the default `--backend local` passthrough"))
-	out = append(out, checkBinaryInformational("iperf3", "bundled image runnable via `--backend k8s`; host install used only for `--backend local` north-south tests"))
-	out = append(out, checkBinaryInformational("dig", "DNS probe internalised via miekg/dns (`roksbnkctl test dns`); host install no longer required"))
+	out = append(out, checkBinaryInformational(ctx, "kubectl", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
+	out = append(out, checkBinaryInformational(ctx, "oc", "internalised in `roksbnkctl k *` via client-go; host install used only when passthrough is convenient"))
+	out = append(out, checkBinaryInformational(ctx, "ibmcloud", "bundled image runnable via `--backend docker` or `--backend ssh:<target>`; host install used only for the default `--backend local` passthrough"))
+	out = append(out, checkBinaryInformational(ctx, "iperf3", "bundled image runnable via `--backend k8s`; host install used only for `--backend local` north-south tests"))
+	out = append(out, checkBinaryInformational(ctx, "dig", "DNS probe internalised via miekg/dns (`roksbnkctl test dns`); host install no longer required"))
 
 	// Kubeconfig: informational. Many doctor invocations happen
 	// pre-`up`, before any cluster exists; surfacing a missing
@@ -137,7 +137,7 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 		if runtime.GOOS != "windows" {
 			out = append(out, checkWorkspacePerms(cctx))
 		}
-		out = append(out, checkAPIKey(cctx))
+		out = append(out, checkAPIKey(ctx, cctx))
 		out = append(out, checkIBMAuth(ctx, cctx))
 		out = append(out, checkQuota(ctx, cctx))
 	}
@@ -146,7 +146,7 @@ func runWithWhy(ctx context.Context, cctx *config.Context) []withWhy {
 }
 
 // checkBinary reports whether name is on PATH and (best-effort) which version.
-func checkBinary(name string, required bool, w string) withWhy {
+func checkBinary(ctx context.Context, name string, required bool, w string) withWhy {
 	c := Check{Name: name, Optional: !required}
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -160,7 +160,7 @@ func checkBinary(name string, required bool, w string) withWhy {
 	}
 	c.Status = StatusOK
 	c.Detail = path
-	if v := versionLine(name); v != "" {
+	if v := versionLine(ctx, name); v != "" {
 		c.Detail = fmt.Sprintf("%s (%s)", path, v)
 	}
 	return withWhy{Check: c, Why: w}
@@ -174,7 +174,7 @@ func checkBinary(name string, required bool, w string) withWhy {
 //
 // The intent: a fresh dev box without kubectl/oc should produce no
 // warnings for everyday roksbnkctl use post-Sprint-2.
-func checkBinaryInformational(name, w string) withWhy {
+func checkBinaryInformational(ctx context.Context, name, w string) withWhy {
 	c := Check{Name: name, Optional: true}
 	path, err := exec.LookPath(name)
 	if err != nil {
@@ -184,7 +184,7 @@ func checkBinaryInformational(name, w string) withWhy {
 	}
 	c.Status = StatusOK
 	c.Detail = path
-	if v := versionLine(name); v != "" {
+	if v := versionLine(ctx, name); v != "" {
 		c.Detail = fmt.Sprintf("%s (%s)", path, v)
 	}
 	return withWhy{Check: c, Why: w}
@@ -192,7 +192,7 @@ func checkBinaryInformational(name, w string) withWhy {
 
 // versionLine runs the binary's --version-equivalent and returns the
 // first non-empty line, trimmed. Best-effort — empty on any error.
-func versionLine(name string) string {
+func versionLine(ctx context.Context, name string) string {
 	var args []string
 	switch name {
 	case "terraform":
@@ -212,9 +212,9 @@ func versionLine(name string) string {
 	default:
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	vctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	out, err := exec.CommandContext(vctx, name, args...).CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -291,14 +291,14 @@ func checkWorkspacePerms(cctx *config.Context) withWhy {
 	return withWhy{Check: c, Why: why}
 }
 
-func checkAPIKey(cctx *config.Context) withWhy {
+func checkAPIKey(ctx context.Context, cctx *config.Context) withWhy {
 	c := Check{Name: "ibmcloud api key"}
 	resolver := &cred.Resolver{
 		Workspace:      cctx.WorkspaceName,
 		Source:         cctx.Workspace.IBMCloud.APIKeySource,
 		NonInteractive: true,
 	}
-	_, err := resolver.IBMCloudAPIKey(context.Background())
+	_, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		c.Status = StatusError
 		c.Detail = err.Error()

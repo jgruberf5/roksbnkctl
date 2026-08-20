@@ -36,7 +36,7 @@ func guardSharedVPCTeardown(ctx context.Context, ws *config.Workspace, workspace
 	if region == "" {
 		return nil
 	}
-	_, ic, err := openIBMClient()
+	_, ic, err := openIBMClient(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  (shared-VPC teardown check skipped: %v)\n", err)
 		return nil

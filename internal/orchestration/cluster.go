@@ -81,8 +81,8 @@ type ClusterInputs struct {
 	// chokepoint wrappers (cli.workspaceEnv / cli.workspaceEnvCore).
 	// They stay in cli (frozen, pinned by env_split_test.go); injected
 	// here so the moved code composes env exactly as before.
-	WorkspaceEnv     func() (*config.Context, []string, error)
-	WorkspaceEnvCore func() (*config.Context, []string, error)
+	WorkspaceEnv     func(ctx context.Context) (*config.Context, []string, error)
+	WorkspaceEnvCore func(ctx context.Context) (*config.Context, []string, error)
 	// ResolveKubeTarget answers "which kubeconfig + context addresses THIS
 	// workspace's cluster" (cli.resolveWorkspaceKubeTarget → workspaceKubeTarget).
 	// It is read at the moment the pin is applied, never earlier: -w arrives inside
@@ -98,13 +98,13 @@ type ClusterInputs struct {
 	DispatchRemoteShell func(ctx context.Context, target string) error
 	// OpenIBMClient is cli.openIBMClient (cos.go stays in cli per the
 	// scope) — used by the kubeconfig --download path.
-	OpenIBMClient func() (*config.Context, *ibm.Client, error)
+	OpenIBMClient func(ctx context.Context) (*config.Context, *ibm.Client, error)
 }
 
 // ── runE implementations ────────────────────────────────────────────
 
 func RunShell(ctx context.Context, in *ClusterInputs) error {
-	_, env, err := in.WorkspaceEnv()
+	_, env, err := in.WorkspaceEnv(ctx)
 	if err != nil {
 		return err
 	}
@@ -144,13 +144,13 @@ func RunExec(ctx context.Context, in *ClusterInputs, args []string) error {
 	if on != "" {
 		// Remote: machine-portable core only — never forward the local
 		// KUBECONFIG path across the SSH boundary (Sprint 13 Issue 1).
-		_, core, cerr := in.WorkspaceEnvCore()
+		_, core, cerr := in.WorkspaceEnvCore(ctx)
 		if cerr != nil {
 			return cerr
 		}
 		return in.DispatchRemote(ctx, on, argv, core, false)
 	}
-	_, env, err := in.WorkspaceEnv()
+	_, env, err := in.WorkspaceEnv(ctx)
 	if err != nil {
 		return err
 	}
@@ -315,7 +315,7 @@ func RunKubeconfig(ctx context.Context, in *ClusterInputs) error {
 //  3. terraform output `roks_cluster_name`
 //  4. workspace config.yaml's cluster.name (pre-apply fallback)
 func runKubeconfigDownload(ctx context.Context, in *ClusterInputs) error {
-	cctx, ic, err := in.OpenIBMClient()
+	cctx, ic, err := in.OpenIBMClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -393,13 +393,13 @@ func RunIBMCloudPassthrough(ctx context.Context, in *ClusterInputs, args []strin
 		// --backend (Sprint 3's backend selector) are independent
 		// flags in v0.8; --on takes the legacy SSH path here. Sprint
 		// 4 folds the two together under a real `ssh` backend.
-		_, core, cerr := in.WorkspaceEnvCore()
+		_, core, cerr := in.WorkspaceEnvCore(ctx)
 		if cerr != nil {
 			return cerr
 		}
 		return in.DispatchRemote(ctx, on, append([]string{"ibmcloud"}, argv...), core, false)
 	}
-	cctx, env, err := in.WorkspaceEnv()
+	cctx, env, err := in.WorkspaceEnv(ctx)
 	if err != nil {
 		return err
 	}
@@ -418,7 +418,7 @@ func RunIBMCloudPassthrough(ctx context.Context, in *ClusterInputs, args []strin
 		if err != nil {
 			return fmt.Errorf("ibmcloud not found on PATH (install it to use `roksbnkctl ibmcloud`)")
 		}
-		if err := ensureIBMCloudLoggedIn(bin, env); err != nil {
+		if err := ensureIBMCloudLoggedIn(ctx, bin, env); err != nil {
 			return err
 		}
 		return runWithEnv(bin, argv, env)
@@ -591,8 +591,8 @@ func dispatchBackend(ctx context.Context, in *ClusterInputs, spec, tool string, 
 //
 // Login output is streamed to stderr so users see what's happening
 // when roksbnkctl is taking the extra second.
-func ensureIBMCloudLoggedIn(bin string, env []string) error {
-	probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func ensureIBMCloudLoggedIn(ctx context.Context, bin string, env []string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	probe := exec.CommandContext(probeCtx, bin, "account", "show")
 	probe.Env = env
@@ -604,7 +604,10 @@ func ensureIBMCloudLoggedIn(bin string, env []string) error {
 	if region := envValue(env, "IBMCLOUD_REGION"); region != "" {
 		loginArgs = append(loginArgs, "-r", region)
 	}
-	login := exec.Command(bin, loginArgs...)
+	// CommandContext, not Command: an `ibmcloud login` that hangs on a wedged
+	// IAM endpoint was previously uninterruptible — no timeout and no
+	// cancellation, so Ctrl-C left the user watching a dead terminal.
+	login := exec.CommandContext(ctx, bin, loginArgs...)
 	login.Env = env
 	login.Stdout = os.Stderr
 	login.Stderr = os.Stderr
@@ -634,13 +637,13 @@ func runPassthrough(ctx context.Context, in *ClusterInputs, tool string, args []
 	if on != "" {
 		// Remote: machine-portable core only — never forward the local
 		// KUBECONFIG path across the SSH boundary (Sprint 13 Issue 1).
-		_, core, cerr := in.WorkspaceEnvCore()
+		_, core, cerr := in.WorkspaceEnvCore(ctx)
 		if cerr != nil {
 			return cerr
 		}
 		return in.DispatchRemote(ctx, on, append([]string{tool}, argv...), core, false)
 	}
-	_, env, err := in.WorkspaceEnv()
+	_, env, err := in.WorkspaceEnv(ctx)
 	if err != nil {
 		return err
 	}

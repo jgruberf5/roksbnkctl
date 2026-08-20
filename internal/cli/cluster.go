@@ -109,16 +109,16 @@ func init() {
 // the local-only KUBECONFIG addendum). KUBECONFIG is a host filesystem
 // path that is meaningless on an SSH target — callers crossing the --on
 // boundary MUST use workspaceEnvCore().
-func workspaceEnv() (*config.Context, []string, error) {
-	return orchestration.WorkspaceEnv(flagWorkspace)
+func workspaceEnv(ctx context.Context) (*config.Context, []string, error) {
+	return orchestration.WorkspaceEnv(ctx, flagWorkspace)
 }
 
 // workspaceEnvCore composes the machine-portable subset that is the
 // ONLY workspace-derived env safe to cross the --on SSH boundary; it
 // deliberately omits KUBECONFIG (a local path), including any inherited
 // from the shell (Sprint 13 Issue 1).
-func workspaceEnvCore() (*config.Context, []string, error) {
-	return orchestration.WorkspaceEnvCore(flagWorkspace)
+func workspaceEnvCore(ctx context.Context) (*config.Context, []string, error) {
+	return orchestration.WorkspaceEnvCore(ctx, flagWorkspace)
 }
 
 // remoteSafeEnv strips every local-path-valued var (the single

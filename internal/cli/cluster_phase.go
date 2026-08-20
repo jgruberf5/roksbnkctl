@@ -128,7 +128,7 @@ func init() {
 }
 
 func runClusterRegister(cmd *cobra.Command, args []string) error {
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(cmd.Context())
 	if err != nil {
 		return err
 	}

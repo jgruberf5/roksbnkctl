@@ -54,7 +54,7 @@ func init() {
 }
 
 func runCleanup(cmd *cobra.Command, _ []string) error {
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(cmd.Context())
 	if err != nil {
 		return err
 	}

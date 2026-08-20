@@ -206,7 +206,7 @@ func installTestResolver(t *testing.T, f *fakeSSHD) (cleanup func()) {
 		}
 		return nil
 	}
-	resolver := func(_, name string) (*remote.Target, map[string][]byte, error) {
+	resolver := func(_ context.Context, _, name string) (*remote.Target, map[string][]byte, error) {
 		return &remote.Target{
 			Name:            name,
 			Host:            f.host,

@@ -176,7 +176,7 @@ func liveTGWConnectionState(ctx context.Context, out *config.TGWOutputs) string 
 	// Deliberately does NOT interpolate the openIBMClient error: it comes from
 	// credential resolution (which reads IBMCloud.APIKeySource), and echoing that
 	// into a status line is exactly the clear-text-logging pattern to avoid.
-	_, ic, err := openIBMClient()
+	_, ic, err := openIBMClient(ctx)
 	if err != nil {
 		return "(unknown: no IBM credentials configured)"
 	}

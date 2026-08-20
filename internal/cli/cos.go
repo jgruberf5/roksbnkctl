@@ -184,7 +184,7 @@ func init() {
 
 func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 
 func runCOSInstanceDelete(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	_, ic, err := openIBMClient()
+	_, ic, err := openIBMClient(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func runCOSInstanceDelete(cmd *cobra.Command, args []string) error {
 var errCOSAborted = errors.New("aborted")
 
 func runCOSInstanceList(cmd *cobra.Command, _ []string) error {
-	_, ic, err := openIBMClient()
+	_, ic, err := openIBMClient(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -444,7 +444,11 @@ func runCOSObjectList(cmd *cobra.Command, args []string) error {
 // openIBMClient resolves the workspace's API key + region and returns
 // an *ibm.Client. Used by commands that operate on Resource Controller
 // or IAM (not S3 directly).
-func openIBMClient() (*config.Context, *ibm.Client, error) {
+//
+// ctx reaches the credential resolver, which can block on the OS keychain.
+// Without it a Ctrl-C during that block is accepted by the signal handler and
+// then ignored, because the work is running on a context that cannot hear it.
+func openIBMClient(ctx context.Context) (*config.Context, *ibm.Client, error) {
 	cctx, err := config.New(flagWorkspace)
 	if err != nil {
 		return nil, nil, err
@@ -456,7 +460,7 @@ func openIBMClient() (*config.Context, *ibm.Client, error) {
 		Workspace: cctx.WorkspaceName,
 		Source:    cctx.Workspace.IBMCloud.APIKeySource,
 	}
-	apiKey, err := resolver.IBMCloudAPIKey(context.Background())
+	apiKey, err := resolver.IBMCloudAPIKey(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolving API key: %w", err)
 	}
@@ -507,7 +511,7 @@ func openCOSClient(ctx context.Context) (*cos.Client, error) {
 		return cachedCOSClient, nil
 	}
 
-	cctx, ic, err := openIBMClient()
+	cctx, ic, err := openIBMClient(ctx)
 	if err != nil {
 		return nil, err
 	}
