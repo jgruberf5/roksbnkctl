@@ -12,6 +12,8 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
   A record is now trusted only when it describes the **configured** target — same target kind, repository and host. Otherwise it is discarded with the reason printed, and everything reads as missing: the safe direction, since it prompts a replicate and replicate skips artifacts already present at the right digest. When the target cannot be resolved at all (missing credentials, an unreachable region) the record is still trusted, because knowing less than the record is not grounds for discarding it.
 
+  **`registry delete` and `registry prune` had the same flaw, destructively.** Both take their artifact list from the record and act on the *configured* target, so a record describing another mirror deletes one registry's contents out of a different one — and `delete`'s confirmation prompt names the **record's** host, so it would state the wrong destination while doing it. Both now **refuse** rather than discard: a read-only `diff` can afford to shrug and report everything missing, an unrecoverable delete cannot.
+
   `diff` also now states what its answer is based on. It reads the record, so "in sync" means *nothing left to replicate according to what was last replicated* — not *every artifact is present*. Only `verify` establishes the latter, and the output now says so. (#109)
 
 ## v1.49.1 — 2026-08-20

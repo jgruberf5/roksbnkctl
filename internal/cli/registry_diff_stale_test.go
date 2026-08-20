@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -76,4 +77,54 @@ func TestMirrorRecordMismatch(t *testing.T) {
 			t.Errorf("an unresolvable target should say nothing, got: %s", why)
 		}
 	})
+}
+
+// The destructive commands REFUSE rather than shrug.
+//
+// delete takes its artifact list from the RECORD and removes it from the
+// CONFIGURED target. With a record describing another mirror that deletes one
+// registry's contents out of a different one — and delete's confirmation prompt
+// names the RECORD's host, so it would state the wrong destination while doing
+// it. diff can afford to discard a mismatched record and report everything
+// missing; an unrecoverable delete cannot.
+//
+// This asserts the wiring, not just the helper: a guard that exists but is never
+// called is the shape that let #100 ship.
+func TestDestructiveRegistryCommandsGuardAgainstAStaleRecord(t *testing.T) {
+	src, err := os.ReadFile("registry.go")
+	if err != nil {
+		t.Fatalf("reading registry.go: %v", err)
+	}
+	body := string(src)
+
+	for _, fn := range []string{"runRegistryDelete", "runRegistryPrune"} {
+		start := strings.Index(body, "func "+fn)
+		if start < 0 {
+			t.Fatalf("%s not found — this test can no longer detect the gap", fn)
+		}
+		end := strings.Index(body[start:], "\n}\n")
+		if end < 0 {
+			t.Fatalf("could not delimit %s", fn)
+		}
+		fnBody := body[start : start+end]
+
+		if !strings.Contains(fnBody, "mirrorRecordMismatch") {
+			t.Errorf("%s does not check mirrorRecordMismatch: it would delete the recorded "+
+				"mirror's artifact list from the CONFIGURED target", fn)
+			continue
+		}
+		if !strings.Contains(fnBody, "refusing to") {
+			t.Errorf("%s checks the record but does not REFUSE — a destructive command must "+
+				"not proceed on a record for a different mirror", fn)
+		}
+		// delete's prompt names the record's host, so the refusal has to come first.
+		if fn == "runRegistryDelete" {
+			guard := strings.Index(fnBody, "mirrorRecordMismatch")
+			prompt := strings.Index(fnBody, "promptYesNo")
+			if prompt >= 0 && guard > prompt {
+				t.Errorf("%s prompts before guarding — the prompt names the RECORD's host, "+
+					"so it would ask about the wrong registry", fn)
+			}
+		}
+	}
 }

@@ -633,6 +633,17 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 		}
 		return err
 	}
+	// REFUSE, not discard. delete takes its artifact list from the RECORD and
+	// removes it from the CONFIGURED target, so a record describing another
+	// mirror deletes one registry's contents out of a different one — and the
+	// prompt below names the record's host, so it would state the wrong
+	// destination while doing it. diff can afford to shrug this off and report
+	// everything missing; an unrecoverable delete cannot (#109).
+	if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+		return fmt.Errorf("refusing to delete: the recorded mirror does not describe the configured target — %s.\n"+
+			"  Deleting would remove that mirror's artifact list from THIS one.\n"+
+			"  Point the workspace back at the recorded mirror, or clear the record with `registry adopt`", why)
+	}
 	if len(rec.Artifacts) == 0 {
 		fmt.Fprintln(os.Stderr, "mirror is empty — nothing to delete")
 		return nil
@@ -1284,6 +1295,13 @@ func runRegistryPrune(cmd *cobra.Command, _ []string) error {
 	rec, err := config.ReadRegistryMirror(name)
 	if err != nil {
 		return err
+	}
+
+	// Same refusal as delete: prune computes what to REMOVE from the record and
+	// removes it from the configured target. A record for another mirror makes
+	// that a delete against the wrong registry (#109).
+	if why := mirrorRecordMismatch(cmd.Context(), name, ws, rec); why != "" {
+		return fmt.Errorf("refusing to prune: the recorded mirror does not describe the configured target — %s", why)
 	}
 	inBOM := map[string]bool{}
 	for _, a := range bom.Artifacts {
