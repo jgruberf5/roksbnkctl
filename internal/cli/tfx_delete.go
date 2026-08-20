@@ -59,7 +59,7 @@ func runTFXDeleteCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ri := tfxResource(dc, gvr, flagDeleteNS)
-	return runTFXDelete(cmd.Context(), ri, flagDeleteName, flagDeleteIgnoreMissing, os.Stderr)
+	return runTFXDelete(cmdContext(cmd), ri, flagDeleteName, flagDeleteIgnoreMissing, os.Stderr)
 }
 
 // runTFXDelete is the testable core: delete name, optionally swallowing NotFound.

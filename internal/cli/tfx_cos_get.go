@@ -64,7 +64,7 @@ func runTFXCosGetCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("creating COS client: %w", err)
 	}
-	return runTFXCosGet(cmd.Context(), cl, flagCosBucket, flagCosKey, flagCosOut, os.Stderr)
+	return runTFXCosGet(cmdContext(cmd), cl, flagCosBucket, flagCosKey, flagCosOut, os.Stderr)
 }
 
 // cosObjectGetter is the slice of the COS client tfx cos-get needs — so the core

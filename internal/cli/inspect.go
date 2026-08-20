@@ -122,7 +122,7 @@ func runStatus(cmd *cobra.Command, _ []string) error {
 	// Flush so the cluster check can stream its own line cleanly after.
 	tw.Flush()
 
-	clusterStatus := probeCluster(cmd.Context(), kcPath)
+	clusterStatus := probeCluster(cmdContext(cmd), kcPath)
 	fmt.Fprintf(os.Stdout, "Cluster:        %s\n", clusterStatus)
 	return nil
 }
@@ -163,7 +163,7 @@ func runStatusJSON(cmd *cobra.Command, cctx *config.Context) error {
 		}
 		if kc := k8s.DefaultKubeconfigPath(); kc != "" {
 			ws.Kubeconfig = kc
-			ws.ClusterProbe = probeCluster(cmd.Context(), kc)
+			ws.ClusterProbe = probeCluster(cmdContext(cmd), kc)
 		}
 	}
 	enc := json.NewEncoder(cmd.OutOrStdout())
@@ -324,7 +324,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 				ErrOut: os.Stderr,
 			},
 		}
-		if err := opts.Run(cmd.Context()); err != nil {
+		if err := opts.Run(cmdContext(cmd)); err != nil {
 			// If the pod-name path also fails with NotFound, surface a
 			// clearer "not a component AND not a pod" message that
 			// nudges toward `-A` or the component list.
@@ -348,7 +348,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		ns = flagLogsNamespace
 	}
 
-	ctx := cmd.Context()
+	ctx := cmdContext(cmd)
 	pods, err := kc.Clientset().CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		LabelSelector: comp.Selector,
 	})

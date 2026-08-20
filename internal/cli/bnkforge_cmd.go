@@ -236,7 +236,7 @@ func runBNKForgeUnregister(cmd *cobra.Command, _ []string) error {
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
 	}
-	return unregisterFromBNKForge(cmd.Context(), cctx, &eff, true)
+	return unregisterFromBNKForge(cmdContext(cmd), cctx, &eff, true)
 }
 
 func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {
@@ -267,5 +267,5 @@ func runBNKForgeRegister(cmd *cobra.Command, _ []string) error {
 	if flagBNKForgePassword != "" {
 		_ = os.Setenv(envForgePassword, flagBNKForgePassword)
 	}
-	return registerWithBNKForge(cmd.Context(), cctx, &eff, true, flagBNKForgeForce)
+	return registerWithBNKForge(cmdContext(cmd), cctx, &eff, true, flagBNKForgeForce)
 }

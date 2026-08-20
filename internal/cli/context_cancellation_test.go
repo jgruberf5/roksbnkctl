@@ -26,6 +26,11 @@ var allowedBackgroundContexts = map[string]string{
 	// The root of the process context tree — there is nothing to derive from.
 	"internal/cli/root.go": "signal.NotifyContext establishes the cancellable root",
 
+	// cmdContext's nil branch, which only tests reach: they invoke a RunE body
+	// directly without a cobra tree. Production callers always pass a command,
+	// so nothing is detached from cancellation there.
+	"internal/cli/cmdctx.go": "cmdContext's nil-command fallback, reachable only from tests",
+
 	// Cleanup that runs precisely BECAUSE the parent context is already dead.
 	// Inheriting it would mean the cleanup could never run.
 	"internal/cli/test.go":                 "teardownIperf3Best: cleanup after a cancelled run",

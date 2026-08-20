@@ -118,7 +118,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 		if cctx.Workspace == nil {
 			return fmt.Errorf("workspace %q does not exist; run `roksbnkctl init` (without --upgrade-tf) to create it", cctx.WorkspaceName)
 		}
-		ctx, cancel := contextWithTimeout(cmd.Context(), initTimeout)
+		ctx, cancel := contextWithTimeout(cmdContext(cmd), initTimeout)
 		defer cancel()
 		return runUpgradeTF(ctx, cctx)
 	}
@@ -155,7 +155,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 
 	// API key — env, then keychain, then prompt; offer to save on prompt.
 	resolver := &cred.Resolver{Workspace: cctx.WorkspaceName}
-	apiKey, err := resolver.IBMCloudAPIKey(cmd.Context())
+	apiKey, err := resolver.IBMCloudAPIKey(cmdContext(cmd))
 	if err != nil {
 		return fmt.Errorf("resolving API key: %w", err)
 	}
@@ -176,7 +176,7 @@ func runInit(cmd *cobra.Command, _ []string) error {
 	// Derived from the command's context, not Background: WithCancel adds no
 	// deadline, so the interview keeps its unbounded budget while Ctrl-C still
 	// reaches every call made under it.
-	ctx, cancel := context.WithCancel(cmd.Context())
+	ctx, cancel := context.WithCancel(cmdContext(cmd))
 	defer cancel()
 
 	fmt.Fprintln(os.Stderr, "\n→ Verifying IBM Cloud credentials...")

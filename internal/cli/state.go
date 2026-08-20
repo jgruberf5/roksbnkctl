@@ -258,7 +258,7 @@ func runStateMigrate(cmd *cobra.Command, _ []string) error {
 		}
 
 		if !flagStateMigrateForce {
-			exists, herr := tf.RemoteS3StateExists(cmd.Context(), *ws.State.S3, key, access, secret)
+			exists, herr := tf.RemoteS3StateExists(cmdContext(cmd), *ws.State.S3, key, access, secret)
 			if herr != nil {
 				fmt.Fprintf(os.Stderr, "✗ %s: %v\n", p.name, herr)
 				failed++
@@ -275,13 +275,13 @@ func runStateMigrate(cmd *cobra.Command, _ []string) error {
 		// Open writes the s3 backend override + sets AWS_* env; apiKey "" is
 		// fine here — init -migrate-state only reconfigures the backend, it
 		// makes no IBM-authenticated provider calls.
-		tfws, oerr := tf.Open(cmd.Context(), cctx.WorkspaceName, ws, p.dir, "", os.Stdout, os.Stderr)
+		tfws, oerr := tf.Open(cmdContext(cmd), cctx.WorkspaceName, ws, p.dir, "", os.Stdout, os.Stderr)
 		if oerr != nil {
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", p.name, oerr)
 			failed++
 			continue
 		}
-		if merr := tfws.InitMigrate(cmd.Context(), os.Stdout, os.Stderr); merr != nil {
+		if merr := tfws.InitMigrate(cmdContext(cmd), os.Stdout, os.Stderr); merr != nil {
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", p.name, merr)
 			failed++
 			continue

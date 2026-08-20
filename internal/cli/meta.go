@@ -114,9 +114,9 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		cctx = &config.Context{WorkspaceName: "(unknown)"}
 	}
 
-	results := doctor.Run(cmd.Context(), cctx)
+	results := doctor.Run(cmdContext(cmd), cctx)
 	if flagDoctorTarget != "" {
-		results = append(results, runTargetCheck(cmd.Context(), cctx, flagDoctorTarget))
+		results = append(results, runTargetCheck(cmdContext(cmd), cctx, flagDoctorTarget))
 	}
 	// Sprint 5: DNS probe sanity check. Runs the in-process miekg/dns
 	// probe against the workspace's `test.dns.default_target` (or
@@ -124,11 +124,11 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// probe library is built into the binary, but useful for
 	// surfacing "DNS resolution latency" alongside the other doctor
 	// metrics.
-	if c, ok := runDNSProbeCheck(cmd.Context(), cctx); ok {
+	if c, ok := runDNSProbeCheck(cmdContext(cmd), cctx); ok {
 		results = append(results, c)
 	}
 	if flagDoctorBackend != "" {
-		results = append(results, runBackendChecks(cmd.Context(), cctx, flagDoctorBackend)...)
+		results = append(results, runBackendChecks(cmdContext(cmd), cctx, flagDoctorBackend)...)
 	}
 	if err := doctor.PrintResults(os.Stdout, results); err != nil {
 		return err

@@ -87,7 +87,7 @@ func runTFXPatchCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ri := tfxResource(dc, gvr, flagPatchNS)
-	return runTFXPatch(cmd.Context(), ri, flagPatchName, pt, body,
+	return runTFXPatch(cmdContext(cmd), ri, flagPatchName, pt, body,
 		flagPatchFieldMgr, flagPatchForce, flagPatchSubresource, os.Stderr)
 }
 

@@ -226,7 +226,7 @@ func tryAutoClusterJumphosts(ctx context.Context, cctx *config.Context, tfws *tf
 type cmdCtxKey struct{}
 
 func ctxWithCmd(cmd *cobra.Command) context.Context {
-	return context.WithValue(cmd.Context(), cmdCtxKey{}, cmd)
+	return context.WithValue(cmdContext(cmd), cmdCtxKey{}, cmd)
 }
 
 func cmdFromCtx(ctx context.Context) *cobra.Command {

@@ -212,7 +212,7 @@ func runTerraformPassthrough(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	tfws, err := tf.OpenReadOnly(cmd.Context(), cctx.WorkspaceName, cctx.Workspace, stateDir)
+	tfws, err := tf.OpenReadOnly(cmdContext(cmd), cctx.WorkspaceName, cctx.Workspace, stateDir)
 	if err != nil {
 		if errors.Is(err, tf.ErrNoState) {
 			return fmt.Errorf("workspace has no terraform state for phase %s; run `roksbnkctl up` first", phaseLabel)
@@ -220,7 +220,7 @@ func runTerraformPassthrough(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	out, runErr := tfws.RunReadOnly(cmd.Context(), argv)
+	out, runErr := tfws.RunReadOnly(cmdContext(cmd), argv)
 	if out != "" {
 		fmt.Print(out)
 		if !strings.HasSuffix(out, "\n") {

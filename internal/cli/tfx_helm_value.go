@@ -115,7 +115,7 @@ func runTFXHelmPullChart(cmd *cobra.Command, _ []string) error {
 	if flagHelmChart == "" || flagHelmOut == "" {
 		return fmt.Errorf("--chart and --out are required")
 	}
-	tgz, cleanup, err := tfxHelmPullArchive(cmd.Context())
+	tgz, cleanup, err := tfxHelmPullArchive(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func runTFXHelmChartVersion(cmd *cobra.Command, _ []string) error {
 		if flagHelmChart == "" || flagHelmFile == "" {
 			return fmt.Errorf("--chart and --file are required (or use --manifest-file)")
 		}
-		dir, cleanup, err := tfxHelmPull(cmd.Context())
+		dir, cleanup, err := tfxHelmPull(cmdContext(cmd))
 		if err != nil {
 			return err
 		}
@@ -178,7 +178,7 @@ func runTFXHelmPullFile(cmd *cobra.Command, _ []string) error {
 	if flagHelmChart == "" || flagHelmFile == "" || flagHelmOut == "" {
 		return fmt.Errorf("--chart, --file and --out are required")
 	}
-	dir, cleanup, err := tfxHelmPull(cmd.Context())
+	dir, cleanup, err := tfxHelmPull(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func runTFXHelmProdJWKS(cmd *cobra.Command, _ []string) error {
 	if flagHelmChart == "" || flagHelmOut == "" {
 		return fmt.Errorf("--chart and --out are required")
 	}
-	dir, cleanup, err := tfxHelmPull(cmd.Context())
+	dir, cleanup, err := tfxHelmPull(cmdContext(cmd))
 	if err != nil {
 		return err
 	}

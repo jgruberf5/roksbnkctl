@@ -67,7 +67,7 @@ func runTFXApplyCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	return runTFXApply(cmd.Context(), dc, mapper, objs, flagApplyFieldMgr, flagApplyForce, os.Stderr)
+	return runTFXApply(cmdContext(cmd), dc, mapper, objs, flagApplyFieldMgr, flagApplyForce, os.Stderr)
 }
 
 // runTFXApply server-side-applies each object, resolving Kind→resource via mapper.

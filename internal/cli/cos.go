@@ -184,7 +184,7 @@ func init() {
 
 func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	cctx, ic, err := openIBMClient(cmd.Context())
+	cctx, ic, err := openIBMClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 	if rgName == "" {
 		rgName = "default"
 	}
-	rgID, err := ic.ResolveResourceGroup(cmd.Context(), rgName)
+	rgID, err := ic.ResolveResourceGroup(cmdContext(cmd), rgName)
 	if err != nil {
 		return fmt.Errorf("resolving resource group %q: %w", rgName, err)
 	}
@@ -205,7 +205,7 @@ func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "→ Creating COS instance %q (plan=%s, rg=%s, target=%s)\n",
 		name, plan, rgName, flagCOSTarget)
-	inst, err := ic.CreateCOSInstance(cmd.Context(), name, rgID, plan, flagCOSTarget)
+	inst, err := ic.CreateCOSInstance(cmdContext(cmd), name, rgID, plan, flagCOSTarget)
 	if err != nil {
 		return err
 	}
@@ -215,14 +215,14 @@ func runCOSInstanceCreate(cmd *cobra.Command, args []string) error {
 
 func runCOSInstanceDelete(cmd *cobra.Command, args []string) error {
 	name := args[0]
-	_, ic, err := openIBMClient(cmd.Context())
+	_, ic, err := openIBMClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
 
 	idOrCRN := name
 	if !strings.HasPrefix(name, "crn:v1:") {
-		inst, err := ic.GetCOSInstanceByName(cmd.Context(), name)
+		inst, err := ic.GetCOSInstanceByName(cmdContext(cmd), name)
 		if err != nil {
 			return err
 		}
@@ -237,7 +237,7 @@ func runCOSInstanceDelete(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "→ Deleting COS instance %s\n", name)
 	// flagCOSRecursive is the "no-recursive" flag — invert.
-	if err := ic.DeleteCOSInstance(cmd.Context(), idOrCRN, !flagCOSRecursive); err != nil {
+	if err := ic.DeleteCOSInstance(cmdContext(cmd), idOrCRN, !flagCOSRecursive); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "✓ Deleted")
@@ -250,11 +250,11 @@ func runCOSInstanceDelete(cmd *cobra.Command, args []string) error {
 var errCOSAborted = errors.New("aborted")
 
 func runCOSInstanceList(cmd *cobra.Command, _ []string) error {
-	_, ic, err := openIBMClient(cmd.Context())
+	_, ic, err := openIBMClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
-	insts, err := ic.ListCOSInstances(cmd.Context())
+	insts, err := ic.ListCOSInstances(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -271,29 +271,29 @@ func runCOSInstanceList(cmd *cobra.Command, _ []string) error {
 }
 
 func runCOSBucketCreate(cmd *cobra.Command, args []string) error {
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
 	bucket := args[0]
 	fmt.Fprintf(os.Stderr, "→ Creating bucket %s (class %s)\n", bucket, flagCOSClass)
-	return cc.CreateBucket(cmd.Context(), bucket, flagCOSClass)
+	return cc.CreateBucket(cmdContext(cmd), bucket, flagCOSClass)
 }
 
 func runCOSBucketDelete(cmd *cobra.Command, args []string) error {
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
-	return cc.DeleteBucket(cmd.Context(), args[0])
+	return cc.DeleteBucket(cmdContext(cmd), args[0])
 }
 
 func runCOSBucketList(cmd *cobra.Command, _ []string) error {
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
-	names, err := cc.ListBuckets(cmd.Context())
+	names, err := cc.ListBuckets(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func runCOSBucketGet(cmd *cobra.Command, args []string) error {
 	if flagCOSInstance == "" {
 		return fmt.Errorf("--instance is required (name or CRN)")
 	}
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func runCOSBucketGet(cmd *cobra.Command, args []string) error {
 	opts.NoClobber = flagCOSNoClobber
 	opts.OnItem = onItem
 
-	counts, err := cos.GetBucket(cmd.Context(), flagCOSInstance, bucket, destDir, opts)
+	counts, err := cos.GetBucket(cmdContext(cmd), flagCOSInstance, bucket, destDir, opts)
 	if err != nil {
 		return err
 	}
@@ -380,12 +380,12 @@ func runCOSObjectPut(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("expected <bucket>/<key>, got %q", args[0])
 	}
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "→ Uploading %s to %s/%s\n", args[1], bucket, key)
-	if err := cc.PutObjectFromFile(cmd.Context(), bucket, key, args[1]); err != nil {
+	if err := cc.PutObjectFromFile(cmdContext(cmd), bucket, key, args[1]); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "✓ uploaded")
@@ -397,12 +397,12 @@ func runCOSObjectGet(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("expected <bucket>/<key>, got %q", args[0])
 	}
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "→ Downloading %s/%s to %s\n", bucket, key, args[1])
-	if err := cc.GetObjectToFile(cmd.Context(), bucket, key, args[1]); err != nil {
+	if err := cc.GetObjectToFile(cmdContext(cmd), bucket, key, args[1]); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "✓ downloaded")
@@ -414,20 +414,20 @@ func runCOSObjectDelete(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("expected <bucket>/<key>, got %q", args[0])
 	}
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
-	return cc.DeleteObject(cmd.Context(), bucket, key)
+	return cc.DeleteObject(cmdContext(cmd), bucket, key)
 }
 
 func runCOSObjectList(cmd *cobra.Command, args []string) error {
 	bucket, prefix, _ := strings.Cut(args[0], "/")
-	cc, err := openCOSClient(cmd.Context())
+	cc, err := openCOSClient(cmdContext(cmd))
 	if err != nil {
 		return err
 	}
-	objs, err := cc.ListObjects(cmd.Context(), bucket, prefix)
+	objs, err := cc.ListObjects(cmdContext(cmd), bucket, prefix)
 	if err != nil {
 		return err
 	}

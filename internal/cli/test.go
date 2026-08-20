@@ -165,7 +165,7 @@ func runTestAllCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	_ = cctx
-	all := test.RunAll(cmd.Context(), hosts, flagInsecureTLS)
+	all := test.RunAll(cmdContext(cmd), hosts, flagInsecureTLS)
 	return outputAll(all)
 }
 
@@ -174,7 +174,7 @@ func runTestConnectivityCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	s := test.RunConnectivity(cmd.Context(), hosts, flagInsecureTLS)
+	s := test.RunConnectivity(cmdContext(cmd), hosts, flagInsecureTLS)
 	return outputSuite(s)
 }
 
@@ -191,7 +191,7 @@ func runTestDNSCmd(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	s := test.RunDNS(cmd.Context(), hosts)
+	s := test.RunDNS(cmdContext(cmd), hosts)
 	return outputSuite(s)
 }
 
@@ -259,9 +259,9 @@ func runTestDNSProbe(cmd *cobra.Command) error {
 	}
 
 	if flagDNSGSLBCompare {
-		return runDNSGSLBCompare(cmd.Context(), cctx, target, qtype, server, iterations, flagDNSTimeout)
+		return runDNSGSLBCompare(cmdContext(cmd), cctx, target, qtype, server, iterations, flagDNSTimeout)
 	}
-	return runDNSSingleVantage(cmd.Context(), cctx, target, qtype, server, iterations, flagDNSTimeout)
+	return runDNSSingleVantage(cmdContext(cmd), cctx, target, qtype, server, iterations, flagDNSTimeout)
 }
 
 // runDNSSingleVantage runs the probe on a single backend (default
@@ -561,7 +561,7 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "→ Deploying iperf3 fixture")
-	if err := kc.DeployIperf3(cmd.Context(), k8s.Iperf3Options{
+	if err := kc.DeployIperf3(cmdContext(cmd), k8s.Iperf3Options{
 		Namespace:   ns,
 		Image:       image,
 		ServiceType: svcType,
@@ -569,15 +569,15 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if !flagKeepFixtures {
-		defer teardownIperf3Best(cmd.Context(), kc, ns)
+		defer teardownIperf3Best(cmdContext(cmd), kc, ns)
 	}
 
 	fmt.Fprintln(os.Stderr, "→ Waiting for iperf3 server pod ready")
-	if err := kc.WaitIperf3Ready(cmd.Context(), ns, 0); err != nil {
+	if err := kc.WaitIperf3Ready(cmdContext(cmd), ns, 0); err != nil {
 		return err
 	}
 
-	endpoint, err := resolveIperf3Endpoint(cmd.Context(), kc, ns, mode)
+	endpoint, err := resolveIperf3Endpoint(cmdContext(cmd), kc, ns, mode)
 	if err != nil {
 		return err
 	}
@@ -600,16 +600,16 @@ func runTestThroughputCmd(cmd *cobra.Command, _ []string) error {
 	// jumphost.
 	switch {
 	case backendSpec == "" || backendSpec == "local":
-		s := test.RunThroughput(cmd.Context(), opts)
+		s := test.RunThroughput(cmdContext(cmd), opts)
 		return outputSuite(s)
 	case backendSpec == "k8s":
-		s, err := runIperf3ClientK8s(cmd.Context(), kc, image, opts)
+		s, err := runIperf3ClientK8s(cmdContext(cmd), kc, image, opts)
 		if err != nil {
 			return err
 		}
 		return outputSuite(s)
 	case strings.HasPrefix(backendSpec, "ssh:"):
-		s, err := runIperf3ClientSSH(cmd.Context(), backendSpec, opts)
+		s, err := runIperf3ClientSSH(cmdContext(cmd), backendSpec, opts)
 		if err != nil {
 			return err
 		}

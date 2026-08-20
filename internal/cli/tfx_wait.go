@@ -80,7 +80,7 @@ func runTFXWaitCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ri := tfxResource(dc, gvr, flagWaitNS)
-	return runTFXWait(cmd.Context(), ri, flagWaitName, m, flagWaitTimeout, flagWaitInterval, flagWaitMode, os.Stderr)
+	return runTFXWait(cmdContext(cmd), ri, flagWaitName, m, flagWaitTimeout, flagWaitInterval, flagWaitMode, os.Stderr)
 }
 
 // errTFXWaitTimeout signals the watch strategy's OWN deadline fired — a genuine

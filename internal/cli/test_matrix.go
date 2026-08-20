@@ -107,7 +107,7 @@ func runTestMatrixCmd(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Deploy fixtures, then schedule teardown unless --keep.
-	if err := deployMatrixFixtures(cmd.Context(), spec); err != nil {
+	if err := deployMatrixFixtures(cmdContext(cmd), spec); err != nil {
 		return err
 	}
 	if !flagKeepFixtures {
@@ -118,7 +118,7 @@ func runTestMatrixCmd(cmd *cobra.Command, _ []string) error {
 	probes := make([]test.ProbeResult, 0, len(cells))
 	for i, c := range cells {
 		fmt.Fprintf(os.Stderr, "→ [%d/%d] %s (%s, client %s → %s)\n", i+1, len(cells), c.Name, c.Family, c.ClientLabel, c.ServerLabel)
-		probes = append(probes, runMatrixCell(cmd.Context(), cctx, c))
+		probes = append(probes, runMatrixCell(cmdContext(cmd), cctx, c))
 	}
 	run := test.NewMatrixRun(start, probes)
 	return outputMatrix(run)
