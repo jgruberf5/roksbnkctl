@@ -441,8 +441,8 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr, "✓ no changes")
 		// Still refresh cluster-outputs.json so a no-op cluster up
 		// updates the recorded_at timestamp + catches any drift in
-		// cluster identity. Best-effort.
-		_ = persistClusterOutputs(ctx, cctx, tfws, "cluster-up")
+		// cluster identity.
+		tryPersistClusterOutputs(ctx, cctx, tfws, "cluster-up")
 		tryAutoKubeconfig(ctx, cctx, tfws)
 		tryRegisterBNKForge(ctx, cctx)
 		tryAutoConnectTGW(cmd, cctx)
@@ -457,14 +457,36 @@ func runClusterUp(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := persistClusterOutputs(ctx, cctx, tfws, "cluster-up"); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: apply succeeded but cluster-outputs.json write failed: %v\n", err)
-		fmt.Fprintln(os.Stderr, "         (run `roksbnkctl cluster register <name>` to populate it manually)")
-	}
+	tryPersistClusterOutputs(ctx, cctx, tfws, "cluster-up")
 	tryAutoKubeconfig(ctx, cctx, tfws)
 	tryRegisterBNKForge(ctx, cctx)
 	tryAutoConnectTGW(cmd, cctx)
 	return nil
+}
+
+// tryPersistClusterOutputs records the post-apply cluster identity, reporting a
+// failure rather than swallowing it. Best-effort: the cluster is up either way,
+// so a failed write must not fail the command.
+//
+// It exists because the two `cluster up` exit paths handled the same failure
+// differently — the changed path warned and named the recovery command, the
+// no-change path fifteen lines away discarded the error. The silent one is the
+// likelier to be hit: re-running `cluster up` against an already-converged
+// cluster is routine, and it is exactly the run where nothing else on screen
+// would hint that the record had not been refreshed.
+//
+// What that costs is not hypothetical. cluster-outputs.json is where cluster_id
+// lives, and without it the admission-policy sweep falls back to resolving the
+// cluster by NAME — which internal/orchestration/admission_sweep.go documents as
+// how a sweep once misdirected every delete at the wrong cluster and landed
+// zero, surfacing fifteen minutes later as CNEControllerAvailable never
+// appearing.
+func tryPersistClusterOutputs(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, source string) {
+	if err := persistClusterOutputs(ctx, cctx, tfws, source); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: cluster-outputs.json write failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "         (run `roksbnkctl -w %s cluster register <name>` to populate it manually)\n",
+			cctx.WorkspaceName)
+	}
 }
 
 // tryAutoConnectTGW attaches the cluster VPC to an existing Transit Gateway when

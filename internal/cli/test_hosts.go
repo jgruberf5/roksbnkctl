@@ -18,7 +18,7 @@ import (
 // idempotent add/remove (no-op + log on already-present / absent),
 // hermetic persistence through the existing workspace marshaller.
 //
-// Surface decisions baked in by prompts/sprint24/README.md:
+// Surface decisions:
 //   - Tight scope: only `test.connectivity.extra_hosts`. DNS / throughput
 //     config fields keep their flag-driven equivalents.
 //   - `list` empty output emits zero bytes + exit 0 (NOT an error);

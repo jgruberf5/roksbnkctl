@@ -2,9 +2,8 @@ package cred
 
 // Sprint 3 / PRD 04 — cred resolver chain (env → keychain → config-b64 → prompt).
 //
-// These tests exercise the resolver against the contract in PRD 04 +
-// `prompts/sprint3/staff.md` Priority 1. They expect the staff agent's
-// `internal/cred/resolver.go` to expose:
+// These tests exercise the resolver against the contract in PRD 04.
+// `internal/cred/resolver.go` exposes:
 //
 //	type Resolver struct {
 //	    Workspace      string  // for keychain key + config lookup

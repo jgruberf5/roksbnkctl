@@ -4,8 +4,8 @@
 // cli package stays importable for tests. A small argv preflight runs
 // BEFORE rootCmd.Execute() to reject the stuck-together short-flag-value
 // form (e.g. `-ws canada-roks`) that cobra/pflag would otherwise silently
-// parse as `-w s` + a silently-dropped positional. See
-// prompts/sprint21/README.md §"Integrator decisions baked in".
+// parse as `-w s` + a silently-dropped positional. argvPreflight below
+// documents the rejection rule and the error it produces.
 package main
 
 import (
