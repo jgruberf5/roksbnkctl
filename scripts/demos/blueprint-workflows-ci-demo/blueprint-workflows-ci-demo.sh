@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# blueprint-workflows-ci-demo.sh  (roksbnkctl v1.49.0)
+# blueprint-workflows-ci-demo.sh  (roksbnkctl v1.50.0)
 #
 # The six BNK Forge blueprints, as Argo Workflows, driven ENTIRELY by environment
 # variables. Every setting is rendered into a ConfigMap (non-secret) or a Secret

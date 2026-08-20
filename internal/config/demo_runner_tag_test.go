@@ -89,3 +89,56 @@ func TestDemoEnvExampleRunnerTagMatchesTheCurrentRelease(t *testing.T) {
 			"in the same commit as the CHANGELOG entry.", pin[1], latest, pin[1])
 	}
 }
+
+// Every demo script carries a version stamp in its header. Seven of them said
+// v1.32.0 while the tool was at v1.49.1 — eighteen releases stale — and the
+// blueprint demo said v1.49.0 one release after it was cut.
+//
+// These are the scripts the demos are RECORDED from, so the stamp is on screen.
+// It is cosmetic in the sense that nothing breaks, and not cosmetic in the sense
+// that a viewer reads it as "this is the version you are watching".
+func TestDemoScriptVersionStampsMatchTheCurrentRelease(t *testing.T) {
+	root := repoRootForDemoTest(t)
+	latest := latestReleasedVersion(t, root)
+
+	scripts, err := filepath.Glob(filepath.Join(root, "scripts/demos/*/*.sh"))
+	if err != nil || len(scripts) == 0 {
+		t.Skip("no demo scripts found")
+	}
+	stamp := regexp.MustCompile(`(?m)^# \S+\.sh\s+\(roksbnkctl (v[\d.]+)\)`)
+
+	var checked int
+	for _, s := range scripts {
+		b, rerr := os.ReadFile(s)
+		if rerr != nil {
+			continue
+		}
+		m := stamp.FindStringSubmatch(string(b))
+		if m == nil {
+			continue // not every script carries a stamp
+		}
+		checked++
+		if m[1] != latest {
+			t.Errorf("%s is stamped %s but the newest release is %s — the demo is recorded "+
+				"with that line on screen. Bump it in the release commit.",
+				filepath.Base(s), m[1], latest)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no version stamps found — this test can no longer detect drift, which is worse than the drift")
+	}
+}
+
+// latestReleasedVersion is the newest "## vX.Y.Z" heading in the CHANGELOG.
+func latestReleasedVersion(t *testing.T, root string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	if err != nil {
+		t.Skipf("CHANGELOG unreadable: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^## (v\d+\.\d+\.\d+)`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("no released version heading in CHANGELOG.md — the extraction regex has drifted")
+	}
+	return m[1]
+}
