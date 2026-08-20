@@ -1029,12 +1029,11 @@ func tryAutoJumphost(ctx context.Context, in *LifecycleInputs, cctx *config.Cont
 // jumphost uses (KeySource "tf-output:jumphost_shared_key" — no new
 // output needed).
 //
-// Stale-target handling is OPTION (a) UPSERT-ONLY (integrator decision,
-// prompts/sprint13/README.md): orphaned `jumphost-<oldzone>` entries
+// Stale-target handling is UPSERT-ONLY: orphaned `jumphost-<oldzone>` entries
 // (zone removed / testing_create_cluster_jumphosts flipped false) linger
-// until manual `targets remove`. Option (b) reconcile/orphan-removal is
-// a deliberate post-v1.5.0 follow-up and is intentionally NOT
-// implemented here (no prefix-sweep, no `auto:` schema marker).
+// until manual `targets remove`. Reconciling them automatically would need a
+// prefix sweep or an `auto:` schema marker to tell a generated target from a
+// hand-added one; neither exists, so removal stays manual.
 //
 // Best-effort, mirroring tryAutoJumphost: any failure logs a single
 // `warning:` to stderr and does NOT fail `up` (terraform succeeded;

@@ -37,6 +37,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **`cluster up` reported a failed `cluster-outputs.json` write on one exit path and discarded it on the other.** The changed path warned and named the recovery command; the no-change path fifteen lines away did `_ = persistClusterOutputs(...)`. The silent one is the likelier to be hit — re-running `cluster up` against an already-converged cluster is routine, and it is exactly the run where nothing else on screen would hint that the record had not been refreshed. What it costs is not hypothetical: `cluster-outputs.json` is where `cluster_id` lives, and without it the admission-policy sweep falls back to resolving the cluster by **name**, which `admission_sweep.go` documents as how a sweep once misdirected every delete at the wrong cluster and landed zero. Both paths now go through one reporting helper, so they cannot diverge again. (#119)
+
+### Documentation
+
+- **Four comments cited `prompts/`, a directory removed from the repo at v1.12.0.** One was the package comment on the binary's entrypoint — the first thing a reader opens, opening with a dead end. In each case the rationale was already stated inline, so the citation added nothing but a path the reader cannot follow. A guard test now scans every Go file, tests included: the sweep that filed the issue looked only at non-test source and missed a fourth citation, which the guard found on its first run. (#120)
+
+
 - **Ctrl-C did not cancel credential and `terraform output` calls.** `root.go` builds the process context with `signal.NotifyContext`, so every command receives something that cancels on interrupt. Eight call sites discarded it and started a fresh `context.Background()`, including credential resolution — which can block on the OS keychain — and a `terraform output` shell-out. While one was blocked, Ctrl-C was accepted by the signal handler and then ignored, because the work was running on a context that could not hear it. `ibmcloud login` on the passthrough path was worse still: `exec.Command` with no context at all, so a hang on a wedged IAM endpoint was uninterruptible and unbounded.
 
   The context is now threaded through `openIBMClient`, `WorkspaceEnv`/`WorkspaceEnvCore`, the SSH backend's target resolver, `init`'s interview and per-call bounds, `ensureIBMCloudLoggedIn`, and doctor's binary probes. `init`'s interview context keeps its deliberate absence of a wall-clock deadline — it derives via `WithCancel`, which adds no deadline while restoring cancellation, so slow human answers still never expire a call.
