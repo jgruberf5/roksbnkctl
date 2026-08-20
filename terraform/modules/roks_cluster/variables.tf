@@ -164,3 +164,14 @@ variable "existing_cluster_subnet_ids" {
   type        = list(string)
   default     = []
 }
+
+variable "cluster_http_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0."
+  type        = list(string)
+  default     = []
+}
+variable "cluster_vpc_default_sg_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0."
+  type        = list(string)
+  default     = []
+}

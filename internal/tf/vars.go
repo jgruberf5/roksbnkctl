@@ -329,6 +329,21 @@ func renderFullBody(w io.Writer, ws *config.Workspace, mirror *config.RegistryMi
 		fmt.Fprintf(w, "testing_client_vpc_region = %q\n", res.ClientRegion)
 	}
 
+	// Security-group source CIDRs. Each is emitted only when set, so an unset
+	// list leaves the module's own default standing.
+	if len(res.TestingJumphostAllowedCIDRs) > 0 {
+		fmt.Fprintf(w, "testing_jumphost_allowed_cidrs = %s\n", hclStringList(res.TestingJumphostAllowedCIDRs))
+	}
+	if len(res.TestingClientVPCInboundCIDRs) > 0 {
+		fmt.Fprintf(w, "testing_client_vpc_inbound_cidrs = %s\n", hclStringList(res.TestingClientVPCInboundCIDRs))
+	}
+	if len(res.ClusterHTTPAllowedCIDRs) > 0 {
+		fmt.Fprintf(w, "cluster_http_allowed_cidrs = %s\n", hclStringList(res.ClusterHTTPAllowedCIDRs))
+	}
+	if len(res.ClusterVPCDefaultSGInboundCIDRs) > 0 {
+		fmt.Fprintf(w, "cluster_vpc_default_sg_inbound_cidrs = %s\n", hclStringList(res.ClusterVPCDefaultSGInboundCIDRs))
+	}
+
 	// IBM Cloud VPC SSH key attached to the jumphosts (resolved by `init`).
 	if res.TestingSSHKeyName != "" {
 		fmt.Fprintf(w, "testing_ssh_key_name = %q\n", res.TestingSSHKeyName)

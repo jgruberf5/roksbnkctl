@@ -298,6 +298,29 @@ type ResourcesCfg struct {
 	TestingJumphostProfile string `yaml:"testing_jumphost_profile,omitempty"`
 	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty"`
 	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty"`
+	// Security-group source CIDRs, following the flp_vsi module's split between
+	// a management plane and an in-fabric plane.
+	//
+	// TestingJumphostAllowedCIDRs gates SSH (:22) to the testing jumphosts, which
+	// carry a public floating IP and are reached from wherever the operator
+	// happens to be — so empty means open, and access is key-only. Narrow it to
+	// the operator's public /32 on a shared account.
+	TestingJumphostAllowedCIDRs []string `yaml:"testing_jumphost_allowed_cidrs,omitempty"`
+	// TestingClientVPCInboundCIDRs gates the client VPC's DEFAULT security group,
+	// which the testing phase widens to all protocols and ports. Empty → the
+	// RFC-1918 ranges, where in-fabric test traffic arrives from (the cluster
+	// reaches the client VPC over the Transit Gateway).
+	TestingClientVPCInboundCIDRs []string `yaml:"testing_client_vpc_inbound_cidrs,omitempty"`
+	// ClusterHTTPAllowedCIDRs gates :80 on the cluster security group — the
+	// ingress/ALB path, which is meant to be publicly reachable, so empty means
+	// open.
+	ClusterHTTPAllowedCIDRs []string `yaml:"cluster_http_allowed_cidrs,omitempty"`
+	// ClusterVPCDefaultSGInboundCIDRs gates the cluster VPC's DEFAULT security
+	// group, which the cluster phase widens to all protocols and ports. Empty →
+	// 0.0.0.0/0, the historical behaviour, kept because this SG governs the
+	// cluster's own data path. Narrow it to your private ranges unless a workload
+	// in that VPC needs a public source.
+	ClusterVPCDefaultSGInboundCIDRs []string `yaml:"cluster_vpc_default_sg_inbound_cidrs,omitempty"`
 	// CopiedSSHKeyFiles lists the ~/.ssh basenames `roksbnkctl init` ACTUALLY
 	// wrote when the user accepted the "copy the private key to ~/.ssh" prompt
 	// (only files it created — pre-existing files are skipped, never recorded).

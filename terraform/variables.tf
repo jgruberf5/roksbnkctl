@@ -977,3 +977,24 @@ variable "cluster_network_mode" {
     error_message = "cluster_network_mode must be single-nic or multi-nic."
   }
 }
+
+variable "testing_jumphost_allowed_cidrs" {
+  description = "Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open; access is key-only). Narrow to the operator's public /32 on a shared account."
+  type        = list(string)
+  default     = []
+}
+variable "testing_client_vpc_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound to the testing client VPC's default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway)."
+  type        = list(string)
+  default     = []
+}
+variable "cluster_http_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable)."
+  type        = list(string)
+  default     = []
+}
+variable "cluster_vpc_default_sg_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source."
+  type        = list(string)
+  default     = []
+}

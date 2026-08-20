@@ -183,3 +183,15 @@ variable "existing_cluster_subnet_ids" {
   type        = list(string)
   default     = []
 }
+
+variable "cluster_http_allowed_cidrs" {
+  description = "Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (open — this is the ingress/ALB path and is meant to be publicly reachable)."
+  type        = list(string)
+  default     = []
+}
+
+variable "cluster_vpc_default_sg_inbound_cidrs" {
+  description = "Source CIDRs allowed inbound, all protocols and ports, to the cluster VPC's DEFAULT security group. Empty → 0.0.0.0/0, which is the historical behaviour. IBM ships a VPC default SG denying inbound, so this widens it for every resource later placed in the VPC without an explicit SG; narrow it to your private ranges (e.g. [\"10.0.0.0/8\"]) unless a workload in this VPC genuinely needs a public source."
+  type        = list(string)
+  default     = []
+}

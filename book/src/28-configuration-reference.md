@@ -667,6 +667,10 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 | `resources.client_region` | string | (empty) | Region the testing client (TGW jumphost + client VPC) lives in → `testing_client_vpc_region`. Since `v1.9.0`. |
 | `resources.testing_client_vpc_name` | string | (empty) | Name for the testing client VPC when `client_vpc.create: true` → `testing_client_vpc_name`. |
 | `resources.testing_ssh_key_name` | string | (empty) | Existing IBM Cloud VPC SSH key attached to the jumphosts → `testing_ssh_key_name`. Resolved by `init`. |
+| `resources.testing_jumphost_allowed_cidrs` | list | (empty) | Source CIDRs allowed to SSH (`:22`) to the testing jumphosts → `testing_jumphost_allowed_cidrs`. Empty → `0.0.0.0/0`. They carry a public floating IP and are reached from wherever you are, and access is key-only — so open is the default. Narrow to your public `/32` on a shared account. |
+| `resources.testing_client_vpc_inbound_cidrs` | list | (empty) | Source CIDRs allowed inbound to the testing client VPC's **default** security group → `testing_client_vpc_inbound_cidrs`. Empty → the RFC-1918 private ranges. The rule is all-protocol/all-port because a test can exercise any of them; the traffic arrives over the Transit Gateway, so it does not need a public source. |
+| `resources.cluster_http_allowed_cidrs` | list | (empty) | Source CIDRs for `:80` on the cluster security group → `cluster_http_allowed_cidrs`. Empty → `0.0.0.0/0`; this is the ingress/ALB path and is meant to be publicly reachable. |
+| `resources.cluster_vpc_default_sg_inbound_cidrs` | list | (empty) | Source CIDRs allowed inbound (all protocols and ports) to the **cluster VPC's default** security group → `cluster_vpc_default_sg_inbound_cidrs`. Empty → `0.0.0.0/0`, the historical behaviour. IBM ships a VPC default SG denying inbound, so this widens it for every resource later placed in the VPC without an explicit SG. See the note below. |
 | `resources.testing_jumphost_profile` | string | (empty ⇒ auto-select) | Pin an instance profile for **all** testing jumphosts → `testing_jumphost_profile`. |
 | `resources.testing_min_vcpu_count` | integer | `4` | Jumphost-profile auto-select floor (vCPUs) → `testing_min_vcpu_count`. |
 | `resources.testing_min_memory_gb` | integer | `8` | Jumphost-profile auto-select floor (GB) → `testing_min_memory_gb`. |
@@ -784,6 +788,36 @@ Sorted by top-level block. Lookup-friendly. Every field that appears in [`intern
 The auto-render path: `config.yaml` → typed `Workspace` struct → key/value tfvars → `~/.roksbnkctl/<ws>/state/terraform.tfvars`. The user's `--var-file` is appended to the terraform invocation as an additional `-var-file=<path>` argument. See [Chapter 13 — Terraform variables](./13-terraform-variables.md) for the layering rules.
 
 A workspace-persistent override file is `~/.roksbnkctl/<ws>/terraform.tfvars.user` — when present, it's auto-layered after the rendered tfvars and before any explicit `--var-file`. Useful for "always pass this `bigip_password` value when applying this workspace" without putting it in `config.yaml` (where the plaintext-secret rejection would reject it).
+
+### Security-group source CIDRs, and why the defaults differ
+
+Four lists gate inbound access, and each defaults to what its own plane needs
+rather than to one blanket policy:
+
+| plane | default | why |
+|---|---|---|
+| jumphost SSH (`:22`) | open | You connect from wherever you are; access is key-only. |
+| testing client VPC default SG | RFC-1918 | In-fabric test traffic arrives over the Transit Gateway. |
+| cluster `:80` | open | The ingress/ALB path is meant to be publicly reachable. |
+| cluster VPC default SG | open | Historical. **The one worth narrowing.** |
+
+The last row is a deliberate exception. A VPC default security group ships from
+IBM denying inbound; widening it to all protocols and ports from `0.0.0.0/0`
+inverts that for every resource later placed in the VPC without an explicit
+security group — a fail-open default waiting for the first VSI that gets a
+floating IP. It stays open by default only because that security group governs
+the VPC the cluster's own data path runs in, and changing it on every existing
+deployment is not something to do without validating against a live cluster.
+
+If nothing in your cluster VPC needs a public source — which is the usual case —
+set it:
+
+```yaml
+resources:
+  cluster_vpc_default_sg_inbound_cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+```
+
+Then verify ingress and the BNK data path still behave before relying on it.
 
 ## Cross-references
 

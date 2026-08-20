@@ -290,6 +290,12 @@ data "ibm_is_public_gateways" "vpc" {
 }
 
 locals {
+  # Security-group source CIDRs. Both default to open, preserving the historical
+  # behaviour: :80 is the ingress path and is meant to be publicly reachable,
+  # and the VPC default SG governs the cluster's own data path (see the rule).
+  cluster_http_cidrs           = length(var.cluster_http_allowed_cidrs) > 0 ? var.cluster_http_allowed_cidrs : ["0.0.0.0/0"]
+  cluster_vpc_default_sg_cidrs = length(var.cluster_vpc_default_sg_inbound_cidrs) > 0 ? var.cluster_vpc_default_sg_inbound_cidrs : ["0.0.0.0/0"]
+
   # zone → id, for public gateways already in THIS cluster's VPC.
   existing_pgw_by_zone = var.use_existing_cluster_vpc ? {
     for g in try(data.ibm_is_public_gateways.vpc[0].public_gateways, []) :
@@ -367,12 +373,15 @@ resource "ibm_is_public_gateway" "cluster_gateway_zone3" {
 # gateway already deleted by the VPC-owning cluster no longer breaks the adopter's
 # destroy with "the specified subnet has no public gateway".
 
-# Allow TCP port 80 from any source (using cluster security group)
+# :80 on the cluster security group — the ingress/ALB path, which is meant to be
+# publicly reachable, so the default stays open. cluster_http_allowed_cidrs
+# narrows it for a cluster whose ingress serves a known set of sources.
 resource "ibm_is_security_group_rule" "cluster_tcp_80" {
-  count     = var.create_cluster ? 1 : 0
+  for_each = var.create_cluster ? toset(local.cluster_http_cidrs) : toset([])
+
   group     = local.cluster_security_group
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
   protocol  = "tcp"
   port_min  = 80
   port_max  = 80
@@ -381,16 +390,25 @@ resource "ibm_is_security_group_rule" "cluster_tcp_80" {
 }
 
 
-# Add inbound rule to cluster VPC default security group to allow all traffic.
-# Sprint 23: count-gated on var.create_cluster so the second-phase apply (which
-# forces create_cluster=false via the bnk-phase override) does NOT add a
-# duplicate rule to the cluster VPC's default SG. The cluster phase already
-# created this rule; trial phase has no business managing it.
+# Inbound to the cluster VPC's DEFAULT security group — all protocols, all ports.
+#
+# Gated on var.create_cluster so the second-phase apply (which forces
+# create_cluster=false via the bnk-phase override) does not add a duplicate rule.
+# The cluster phase owns this rule; the trial phase has no business managing it.
+#
+# The source defaults to 0.0.0.0/0, which is the historical behaviour and is
+# preserved deliberately: this SG governs the VPC the cluster's own data path
+# runs in, and narrowing it by default would change that path on every existing
+# deployment without a live-cluster validation behind it. It is worth narrowing —
+# IBM ships a VPC default SG denying inbound, so this inverts a safe default for
+# every resource later placed in the VPC without an explicit SG — which is what
+# cluster_vpc_default_sg_inbound_cidrs is for.
 resource "ibm_is_security_group_rule" "cluster_sg_inbound_all" {
-  count     = var.create_cluster ? 1 : 0
+  for_each = var.create_cluster ? toset(local.cluster_vpc_default_sg_cidrs) : toset([])
+
   group     = local.cluster_vpc_default_sg
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
 }
 
 # Create Cloud Object Storage instance for OpenShift registry (Optional)

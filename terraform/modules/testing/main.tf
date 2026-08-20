@@ -223,6 +223,14 @@ locals {
   # Default SG of the newly created client VPC (used only when create_client_vpc = true)
   tgw_new_vpc_default_sg = (var.testing_create_tgw_jumphost && var.testing_create_client_vpc) ? ibm_is_vpc.client_vpc[0].default_security_group : null
 
+  # Source CIDRs for the two testing planes, following the flp_vsi module's
+  # split: management access (SSH to a jumphost with a public floating IP) is
+  # open by default because the operator connects from wherever they are, while
+  # in-fabric test traffic arrives over the Transit Gateway and is private.
+  testing_rfc1918       = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  testing_ssh_cidrs     = length(var.testing_jumphost_allowed_cidrs) > 0 ? var.testing_jumphost_allowed_cidrs : ["0.0.0.0/0"]
+  testing_client_vpc_in = length(var.testing_client_vpc_inbound_cidrs) > 0 ? var.testing_client_vpc_inbound_cidrs : local.testing_rfc1918
+
   tgw_jumphost_zone = var.testing_create_tgw_jumphost ? data.ibm_is_zones.vpc_region_zones[0].zones[0] : null
 
   tgw_ubuntu_images = var.testing_create_tgw_jumphost ? [
@@ -331,13 +339,21 @@ resource "ibm_is_vpc" "client_vpc" {
   }
 }
 
-# Open default SG on the new VPC to permit all inbound test traffic
+# Inbound to the client VPC's DEFAULT security group, for in-fabric test traffic.
+#
+# All protocols and ports, because a test can exercise any of them — but NOT from
+# any source. This widens a VPC default SG, which IBM ships denying inbound, so
+# every resource later placed in this VPC without an explicit SG inherits it. At
+# 0.0.0.0/0 that is a fail-open default waiting for the first VSI to be given a
+# floating IP; scoped to the private ranges the Transit Gateway carries, it
+# admits the traffic the tests actually generate and nothing from the internet.
 resource "ibm_is_security_group_rule" "tgw_vpc_default_sg_inbound_all" {
-  count     = (var.testing_create_tgw_jumphost && var.testing_create_client_vpc) ? 1 : 0
+  for_each = (var.testing_create_tgw_jumphost && var.testing_create_client_vpc) ? toset(local.testing_client_vpc_in) : toset([])
+
   provider  = ibm.vpc_region
   group     = local.tgw_new_vpc_default_sg
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
 }
 
 resource "ibm_is_subnet" "tgw_jumphost_subnet" {
@@ -385,11 +401,11 @@ resource "ibm_is_security_group" "tgw_jumphost_sg" {
 }
 
 resource "ibm_is_security_group_rule" "tgw_jumphost_ssh_inbound" {
-  count     = var.testing_create_tgw_jumphost ? 1 : 0
+  for_each  = var.testing_create_tgw_jumphost ? toset(local.testing_ssh_cidrs) : toset([])
   provider  = ibm.vpc_region
   group     = ibm_is_security_group.tgw_jumphost_sg[0].id
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
   protocol  = "tcp"
   port_min  = 22
   port_max  = 22
@@ -475,10 +491,10 @@ resource "ibm_is_security_group" "cluster_jumphost_sg" {
 }
 
 resource "ibm_is_security_group_rule" "cluster_jumphost_ssh_inbound" {
-  count     = var.testing_create_cluster_jumphosts ? 1 : 0
+  for_each  = var.testing_create_cluster_jumphosts ? toset(local.testing_ssh_cidrs) : toset([])
   group     = ibm_is_security_group.cluster_jumphost_sg[0].id
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
   protocol  = "tcp"
   port_min  = 22
   port_max  = 22
