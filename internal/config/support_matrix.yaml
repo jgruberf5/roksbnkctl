@@ -19,24 +19,34 @@ lines:
       The shipped line. Single-NIC only — multi-NIC ROKS changes the F5 network
       attachments and CNEInstance options, which 2.3 does not express.
 
-  # PROVISIONAL — written before 2.4 shipped, and never run against it.
+  # VERIFIED against 2.4.0-EA on 2026-08-21. What was actually run, so the next
+  # reader can tell what this cell covers and what it does not:
+  #
+  #   manifest 2.4.0-EA, FAR repo.f5.com with the non-GA service account,
+  #   ROKS OCP 4.20, 3 workers, single-NIC, connected licensing (eval JWT),
+  #   `bnk up` on an adopted cluster.
+  #
+  #   Result: CNEInstance 18/18 conditions True, f5-tmm x3 at 5/5 Running,
+  #   bnk-license Active. Gateway phase (Infra + GatewaySettings) NOT exercised
+  #   in that run — it is a separate phase and a separate claim.
   #
   # This row originally claimed multi-NIC on the expectation that 2.4 would add
   # it. The BNK 2.4 EA install guide does not: it is single-NIC throughout — one
   # NetworkAttachmentDefinition (ens3-ipvlan-l2, master ens3), one `external-vlan`
   # network in the Infra CR, and no second data-plane interface anywhere. The
-  # claim is withdrawn until a guide or a run produces the evidence, because a
-  # cell that passes on an expectation is worse than no cell: it lets
-  # `guardSupportedCombination` approve a multi-NIC 2.4 plan nobody has grounds
-  # for. See docs/prd/18-BNK-2-4-SUPPORT.md §3.1.
+  # claim stays withdrawn: the run above was single-NIC, so it is evidence for
+  # single-NIC and for nothing else.
   #
-  # The contract range is still an expectation, not an observation. Confirm it
-  # against the real release before treating a plan-time pass here as meaningful.
+  # The contract range remains an EXPECTATION rather than an observation — the
+  # run did not exercise a contract boundary. Treat a plan-time pass on it
+  # accordingly.
   - bnk: "2.4"
     contract: [1, 2]
     network_modes: [single-nic]
     notes: >-
-      PROVISIONAL, not yet verified against a released 2.4. Single-NIC only — the
-      2.4 EA install guide shows no multi-NIC path. Expected to keep driving
-      single-NIC clusters, including ones created before multi-NIC existed, so an
-      existing deployment can move to 2.4 without touching its cluster.
+      Verified against 2.4.0-EA: bnk up reaches 18/18 CNEInstance conditions with
+      TMM 5/5 and the licence Active, on a single-NIC OCP 4.20 cluster with
+      connected licensing. Single-NIC only — the 2.4 EA install guide shows no
+      multi-NIC path, and the verified run was single-NIC. Drives clusters
+      created before multi-NIC existed, so an existing deployment can move to 2.4
+      without touching its cluster.
