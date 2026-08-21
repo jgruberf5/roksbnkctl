@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
 // The advanced.<component>.env plumbing (#175) and the 2.4 USE_GATEWAY_SETTINGS
@@ -173,5 +175,37 @@ func TestAdvancedEnvReachesAComponentThatHasNoDefaults(t *testing.T) {
 		`local.adv_env_extra["externalBigip"].env[*].name`)
 	if len(names) != 1 || names[0] != "CLUSTER_IDENTIFIER" {
 		t.Errorf("a components-only-in-the-user-map entry must render its env, got %v", names)
+	}
+}
+
+// The Go renderer and the terraform variable were developed apart, and the
+// defect that hid for a whole feature was exactly a join that nobody crossed:
+// the name matched on both sides and the two halves were never connected. So
+// this feeds the renderer's own bytes to terraform rather than asserting on
+// their text.
+func TestRenderedAdvancedEnvTfvarsAreAcceptedByTheModule(t *testing.T) {
+	ws := &config.Workspace{}
+	ws.BNK.Advanced = map[string]config.AdvancedComponentCfg{
+		"cneController": {Env: map[string]string{"USE_GATEWAY_SETTINGS": "false"}},
+		"tmm":           {Env: map[string]string{"TMM_DEFAULT_MTU": "1500"}},
+	}
+
+	var buf strings.Builder
+	renderBNKAdvancedEnv(&buf, ws)
+	rendered := buf.String()
+	if !strings.Contains(rendered, "cneinstance_advanced_env") {
+		t.Fatalf("renderer produced nothing to test: %q", rendered)
+	}
+
+	names := consoleEnvNames(t, "bnk_line = \"2.4\"\n"+rendered,
+		`[for e in local.adv_env["cneController"] : "${e.name}=${e.value}" if e.name == "USE_GATEWAY_SETTINGS"]`)
+	if len(names) != 1 || names[0] != "USE_GATEWAY_SETTINGS=false" {
+		t.Errorf("the rendered tfvars did not reach the CR spec: %v", names)
+	}
+
+	tmm := consoleEnvNames(t, "bnk_line = \"2.4\"\n"+rendered,
+		`[for e in local.adv_env["tmm"] : "${e.name}=${e.value}" if e.name == "TMM_DEFAULT_MTU"]`)
+	if len(tmm) != 1 || tmm[0] != "TMM_DEFAULT_MTU=1500" {
+		t.Errorf("tmm override did not reach the CR spec: %v", tmm)
 	}
 }
