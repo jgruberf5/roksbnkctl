@@ -17,19 +17,28 @@ import "embed"
 // the workspace's tf_source is unset / type=embedded, and extracted
 // into the workspace state dir for terraform-exec to operate on.
 //
-// NOTE: deliberately NOT `all:terraform`. The `all:` prefix pulls in
-// dotfiles — including the gitignored `.terraform/` provider/module cache
-// (~400MB of plugin binaries) that a local `terraform init`/`validate`
-// leaves in ./terraform during development. Embedding that bloated the
-// binary to ~670MB AND, once extracted (extractEmbeddedTF writes 0644),
-// shipped non-executable provider binaries that broke `terraform plan`
-// with "fork/exec ... permission denied". Plain `terraform` embeds the
-// committed HCL source and skips every dotfile, so `.terraform/` is never
-// bundled regardless of what a dev machine has on disk; terraform init
-// resolves + pins providers from the version constraints in the .tf files
-// at deploy time. (The .terraform.lock.hcl files are not committed, so
-// `all:` only ever embedded them opportunistically from a dev machine —
-// nothing reproducible is lost here.)
+// Two directives, deliberately.
+//
+// The first embeds the committed HCL. It is NOT `all:terraform`: the `all:`
+// prefix pulls in dotfiles, including the gitignored `.terraform/`
+// provider/module cache (~400MB of plugin binaries) that a local `terraform
+// init`/`validate` leaves in ./terraform during development. Embedding that
+// bloated the binary to ~670MB AND, once extracted (extractEmbeddedTF writes
+// 0644), shipped non-executable provider binaries that broke `terraform plan`
+// with "fork/exec ... permission denied".
+//
+// The second names .terraform.lock.hcl explicitly, because a plain directory
+// pattern skips every dotfile and this one has to ship (#147). It pins each
+// provider to an exact version and records the checksums `terraform init`
+// verifies downloads against. Without it in the binary, `init` runs in the
+// extract directory against the `>=` constraints in versions.tf alone, so two
+// operators running the same release on different days can resolve different
+// providers, and nothing verifies what the registry serves. CI ran against the
+// committed lockfile while every user got a freshly resolved set.
+//
+// An explicit path is what keeps this from costing anything: it ships the one
+// dotfile that matters without reopening the `all:` problem above.
 //
 //go:embed terraform
+//go:embed terraform/.terraform.lock.hcl
 var EmbeddedTerraform embed.FS
