@@ -70,7 +70,9 @@ locals {
   ] : local.available_openshift_versions
 
   # Pick the latest patch within the matched major.minor; fall back to overall
-  # latest if the requested version prefix matches nothing (e.g. not yet available).
+  # latest if the requested version prefix matches nothing (e.g. not yet
+  # available). The fallback is deliberate; the SILENCE was the bug (#178) — see
+  # the check block below, which now names the substitution when it happens.
   openshift_version = "${reverse(sort(
     length(local.matching_versions) > 0 ? local.matching_versions : local.available_openshift_versions
   ))[0]}_openshift"
@@ -623,4 +625,28 @@ resource "null_resource" "delete_gatewayapi_admission_policy" {
   }
 
   depends_on = [data.ibm_container_cluster_config.cluster_config]
+}
+
+# An unmatched openshift_cluster_version used to build the NEWEST OCP silently
+# (#178). The fallback itself is reasonable — a requested version may not be
+# offered yet — but doing it without saying so turns a one-character config
+# mistake into a long, misdirected failure.
+#
+# Observed: `openshift_version: 4.18_openshift` matched nothing (the available
+# versions are bare, e.g. "4.18.51", and this module appends the suffix itself),
+# so a 4.18 request built 4.21. BNK 2.3 then failed to install on it 45 minutes
+# later, because OCP 4.21 platform-manages Gateway API 1.3.0 and BNK 2.3 requires
+# 1.4.1 — an error naming the CNE controller, four layers from the cause.
+#
+# `kube_version` renders as (known after apply), so reading the plan carefully
+# does not reveal the substitution either. This makes it visible at plan time.
+check "openshift_version_was_matched" {
+  assert {
+    condition = var.openshift_cluster_version == "" || length(local.matching_versions) > 0
+    error_message = format(
+      "openshift_cluster_version %q matched no available version, so the NEWEST OCP was selected instead. Available: %s. Note this module appends the \"_openshift\" suffix itself — pass a bare version like \"4.20\".",
+      var.openshift_cluster_version,
+      join(", ", local.available_openshift_versions),
+    )
+  }
 }

@@ -101,9 +101,24 @@ variable "openshift_cluster_name" {
 }
 
 variable "openshift_cluster_version" {
-  description = "OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available."
+  description = <<-EOT
+    OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty
+    uses the latest available.
+
+    Do NOT include the "_openshift" suffix — this module appends it. A value that
+    carries it matches nothing, and an unmatched value used to build the newest
+    OCP silently (#178).
+  EOT
   type        = string
   default     = "4.20"
+
+  validation {
+    # The suffix is appended by modules/roks_cluster/modules/cluster; supplying
+    # it is always wrong, and catching it here costs a second where the
+    # alternative was a 45-minute install failure on an unintended OCP version.
+    condition     = !can(regex("_openshift", var.openshift_cluster_version))
+    error_message = "openshift_cluster_version must be a bare version like \"4.20\" — the \"_openshift\" suffix is appended automatically."
+  }
 }
 
 variable "roks_workers_per_zone" {

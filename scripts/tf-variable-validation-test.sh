@@ -122,6 +122,15 @@ check bnk_line "v2.4"    reject "must be 2.3 or 2.4"
 check bnk_line "2.5"     reject "must be 2.3 or 2.4"
 check bnk_line ""        reject "must be 2.3 or 2.4"
 
+# The OpenShift version. The module appends "_openshift" itself, so a value that
+# carries it matches nothing and USED to build the newest OCP silently (#178) —
+# which is how a 4.18 request became a 4.21 cluster that BNK 2.3 cannot install
+# on. Cheap to catch here; expensive to discover 45 minutes into an apply.
+check openshift_cluster_version "4.20"           accept
+check openshift_cluster_version "4.18"           accept
+check openshift_cluster_version ""               accept
+check openshift_cluster_version "4.18_openshift" reject "bare version"
+
 # The BNK namespaces. The equal case is the one that matters — one namespace is
 # a supported, customer-required configuration (#66), so a validation that
 # rejected it would break them at plan time.
