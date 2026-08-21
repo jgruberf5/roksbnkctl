@@ -741,7 +741,7 @@ container module or an argv-only runner: no shell, no prompts, nowhere to stage 
 Settings that *define* a topology — `ROKSBNKCTL_CLUSTER_CREATE`,
 `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY`, `ROKSBNKCTL_LICENSE_MODE` — are pinned in the workflow YAML
 next to the steps they govern, not in the ConfigMap. That is why the connected and disconnected
-workflows differ in essentially one line.
+workflows differ in one line.
 
 ### Bring your own controller — versions and constraints
 

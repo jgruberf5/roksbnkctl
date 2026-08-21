@@ -348,7 +348,7 @@ The Windows limitations are tracked in PRD 01 (the SSH client design) and largel
 
 ## Required prerequisites — `terraform` and `helm` at v1.0
 
-The v1.0 cluster lifecycle needs two binaries on `PATH`:
+The cluster lifecycle needs two binaries on `PATH`:
 
 - **`terraform` (>= 1.5)** — hard-required for any cluster lifecycle command (`up`, `down`, `plan`, `apply`).
 - **`helm` (3.x)** — flagged required by `doctor` during `roksbnkctl up`. The charts install via the `helm_release` resource — the `hashicorp/helm` provider speaks the Helm 3 protocol via an embedded Go runtime, so no host `helm` is shelled out for the chart installs (see [Chapter 10](./10-deploying-bnk-trials.md#the-terraform-native-deployment-model)). FAR chart-version discovery does shell out to host `helm`, though: the `data.external.versions` lookup runs `helm registry login` + `helm pull` to read the FLO/CIS chart versions, so `helm` is genuinely required. Keeping `helm` installed keeps `doctor` green.

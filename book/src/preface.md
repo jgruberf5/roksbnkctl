@@ -2,11 +2,11 @@
 
 ## Foreword
 
-Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A `terraform init/plan/apply` against an HCL tree somebody handed you. A manual `ibmcloud ks cluster config` to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual `oc adm policy add-scc-to-user privileged` to let iperf3 actually run. SSH plumbing, env-var plumbing, kubeconfig plumbing — each one a small thing, and together a half-day of yak-shaving before BNK was even on the cluster.
+Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A `terraform init/plan/apply` against an HCL tree somebody handed you. A manual `ibmcloud ks cluster config` to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual `oc adm policy add-scc-to-user privileged` to let iperf3 actually run. SSH, environment variables, kubeconfig — each a small thing, and together half a day before BNK was even on the cluster.
 
 `roksbnkctl` collapses that into a single static binary plus four interchangeable execution backends (`local`, `docker`, `k8s`, `ssh:<target>`) plus an opt-in in-cluster ops pod. One command brings a workspace up; one command tears it down; the connectivity, DNS, and throughput tests run from whichever network vantage the question actually requires. The tool exists because the manual path has too many moving parts for somebody who just wants to evaluate BNK or run a customer demo.
 
-This book is the user-facing documentation for `roksbnkctl`. It ships alongside the v1.0 binary.
+This book is the user-facing documentation for `roksbnkctl`, and ships with the binary.
 
 ## Who this book is for
 

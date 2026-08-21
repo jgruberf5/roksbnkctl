@@ -120,12 +120,12 @@ opinion, not that it insists on `single-nic` — so it defers to whatever the
 cluster actually is. This matters because a `config.yaml` is not always
 hand-written and durable: the [BNK Forge modules](./24a-bnk-forge-registration.md)
 regenerate one per step from a curated environment, so a mode set by the step
-that *created* the cluster is simply absent by the time the step that *installs
+that *created* the cluster is absent by the time the step that *installs
 BNK* runs. Reading that absence as a demand for `single-nic` would refuse a
 correct deployment at its second step, over a contradiction nobody expressed.
 
 The refusal in the third row is what stops terraform from planning a
-**replacement** of a running cluster — which it will do quite happily, rendered
+**replacement** of a running cluster — which it will do without complaint, rendered
 as output that reads like an update.
 
 ## Parallel `up`: Cluster first, then BNK || Testing

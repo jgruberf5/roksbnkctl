@@ -384,7 +384,7 @@ wrong, with no action available to them. It warns and proceeds instead.
 
 **An unset `network_mode` defers to the recorded cluster.** Each step's
 environment carries only what that step needs, so a mode set by `cluster-create`
-is simply absent when `bnk-install` regenerates `config.yaml`. Reading that
+is absent when `bnk-install` regenerates `config.yaml`. Reading that
 absence as a demand for `single-nic` would refuse a correct multi-NIC deployment
 at its second module. Only an *explicit* contradiction is refused.
 
