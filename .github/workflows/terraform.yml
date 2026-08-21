@@ -41,6 +41,12 @@ jobs:
       fail-fast: false
       matrix:
         line: ['2.3', '2.4']
+        # One namespace is a customer requirement and a shipped capability (#66),
+        # and #176 asks for it to be a dimension rather than a special case. It
+        # costs nothing here and it is the configuration most likely to break
+        # quietly: every namespace-derived name in the tree comes from
+        # flo_namespace, so a collision only appears when the two are equal.
+        namespaces: ['split', 'single']
     steps:
       - uses: actions/checkout@v7
 
@@ -60,6 +66,41 @@ jobs:
       - name: terraform validate
         working-directory: terraform
         run: terraform validate -no-color
+
+      # The equal-namespace case must be ACCEPTED. A validation that rejected it
+      # would break a shipping customer configuration, so this asserts the
+      # permissive direction rather than a refusal.
+      - name: the namespace variables accept this topology
+        working-directory: terraform
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.namespaces }}" = "single" ]; then
+            flo=f5-bnk; utils=f5-bnk
+          else
+            flo=f5-bnk; utils=f5-utils
+          fi
+          echo "==> flo_namespace=$flo flo_utils_namespace=$utils must be accepted"
+          work="$(mktemp -d)"
+          python3 - variables.tf "$work/main.tf" <<'PY'
+          import sys, pathlib
+          src, out = sys.argv[1], sys.argv[2]
+          t = pathlib.Path(src).read_text()
+          blocks = []
+          for name in ("flo_namespace", "flo_utils_namespace"):
+              i = t.index('variable "%s"' % name)
+              depth = 0; j = i
+              while True:
+                  if t[j] == '{': depth += 1
+                  elif t[j] == '}':
+                      depth -= 1
+                      if depth == 0: break
+                  j += 1
+              blocks.append(t[i:j+1])
+          pathlib.Path(out).write_text("\n\n".join(blocks) + "\n")
+          PY
+          terraform -chdir="$work" init -backend=false -input=false >/dev/null
+          terraform -chdir="$work" plan -input=false -no-color             -var "flo_namespace=$flo" -var "flo_utils_namespace=$utils" >/dev/null
+          echo "OK"
 
       # `validate` type-checks but never evaluates a variable against a value, so
       # it cannot tell a good line from a bad one. This does, and it is the only
