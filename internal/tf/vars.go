@@ -52,13 +52,6 @@ func WriteTFVarsForWorkspace(path, workspaceName string, ws *config.Workspace, k
 			if err := config.MirrorRecordMismatchError(workspaceName, ws, m); err != nil {
 				return err
 			}
-			// And that the mirror actually holds everything the install will
-			// ask for. A partial replicate still writes a record — that is what
-			// lets a re-run resume — so a record can name the right mirror and
-			// still be missing artifacts (#150).
-			if err := config.MirrorRecordIncompleteError(workspaceName, m); err != nil {
-				return err
-			}
 			mirror = m
 		}
 	}

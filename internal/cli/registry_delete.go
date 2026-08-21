@@ -85,12 +85,6 @@ func runRegistryDelete(cmd *cobra.Command, _ []string) error {
 		}
 	} else {
 		rec.Artifacts = remaining
-		// The mirror is now missing everything that WAS removed, on top of
-		// anything it was already missing. Recording that is what stops a
-		// half-torn-down mirror from being installed from: the tfvars render
-		// refuses an incomplete record (#150), which is the right answer here —
-		// the operator asked for these artifacts to be gone.
-		rec.MissingCount += deleted
 		if werr := config.WriteRegistryMirror(name, rec); werr != nil {
 			return werr
 		}

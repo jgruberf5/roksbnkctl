@@ -191,7 +191,8 @@ func MirrorRecordIncompleteError(workspace string, rec *RegistryMirror) error {
 	fmt.Fprintf(&b, "the recorded registry mirror is incomplete: %d artifact(s) failed to replicate.\n", rec.MissingCount)
 	b.WriteString("  Installing from it would point every image and chart at a mirror missing some of them,\n")
 	b.WriteString("  which surfaces later as ImagePullBackOff on a node rather than as an error here.\n")
-	fmt.Fprintf(&b, "  Retry the copy:  roksbnkctl -w %s registry replicate\n", workspace)
-	fmt.Fprintf(&b, "  Check what:      roksbnkctl -w %s registry diff\n", workspace)
+	fmt.Fprintf(&b, "  See what is missing:  roksbnkctl -w %s registry diff        (needs the FAR source)\n", workspace)
+	fmt.Fprintf(&b, "  Retry the copy:       roksbnkctl -w %s registry replicate   (needs the FAR source)\n", workspace)
+	fmt.Fprintf(&b, "  Filled another way:   roksbnkctl -w %s registry adopt       (no source access needed)", workspace)
 	return fmt.Errorf("%s", b.String())
 }
