@@ -27,6 +27,31 @@ one-namespace defects that work uncovered.
 
 ### Fixed
 
+- **The 2.4 gateway phase works.** Running `gateway up` against a live 2.4
+  cluster for the first time turned up three defects stacked behind each other.
+  The plan failed outright: the cluster data source was gated to 2.3 while the
+  security-group lookup that indexes it was not, so `cluster[0]` indexed an
+  empty tuple. VXLAN is the dataplane on both lines — 2.4 configures it through
+  `GatewaySettings`' `egress-vxlan-*` pools instead of `F5SPKEgress`, but the UDP
+  ingress still has to be permitted — so the gate was the error, not the
+  consumers. With that fixed the CRs applied and nothing reconciled them: the
+  controller reads `Infra` and `GatewaySettings` only under
+  `USE_GATEWAY_SETTINGS=true`, and nothing set it, so they sat at
+  `Accepted=Unknown` / "Waiting for controller" indefinitely. That flag is now a
+  2.4 default rather than an opt-in, because on 2.4 there is no working
+  configuration without it. `Infra` and `GatewaySettings` now reach `Accepted`,
+  `ResolvedRefs` and `Programmed`.
+
+- **`cneinstance_advanced_env` reaches the CNEInstance.** The per-component
+  `advanced.<component>.env` override was declared at the root, rendered as a
+  tfvar, documented and tested on the Go side — and read by no terraform
+  anywhere, so setting it did nothing. It is now wired through both module
+  layers. A user entry *replaces* a default of the same name rather than
+  appending a duplicate, since the spec is read by the lifecycle operator rather
+  than kubelet; and a component named only in the override arrives on its own, so
+  components F5 adds between releases need no code change here.
+  ([#175](https://github.com/jgruberf5/roksbnkctl/issues/175))
+
 - **The lifecycle demos no longer require a BNK Forge account to run at all.**
   Both `cluster-lifecycle-cli-demo.sh` and its CI twin died in their *preflight*
   without `FORGE_URL` / `FORGE_USER` / `FORGE_PASS`, while Forge is used by one
