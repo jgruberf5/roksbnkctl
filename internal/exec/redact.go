@@ -31,6 +31,14 @@ type redactor struct {
 	secrets [][]byte
 	maxLen  int
 	buf     bytes.Buffer
+
+	// byFirst indexes secrets by their first byte. scan consults it at every
+	// position in the stream, so without it the cost is
+	// O(len(data) * len(secrets)) — and registering the encoded forms
+	// multiplies len(secrets) several-fold. With it, the overwhelming majority
+	// of positions look up an empty bucket and advance, which makes the cost
+	// independent of how many secrets are registered.
+	byFirst [256][]int
 }
 
 // NewRedactor wraps w; any byte sequence matching one of the non-empty
@@ -68,15 +76,24 @@ func NewRedactor(w io.Writer, secrets []string) io.Writer {
 			add(v)
 		}
 	}
-	// Longest first, so an overlapping pair redacts the longer match. Without
-	// this the scan takes whichever happens to be registered first: a short
-	// alignment fragment could match inside a longer standalone encoding and
-	// leave the surrounding base64 characters in the stream.
+	// Longest first. scan tries entries in order at each position and takes the
+	// first hit, so this makes the LONGEST entry win among those starting at the
+	// same index — without it a short alignment fragment could match inside a
+	// longer standalone encoding and leave the surrounding characters in the
+	// stream.
+	//
+	// It does not, and cannot, fix overlap across DIFFERENT start indices: scan
+	// walks left to right, so a short secret matching at i consumes those bytes
+	// and a longer one starting at i+k is then only partially matched. That is
+	// inherent to a single greedy pass. It does not arise from the variants of
+	// one secret (they share a source string and were fuzzed for it); it would
+	// need two registered secrets that genuinely interleave.
 	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
-	for _, b := range r.secrets {
+	for i, b := range r.secrets {
 		if len(b) > r.maxLen {
 			r.maxLen = len(b)
 		}
+		r.byFirst[b[0]] = append(r.byFirst[b[0]], i)
 	}
 	return r
 }
@@ -109,10 +126,18 @@ const minBase64Secret = 8
 //     groups lying entirely inside s — contaminated leading and trailing groups
 //     dropped — which is therefore guaranteed to appear verbatim.
 //
-// Not covered, and worth stating plainly: an encoding whose alphabet differs
-// from these two, and any transformation applied before encoding (compression,
-// encryption). The redactor is defense-in-depth against a tool that prints a
-// credential, not a general exfiltration control.
+// Not covered, and worth stating plainly:
+//
+//   - LINE-WRAPPED base64. A wrapped encoding matches nothing, because the
+//     newline lands mid-token. openssl wraps at 64 columns, GNU base64 at 76,
+//     PEM at 64, and YAML block scalars at whatever the emitter chose. Closing
+//     this means whitespace-tolerant matching, which costs on the hot path;
+//     it is a known gap, not an oversight.
+//   - An alphabet other than standard or URL.
+//   - Any transformation applied before encoding (compression, encryption).
+//
+// The redactor is defense-in-depth against a tool that prints a credential, not
+// a general exfiltration control.
 func base64Variants(s string) [][]byte {
 	if len(s) < minBase64Secret {
 		return nil
@@ -124,9 +149,16 @@ func base64Variants(s string) [][]byte {
 		[]byte(base64.URLEncoding.EncodeToString(raw)),
 		[]byte(base64.RawURLEncoding.EncodeToString(raw)),
 	}
-	for off := 0; off < 3; off++ {
-		if m := alignedMiddle(raw, off); len(m) >= minBase64Secret {
-			out = append(out, m)
+	// Both alphabets, because the middles differ whenever the secret encodes to
+	// a "+" or "/" — which happens for any secret containing "~", "?", ">" or
+	// "&". BIG-IP and Harbor passwords routinely contain those, and
+	// bnk.cis.bigip_password_b64 / registry.generic_password_b64 are exactly the
+	// fields this is meant to cover.
+	for _, enc := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
+		for off := 0; off < 3; off++ {
+			if m := alignedMiddle(raw, off, enc); len(m) >= minBase64Secret {
+				out = append(out, m)
+			}
 		}
 	}
 	return out
@@ -142,11 +174,12 @@ func base64Variants(s string) [][]byte {
 // the stream regardless of what surrounds it.
 //
 // The filler bytes are arbitrary — they only exist to shift the alignment, and
-// every character they influence is dropped.
-func alignedMiddle(raw []byte, off int) []byte {
+// every character they influence is dropped. enc selects the alphabet; it must
+// be an unpadded encoding, since padding would terminate the middle early.
+func alignedMiddle(raw []byte, off int, enc *base64.Encoding) []byte {
 	buf := make([]byte, off, off+len(raw))
 	buf = append(buf, raw...)
-	enc := base64.RawStdEncoding.EncodeToString(buf)
+	encoded := enc.EncodeToString(buf)
 
 	front := 0
 	if off > 0 {
@@ -156,10 +189,10 @@ func alignedMiddle(raw []byte, off int) []byte {
 	if rem := len(buf) % 3; rem != 0 {
 		tail = rem + 1 // the last group is partial, so the next bytes change it
 	}
-	if front+tail >= len(enc) {
+	if front+tail >= len(encoded) {
 		return nil
 	}
-	return []byte(enc[front : len(enc)-tail])
+	return []byte(encoded[front : len(encoded)-tail])
 }
 
 // Write implements io.Writer. The contract is:
@@ -232,9 +265,11 @@ func (r *redactor) scan(data []byte, final bool) (out, keep []byte) {
 	out = make([]byte, 0, len(data))
 	i := 0
 	for i < len(data) {
-		// Try to match any secret starting at data[i].
+		// Try to match any secret starting at data[i]. Only the secrets that
+		// begin with this byte are candidates; the rest cannot match here.
 		matched := false
-		for _, s := range r.secrets {
+		for _, si := range r.byFirst[data[i]] {
+			s := r.secrets[si]
 			if i+len(s) <= len(data) && bytes.Equal(data[i:i+len(s)], s) {
 				out = append(out, []byte(redactMarker)...)
 				i += len(s)
@@ -268,7 +303,8 @@ func (r *redactor) isPotentialPrefix(tail []byte) bool {
 	if len(tail) == 0 {
 		return false
 	}
-	for _, s := range r.secrets {
+	for _, si := range r.byFirst[tail[0]] {
+		s := r.secrets[si]
 		if len(tail) < len(s) && bytes.HasPrefix(s, tail) {
 			return true
 		}

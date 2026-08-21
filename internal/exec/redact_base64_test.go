@@ -77,7 +77,7 @@ func TestBase64EmbeddedInALargerBlobIsRedacted(t *testing.T) {
 		}
 		// And the encoding of the secret at this alignment must be gone: a
 		// marker alone could come from an unrelated match.
-		mid := alignedMiddle([]byte(apiKey), (len("kubeconfig-preamble-")+off)%3)
+		mid := alignedMiddle([]byte(apiKey), (len("kubeconfig-preamble-")+off)%3, base64.RawStdEncoding)
 		if len(mid) > 0 && strings.Contains(got, string(mid)) {
 			t.Errorf("offset %d: the aligned encoding survived in the output:\n%s", off, got)
 		}
@@ -91,7 +91,7 @@ func TestBase64EmbeddedInALargerBlobIsRedacted(t *testing.T) {
 func TestAlignedMiddleActuallyAppearsInTheStream(t *testing.T) {
 	raw := []byte(apiKey)
 	for off := 0; off < 3; off++ {
-		mid := alignedMiddle(raw, off)
+		mid := alignedMiddle(raw, off, base64.RawStdEncoding)
 		if len(mid) == 0 {
 			t.Fatalf("offset %d produced no middle", off)
 		}
@@ -173,5 +173,91 @@ func TestLongestMatchWins(t *testing.T) {
 	got := write(t, []string{"secret", "secret-with-more"}, "x secret-with-more y")
 	if strings.Contains(got, "-with-more") {
 		t.Errorf("the shorter secret matched first and left the remainder exposed:\n%s", got)
+	}
+}
+
+// Review of #151 (D2). The alignment middles were generated for the standard
+// alphabet only. Whenever a secret encodes to a "+" or "/" — which happens for
+// any secret containing "~", "?", ">" or "&" — the URL-alphabet middle differs,
+// so a secret embedded in a base64url blob leaked entirely.
+//
+// These are not contrived strings. F5 BIG-IP and Harbor passwords routinely
+// carry these characters, and bnk.cis.bigip_password_b64 and
+// registry.generic_password_b64 are exactly the fields this covers.
+func TestSecretsEmbeddedInURLAlphabetBlobsAreRedacted(t *testing.T) {
+	secrets := []string{
+		"bigip-admin~P@ssw0rd~2024",
+		"harbor?Registry?Pass?9876",
+		"Tr0ub4dor&3~Horse~Battery",
+		"F5-BIGIP>admin>Passw0rd!!",
+	}
+	for _, secret := range secrets {
+		for off := 0; off < 3; off++ {
+			body := "kubeconfig-" + strings.Repeat("x", off) + secret + "-tail"
+			for encName, blob := range map[string]string{
+				"rawURL": base64.RawURLEncoding.EncodeToString([]byte(body)),
+				"rawStd": base64.RawStdEncoding.EncodeToString([]byte(body)),
+			} {
+				got := write(t, []string{secret}, "data: "+blob+"\n")
+				if got == "data: "+blob+"\n" {
+					t.Errorf("%s off=%d secret=%q: output is byte-identical to the input — the secret leaked:\n%s",
+						encName, off, secret, got)
+				}
+			}
+		}
+	}
+}
+
+// The characters that distinguish the two alphabets must actually be exercised,
+// or the test above could pass on secrets whose encodings happen to coincide.
+func TestTheURLAndStdMiddlesGenuinelyDiffer(t *testing.T) {
+	raw := []byte("bigip-admin~P@ssw0rd~2024")
+	var differ bool
+	for off := 0; off < 3; off++ {
+		std := alignedMiddle(raw, off, base64.RawStdEncoding)
+		url := alignedMiddle(raw, off, base64.RawURLEncoding)
+		if !bytes.Equal(std, url) {
+			differ = true
+		}
+	}
+	if !differ {
+		t.Fatal("this secret was chosen because its two alphabets diverge; if they no longer do, " +
+			"TestSecretsEmbeddedInURLAlphabetBlobsAreRedacted is not testing what it claims")
+	}
+}
+
+// Review of #151 (D1). Registering the encoded forms multiplies the number of
+// entries scan compares at every byte position. byFirst keeps the cost
+// independent of that count; this measures the hot path so a regression shows up
+// as a number rather than a hunch.
+//
+// Run: go test ./internal/exec/ -bench BenchmarkRedactor -benchtime 3x
+func BenchmarkRedactorThroughput(b *testing.B) {
+	line := "module.bnk.kubernetes_manifest.route[\"gateway\"]: Still creating... [10s elapsed]\n"
+	stream := []byte(strings.Repeat(line, (4<<20)/len(line)))
+
+	for _, n := range []int{1, 5} {
+		secrets := make([]string, n)
+		for i := range secrets {
+			secrets[i] = "an-ibm-cloud-api-key-value-number-" + string(rune('a'+i)) + "-padding"
+		}
+		b.Run(strings.Repeat("secret", 1)+"s="+string(rune('0'+n)), func(b *testing.B) {
+			b.SetBytes(int64(len(stream)))
+			for i := 0; i < b.N; i++ {
+				r := NewRedactor(io.Discard, secrets)
+				for off := 0; off < len(stream); off += 32 << 10 {
+					end := off + 32<<10
+					if end > len(stream) {
+						end = len(stream)
+					}
+					if _, err := r.Write(stream[off:end]); err != nil {
+						b.Fatal(err)
+					}
+				}
+				if c, ok := r.(io.Closer); ok {
+					_ = c.Close()
+				}
+			}
+		})
 	}
 }
