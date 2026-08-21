@@ -73,6 +73,8 @@ ARGO_NS="${ARGO_NS:-bnk-ci}"
 
 need(){ command -v "$1" >/dev/null || die "$1 is required"; }
 need jq; need curl; need "$RBK"
+# #143: print the binary + version this demo will actually run, and warn on drift.
+preflight_binary "$RBK"
 
 [[ -n "$ART_DOMAIN" ]] || die "set ART_DOMAIN (the Artifactory host) — see .env.example"
 [[ -n "$ART_TOKEN"  ]] || die "set ART_TOKEN (an Artifactory access token) — see .env.example"

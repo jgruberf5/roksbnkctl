@@ -194,3 +194,11 @@ pause(){
   [[ "$a" == "q" ]] && { echo Quit. >&2; exit 0; }
 }
 trap 'echo >&2; echo "${R}Interrupted.${N}" >&2; exit 130' INT
+
+# ── binary preflight (#143) ─────────────────────────────────────────────────
+# Lives in its own file so disconnected-cluster-cli-demo.sh can source it too:
+# that demo inlines its own copies of the helpers below rather than sourcing
+# this file, so a function defined here is invisible to it. It was: the
+# preflight was a "command not found" there — in the one demo that ships the
+# local binary to a VSI, where a stale binary has the widest blast radius.
+source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/preflight-binary.sh"

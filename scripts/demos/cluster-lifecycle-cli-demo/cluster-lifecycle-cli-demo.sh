@@ -97,6 +97,8 @@ secret "$IBMCLOUD_API_KEY" "$FORGE_PASS"
 # roksbnkctl shells out to terraform for every apply and to helm for chart/BOM
 # resolution; everything else (kubectl, oc, ibmcloud, dig, iperf3) is internal.
 for c in "$ROKSBNKCTL_BIN" terraform helm jq; do command -v "$c" >/dev/null || die "$c not found"; done
+# #143: print the binary + version this demo will actually run, and warn on drift.
+preflight_binary "$ROKSBNKCTL_BIN"
 run "$ROKSBNKCTL_BIN" version
 say "doctor is roksbnkctl's own preflight — it checks the host tooling and the IBM Cloud access it needs."
 run "$ROKSBNKCTL_BIN" doctor
