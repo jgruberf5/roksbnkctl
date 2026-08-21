@@ -34,6 +34,9 @@ import (
 //	ROKSBNKCTL_RESOURCE_GROUP       → ibmcloud.resource_group
 //	ROKSBNKCTL_CLUSTER_NAME         → cluster.name
 //	ROKSBNKCTL_CLUSTER_CREATE       → cluster.create (bool: true/false/1/0)
+//	ROKSBNKCTL_CNEINSTANCE_SIZE     → bnk.cneinstance_size (Tiny/Small/Medium/…;
+//	                                  the legal set is a property of the manifest,
+//	                                  so it is deliberately not validated here)
 //	ROKSBNKCTL_GATEWAY_API_MTLS     → bnk.gateway_api_mtls (bool) — install the
 //	                                  Gateway API bundle 2.4 needs for mTLS; off by
 //	                                  default, ignored on 2.3
@@ -674,6 +677,11 @@ var stringOverrides = []stringOverride{
 	// collapses the two namespaces into one — verified working against BNK 2.3,
 	// where FLO tolerates sharedComponentNamespace equalling its own namespace
 	// (#66).
+	// The CNEInstance scalars (#175). Uniform string setters, so they belong in
+	// this table rather than in bespoke blocks. Each is reachable from YAML
+	// already; without a matching override it cannot reach a blueprint, because
+	// `init --non-interactive` builds config.yaml from the environment alone.
+	{"ROKSBNKCTL_CNEINSTANCE_SIZE", "bnk.cneinstance_size", func(ws *Workspace, v string) { ws.BNK.CNEInstanceSize = v }},
 	{"ROKSBNKCTL_FLO_NAMESPACE", "bnk.flo_namespace", func(ws *Workspace, v string) { ws.BNK.FLONamespace = v }},
 	{"ROKSBNKCTL_FLO_UTILS_NAMESPACE", "bnk.flo_utils_namespace", func(ws *Workspace, v string) { ws.BNK.FLOUtilsNamespace = v }},
 	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
