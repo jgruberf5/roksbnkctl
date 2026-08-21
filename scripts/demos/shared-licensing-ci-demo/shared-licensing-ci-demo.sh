@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# shared-licensing-ci-demo.sh  (roksbnkctl v1.50.0)
+# shared-licensing-ci-demo.sh  (roksbnkctl v1.51.0)
 #
 # The SHARED LICENSING CLUSTER, told the way it actually ships: as TWO CI JOBS.
 # Every step is a `docker run` of the roksbnkctl-tools-runner image, the whole

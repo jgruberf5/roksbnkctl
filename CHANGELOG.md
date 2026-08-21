@@ -6,6 +6,94 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.51.0 — 2026-08-21
+
+A second adversarial sweep, six issues filed and fixed. The reason this is a
+release rather than a patch is `terraform/.terraform.lock.hcl`: it was committed
+and carefully maintained, and it **never reached users**. `//go:embed terraform`
+skips dotfiles, so every released binary extracted 86 files without it and
+resolved providers from the `>=` constraints in `versions.tf` at deploy time —
+five of six unbounded, nothing verifying what the registry served, and a
+different provider set from the one CI tested. Two operators running the same
+release a week apart could get different providers with nothing in the repo
+having changed.
+
+The lockfile now ships, seeded into a workspace's terraform directory when
+absent and **never overwriting one that already exists** — a workspace that has
+run `terraform init` keeps the versions it recorded, because clobbering it would
+downgrade providers on the first run after an upgrade and `init` runs with
+`-upgrade=false`, so it could not self-heal. It carries checksums for all five
+release platforms rather than the one it had. Provider constraints are bounded
+with `~>`, which preserves every floor except `kubernetes`, whose floor rises
+from 2.25 to the 3.x already pinned.
+
+**One new exit code.** `upgrade` / `self update` exit **125** when an upgrade
+removed the old binary and could not put anything back — there is no
+`roksbnkctl` at the install path and the `.old` sidecar beside it is the only
+copy. Distinct from `1` because the two need opposite responses: an ordinary
+failed upgrade is safe to retry, and this one cannot be retried at all. It
+overlaps the range a wrapped tool's status passes through on, which is bounded
+by the fact that these two commands spawn no child process. Documented in
+[chapter 7a](book/src/07a-unattended-setup.md).
+
+**One behaviour change worth knowing before you upgrade.** `bnk up` now refuses
+an air-gap mirror record whose replicate did not finish. A partial `registry
+replicate` still writes its record — that is what lets a re-run resume — but the
+record could not previously say it was incomplete, so the install pointed every
+image and chart at a mirror missing some of them and failed minutes later on a
+node as `ImagePullBackOff`, nowhere near its cause. The refusal names `registry
+diff`, `registry replicate` and `registry adopt`. It is on the **up path only**:
+teardown never reads the mirror and is never gated on it.
+
+**Security.** The credential redactor knew only the raw form of each secret. In
+this system credentials move base64-encoded as a matter of routine — every
+`*_b64` config field, every Kubernetes Secret — so the layer that exists to stop
+a wrapped tool leaking a credential covered half the shapes that credential
+takes. It now registers the encoded forms too, in both alphabets and including
+the alignment-shifted forms a secret takes inside a larger blob. Redaction is
+also **faster** than before despite matching ~6x more patterns, because secrets
+are now indexed by first byte.
+
+### Added
+- `exitcode.SelfUpdateStranded` (**125**) — an upgrade that left no binary at
+  the install path. Documented in chapters 7a and 17. (#154)
+- `RegistryMirror.MissingCount` — a mirror record can now say its replicate did
+  not finish. `omitempty`, so records written before this field read as
+  complete. (#150)
+- A demo preflight that prints the `roksbnkctl` binary and version a run will
+  actually use, and warns when it is not the newest release. During the v1.50.0
+  validation the CLI demos ran against **v1.43.0** — eighteen releases old — for
+  two full passes. (#143)
+
+### Fixed
+- The provider lockfile is embedded and seeded rather than absent. (#147)
+- The credential redactor covers base64 forms, standard and URL alphabets,
+  standalone and embedded. (#145)
+- `installByMoveAside` reports a failed rollback instead of discarding it. The
+  message names the sidecar and the platform-correct command to rename it back
+  — `Move-Item` on Windows, which is the only platform this path runs on. (#146)
+- A failed owner-ref on the k8s backend's per-Job Secret warns instead of
+  silently orphaning credential material. The patch no longer sets
+  `blockOwnerDeletion`, which OpenShift's `OwnerReferencesPermissionEnforcement`
+  rejects without `jobs/finalizers` access — that was the cause, not the
+  symptom. (#149)
+- `bnk up` refuses an incomplete mirror record. (#150)
+
+### Changed
+- Provider constraints bounded with `~>`; `tls`, `time`, `local` and `external`
+  are now declared at the root, where a bound governs the whole tree. They were
+  declared only in submodules with bare `>=`, so nothing bounded them. (#147)
+- Dependencies: `golang.org/x/crypto` 0.55.0, `terraform-exec` 0.25.3,
+  `platform-services-go-sdk` 0.103.0. (#138)
+
+### Testing
+- The argv subprocess test built a 112MB binary into a fresh tempdir on every
+  run and never removed it; 94 runs filled a 16GB `/tmp` and surfaced as a
+  linker error in an unrelated package. Now built to a fixed, self-truncating
+  path. (#157)
+- The sshd integration image is pinned by digest and its start retried, after a
+  registry rate limit failed five tests on an unrelated PR. (#161)
+
 ## v1.50.0 — 2026-08-20
 
 The output of an adversarial sweep of the codebase: twelve issues, filed first
