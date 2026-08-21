@@ -269,6 +269,10 @@ func renderAppliedTFVars(phase string, sources []string, now time.Time, version 
 			return "", err
 		}
 		if missing {
+			// The write path is where a missing source is worth saying out loud:
+			// something asked for this var-file and it was not there, so the
+			// snapshot under-records what the apply actually used.
+			fmt.Fprintf(os.Stderr, "warning: tfvars source %q is missing — skipping in applied snapshot\n", src)
 			fmt.Fprintf(&b, "# === from %s (missing) ===\n", label)
 			fmt.Fprintln(&b)
 			continue
@@ -303,7 +307,12 @@ func readTFVarsAssignments(path string) (map[string]string, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "warning: tfvars source %q is missing — skipping in applied snapshot\n", path)
+			// Missing is not an error here — the caller decides what it means.
+			// The warning belongs to the WRITE path only (see renderAppliedTFVars):
+			// this parser is shared with the read path, where a missing snapshot is
+			// the normal state of a workspace that has not applied yet. Warning
+			// there fired "skipping in applied snapshot" at someone who was not
+			// writing a snapshot, before every first install.
 			return nil, true, nil
 		}
 		return nil, false, fmt.Errorf("reading tfvars source %s: %w", path, err)

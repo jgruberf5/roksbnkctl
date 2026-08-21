@@ -28,6 +28,13 @@ import (
 // existing contract — so it WARNS, loudly, and refuses in a later release. The
 // warning is the deprecation; the refusal follows it, not the other way round.
 
+// bnkPhaseSnapshotLabel is the phase name the BNK phase's applied-tfvars
+// snapshot is written under. It is "trial" rather than "bnk" because
+// Workspace.phaseLabel classifies by state directory and the BNK phase uses the
+// workspace's default one — the label predates the phase split. Named here so
+// the read side cannot drift from the write side by guessing.
+const bnkPhaseSnapshotLabel = "trial"
+
 // guardCreateTimeSettings compares create-time-only settings against what the
 // cluster was actually built with. Returns an error only for the settings that
 // are safe to enforce; the rest warn on w.
@@ -55,6 +62,22 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 	if err := config.CheckNetworkMode(cctx.Workspace, out); err != nil {
 		return err
 	}
+
+	// ── enforced: the BNK namespaces ─────────────────────────────────────────
+	// Checked against the applied-tfvars snapshot, not the cluster record, and
+	// therefore BEFORE the cluster-record early return below: the record
+	// describes the CLUSTER, these describe the BNK install running on it, and a
+	// cluster outlives its installs. A workspace whose record is missing or
+	// unreadable can still hold a BNK install worth protecting.
+	//
+	// Snapshot unreadable → silent, same reasoning as the record itself: this
+	// exists to catch a contradiction, not to invent a new way for a run to fail.
+	if applied, err := config.ReadAppliedTFVarsReplayAssignments(cctx.WorkspaceName, bnkPhaseSnapshotLabel); err == nil {
+		if err := config.CheckNamespaceTopology(cctx.Workspace, applied); err != nil {
+			return err
+		}
+	}
+
 	if out == nil || out.ClusterID == "" {
 		return nil // nothing recorded to compare the rest against
 	}

@@ -2,6 +2,9 @@ package orchestration
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -264,5 +267,82 @@ func TestUnsetModeDefersToTheRecord(t *testing.T) {
 	cctx.Workspace.Cluster.NetworkMode = config.NetworkModeSingleNIC
 	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err == nil {
 		t.Error("an explicit single-nic against a multi-nic cluster must still be refused")
+	}
+}
+
+// stageBNKInstall records a BNK phase applied-tfvars snapshot for ws, the way a
+// real apply would: by handing WriteAppliedTFVars a var-file to render from.
+// Round-tripping through the real writer is the point — a hand-written snapshot
+// would pass even if the writer stopped recording the namespaces.
+func stageBNKInstall(t *testing.T, ws, flo, utils string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "terraform.tfvars")
+	body := fmt.Sprintf("flo_namespace = %q\nflo_utils_namespace = %q\n", flo, utils)
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatalf("staging var-file: %v", err)
+	}
+	if err := config.WriteAppliedTFVars(ws, bnkPhaseSnapshotLabel, []string{src}); err != nil {
+		t.Fatalf("staging applied tfvars: %v", err)
+	}
+}
+
+// guardWSWithNamespaces stages a workspace asking for the given namespaces, with
+// a cluster already recorded so nothing else in the guard short-circuits.
+func guardWSWithNamespaces(t *testing.T, flo, utils string) *config.Context {
+	t.Helper()
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{ClusterName: "c", ClusterID: "c1"})
+	cctx.Workspace.BNK.FLONamespace = flo
+	cctx.Workspace.BNK.FLOUtilsNamespace = utils
+	return cctx
+}
+
+// The destructive case, end to end through the guard the BNK phase actually
+// calls: collapsing a two-namespace install deletes the utils namespace and
+// every shared component in it.
+func TestCollapsingNamespacesOnAnInstalledWorkspaceIsRefused(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-utils")
+
+	var buf bytes.Buffer
+	err := guardCreateTimeSettings(cctx, &buf)
+	if err == nil {
+		t.Fatal("collapsing the namespaces on an installed workspace must be refused")
+	}
+	if !strings.Contains(err.Error(), "f5-utils") {
+		t.Errorf("refusal must name the namespace that would be deleted: %v", err)
+	}
+}
+
+// One namespace on a workspace that has never applied is the supported way to
+// get one namespace. The guard must not stand in front of it.
+func TestCollapsedNamespacesOnAFreshWorkspacePass(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("a first install may choose one namespace: %v", err)
+	}
+}
+
+// Steady state for a single-namespace customer: installed collapsed, re-running
+// unchanged. Refusing here would make the feature unusable after day one.
+func TestUnchangedCollapsedNamespacesConverge(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-bnk")
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("re-applying an unchanged single-namespace install must converge: %v", err)
+	}
+}
+
+// The default two-namespace install, re-run with the fields left unset. This is
+// the overwhelmingly common path and it must stay silent.
+func TestUnchangedDefaultNamespacesConverge(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "", "")
+	stageBNKInstall(t, cctx.WorkspaceName, config.DefaultFLONamespace, config.DefaultFLOUtilsNamespace)
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("an unchanged default install must converge: %v", err)
 	}
 }
