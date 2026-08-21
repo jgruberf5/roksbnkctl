@@ -66,10 +66,16 @@ Unattended callers branch on `$?`, so the codes are an interface:
 | `126` | Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused. |
 | `127` | The target could not be reached at all. |
 | `130` | The operator interrupted it (Ctrl-C / `SIGINT`). |
-| *other* | A wrapped tool's own status, passed through unchanged — `terraform`, `ibmcloud`, and `--on <target>` remote commands all propagate theirs. |
+| `125` | **`upgrade` / `self update` only.** The upgrade removed the old binary and could not put anything back, so there is no `roksbnkctl` at the install path. The message names the `.old` sidecar and the command to rename it. |
+| *other* | A wrapped tool's own status, passed through unchanged — `terraform`, `ibmcloud`, and `--on <target>` remote commands all propagate theirs. That includes `125` from any command **other** than `upgrade` / `self update`, which spawn no child. |
 
 `130` is worth wiring into CI cleanup: it distinguishes *"someone stopped this"*
 from *"it broke"*, which a job that retries on failure should treat differently.
+
+`125` matters for the same reason, in the opposite direction: an ordinary failed
+upgrade is safe to retry, and this one is not — there is nothing left to run. A
+wrapper that retries on any non-zero status will loop forever on a machine that
+cannot recover until someone renames the sidecar back.
 Before v1.50.0 only `roksbnkctl init` produced it — every other command turned
 the same Ctrl-C into `1`.
 
