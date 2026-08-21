@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -481,8 +482,24 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 
 	// Owner-ref the files Secret to the Job so it auto-deletes on Job
 	// cleanup. Done after Create so we have the Job's UID.
+	//
+	// A failure here is not fatal — the Job is running and the work should
+	// proceed — but it cannot be silent either. Nothing else deletes this
+	// Secret: the happy path relies entirely on ttlSecondsAfterFinished plus
+	// this owner-ref cascade, and the cleanup goroutine below only fires on
+	// ctx cancel. Without the owner-ref, TTL removes the Job and leaves the
+	// Secret holding credential material behind indefinitely, on a run that
+	// otherwise succeeded and printed nothing unusual.
+	//
+	// Same shape as the cluster-outputs.json write (#119): warn, name the
+	// recovery, do not fail the command.
 	if filesSecretCreated {
-		_ = setSecretOwnerRef(ctx, b.jobNS(), cs, filesSecretName, created)
+		if err := setSecretOwnerRef(ctx, b.jobNS(), cs, filesSecretName, created); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not owner-ref secret %s/%s to its Job: %v\n",
+				b.jobNS(), filesSecretName, err)
+			fmt.Fprintf(os.Stderr, "         (it will NOT be auto-deleted — remove it with "+
+				"`kubectl -n %s delete secret %s`)\n", b.jobNS(), filesSecretName)
+		}
 	}
 
 	// Cleanup goroutine: ctx cancel → delete Job + Secret. Job's
