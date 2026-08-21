@@ -122,6 +122,17 @@ check bnk_line "v2.4"    reject "must be 2.3 or 2.4"
 check bnk_line "2.5"     reject "must be 2.3 or 2.4"
 check bnk_line ""        reject "must be 2.3 or 2.4"
 
+# The BNK namespaces. The equal case is the one that matters — one namespace is
+# a supported, customer-required configuration (#66), so a validation that
+# rejected it would break them at plan time.
+check flo_namespace       "f5-bnk"   accept
+check flo_utils_namespace "f5-bnk"   accept
+check flo_utils_namespace "f5-utils" accept
+check flo_namespace       "F5-BNK"   reject "RFC 1123"
+check flo_namespace       "f5_bnk"   reject "RFC 1123"
+check flo_namespace       "-f5-bnk"  reject "RFC 1123"
+check flo_namespace       ""         reject "RFC 1123"
+
 if (( fails )); then
   echo "==> $fails variable-validation case(s) FAILED"
   exit 1

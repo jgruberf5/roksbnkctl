@@ -180,8 +180,22 @@ resource "kubectl_manifest" "bnk_gateway" {
   force_conflicts   = true
 }
 
+# ONE NAMESPACE, CONTINUED (#66).
+#
+# The BNK phase learned to collapse flo_namespace and flo_utils_namespace into
+# one name. A customer who wants ONE namespace means all of it, so they set
+# gateway.app_namespace to the same value too — and this resource had no guard.
+#
+# It would not merely be redundant, it would FAIL. The gateway phase runs against
+# its own state dir with deploy_bnk = false, so kubernetes_namespace_v1.flo is
+# count 0 in this root and terraform has no idea the namespace already exists. It
+# plans a create, and the apply dies on `namespaces "f5-bnk" already exists`.
+#
+# Guarded in the same direction as the BNK phase's pair: the namespace that
+# something else owns is the conditional one. When the names are equal the BNK
+# phase owns it, exactly as flo owns it there.
 resource "kubernetes_namespace_v1" "app" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && var.app_namespace != var.flo_namespace ? 1 : 0
   metadata {
     name = var.app_namespace
   }

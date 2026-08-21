@@ -171,7 +171,14 @@ func clusterProbe(ctx context.Context, _ map[string]config.StateOutput) map[stri
 
 // bnkProbe reports ready/total for each known BNK component (reuses the
 // inspect.go bnkComponents selector map).
-func bnkProbe(ctx context.Context, _ map[string]config.StateOutput) map[string]string {
+//
+// The outputs carry flo_namespace — bnkStatusCmd selects it — and this used to
+// discard them and probe a hardcoded f5-bnk. Any workspace that set
+// bnk.flo_namespace, including every ONE-namespace install (#66), then had a
+// healthy deployment reported as "0 pods". The state outputs are the right
+// source here rather than config.yaml: they say where things were actually
+// applied, not where the next apply intends to put them.
+func bnkProbe(ctx context.Context, outs map[string]config.StateOutput) map[string]string {
 	kcPath := k8s.DefaultKubeconfigPath()
 	if kcPath == "" {
 		return map[string]string{"cluster": "(no kubeconfig)"}
@@ -182,8 +189,9 @@ func bnkProbe(ctx context.Context, _ map[string]config.StateOutput) map[string]s
 	}
 	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	res := make(map[string]string, len(bnkComponents))
-	for _, c := range bnkComponents {
+	comps := bnkComponentsIn(outString(outs, "flo_namespace"))
+	res := make(map[string]string, len(comps))
+	for _, c := range comps {
 		pods, err := kc.Clientset().CoreV1().Pods(c.Ns).List(tctx, metav1.ListOptions{LabelSelector: c.Selector})
 		if err != nil {
 			res[c.Name] = fmt.Sprintf("(error: %v)", err)

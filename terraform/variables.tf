@@ -327,16 +327,33 @@ variable "bnk_line" {
   }
 }
 
+# SET BOTH TO THE SAME VALUE FOR ONE NAMESPACE (#66). Supported and verified —
+# the utils-side namespace and its duplicate secrets are then not created.
+#
+# Validated as RFC 1123 labels because the reference documentation has claimed
+# they were for some time and nothing enforced it. An invalid namespace name is
+# not caught until the apply, where it surfaces as a Kubernetes admission error
+# partway through creating things.
 variable "flo_namespace" {
   description = "Kubernetes namespace for the F5 Lifecycle Operator"
   type        = string
   default     = "f5-bnk"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.flo_namespace)) && length(var.flo_namespace) <= 63
+    error_message = "flo_namespace must be a valid RFC 1123 label: lowercase alphanumerics and '-', starting and ending alphanumeric, at most 63 characters."
+  }
 }
 
 variable "flo_utils_namespace" {
-  description = "Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license"
+  description = "Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license. Set equal to flo_namespace to install into ONE namespace."
   type        = string
   default     = "f5-utils"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.flo_utils_namespace)) && length(var.flo_utils_namespace) <= 63
+    error_message = "flo_utils_namespace must be a valid RFC 1123 label: lowercase alphanumerics and '-', starting and ending alphanumeric, at most 63 characters."
+  }
 }
 
 variable "bigip_username" {

@@ -68,17 +68,20 @@ spec:
               export KUBECONFIG=/home/runner/.kube/config
               ibmcloud login --apikey "$IBMCLOUD_API_KEY" -r us-south -g default -q >/dev/null 2>&1 || exit 0
               for _ in $(seq 1 40); do ibmcloud ks cluster config -c disco-demo --admin >/dev/null 2>&1 && break; sleep 10; done
+              # CWC lives in the shared-components namespace — f5-utils by default,
+              # but the SAME namespace as BNK on a one-namespace install (#66).
+              NS="${ROKSBNKCTL_FLO_UTILS_NAMESPACE:-f5-utils}"
               for _ in $(seq 1 160); do
-                if kubectl -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
-                  kubectl -n f5-utils patch deploy f5-spk-cwc --type=merge \
+                if kubectl -n "$NS" get deploy f5-spk-cwc >/dev/null 2>&1; then
+                  kubectl -n "$NS" patch deploy f5-spk-cwc --type=merge \
                     -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1
-                  pods=$(kubectl -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)
+                  pods=$(kubectl -n "$NS" get pods 2>/dev/null | grep f5-spk-cwc || true)
                   if [ "$(echo "$pods" | grep -c f5-spk-cwc)" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
-                    kubectl -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
-                    for _ in $(seq 1 20); do [ "$(kubectl -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
-                    kubectl -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
+                    kubectl -n "$NS" scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
+                    for _ in $(seq 1 20); do [ "$(kubectl -n "$NS" get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
+                    kubectl -n "$NS" scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
                   fi
-                  [ "$(kubectl -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
+                  [ "$(kubectl -n "$NS" get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
                 fi
                 sleep 10
               done

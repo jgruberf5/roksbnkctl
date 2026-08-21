@@ -181,7 +181,12 @@ spec:
           args:
             - |
               [ "${CWC_GUARD_ENABLED:-true}" = "true" ] || { echo "cwc guard disabled"; exit 0; }
-              NS="${CWC_NAMESPACE:-f5-utils}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
+              # CWC lives in the SHARED-components namespace, which is f5-utils by default
+              # but equals the BNK namespace on a ONE-namespace install (#66). Follow
+              # ROKSBNKCTL_FLO_UTILS_NAMESPACE when it is set, or this guard watches a
+              # namespace that does not exist and silently never patches — and the
+              # Multi-Attach deadlock it exists to break just hangs bnk up instead.
+              NS="${CWC_NAMESPACE:-${ROKSBNKCTL_FLO_UTILS_NAMESPACE:-f5-utils}}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
               K="roksbnkctl -w bnkconn kubectl"
               patched=0
               # ~27 min, comfortably covering bnk up's 15m license gate.

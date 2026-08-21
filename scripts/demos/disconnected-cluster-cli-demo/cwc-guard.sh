@@ -31,22 +31,28 @@ done
 [ -z "$KC" ] && exit 0
 export KUBECONFIG="$KC"
 
+# CWC lives in the shared-components namespace — f5-utils by default, but the
+# SAME namespace as BNK on a one-namespace install (#66). Honour the override
+# or this guard watches a namespace that does not exist, never patches, and the
+# Multi-Attach deadlock it exists to break simply hangs bnk up.
+NS="${ROKSBNKCTL_FLO_UTILS_NAMESPACE:-f5-utils}"
+
 patched=0
 for _ in $(seq 1 120); do              # up to ~20 min, covering the whole bnk up
-  if "$KB" -n f5-utils get deploy f5-spk-cwc >/dev/null 2>&1; then
+  if "$KB" -n "$NS" get deploy f5-spk-cwc >/dev/null 2>&1; then
     if [ "$patched" = 0 ]; then
-      "$KB" -n f5-utils patch deploy f5-spk-cwc --type=merge \
+      "$KB" -n "$NS" patch deploy f5-spk-cwc --type=merge \
         -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}' >/dev/null 2>&1 && patched=1
     fi
     # A rollover deadlock shows as >1 cwc pod with one stuck in ContainerCreating: release
     # the RWO volume by cycling to 0 then 1 so a single pod attaches cleanly.
-    pods="$("$KB" -n f5-utils get pods 2>/dev/null | grep f5-spk-cwc || true)"
+    pods="$("$KB" -n "$NS" get pods 2>/dev/null | grep f5-spk-cwc || true)"
     if [ "$(echo "$pods" | grep -c f5-spk-cwc)" -gt 1 ] && echo "$pods" | grep -q ContainerCreating; then
-      "$KB" -n f5-utils scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
-      for _ in $(seq 1 20); do [ "$("$KB" -n f5-utils get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
-      "$KB" -n f5-utils scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
+      "$KB" -n "$NS" scale deploy f5-spk-cwc --replicas=0 >/dev/null 2>&1
+      for _ in $(seq 1 20); do [ "$("$KB" -n "$NS" get pods 2>/dev/null | grep -c f5-spk-cwc)" = 0 ] && break; sleep 6; done
+      "$KB" -n "$NS" scale deploy f5-spk-cwc --replicas=1 >/dev/null 2>&1
     fi
-    [ "$("$KB" -n f5-utils get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
+    [ "$("$KB" -n "$NS" get licenses.k8s.f5net.com bnk-license -o jsonpath='{.status.state}' 2>/dev/null)" = "Active" ] && exit 0
   fi
   sleep 10
 done

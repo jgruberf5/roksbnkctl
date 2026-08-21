@@ -291,11 +291,48 @@ type bnkComponent struct {
 	Selector string
 }
 
+// nsBNK marks a component that lives in the workspace's BNK namespace, whatever
+// that is. The table used to hardcode "f5-bnk", which is only right for a
+// workspace that took the default — and is wrong for every workspace that set
+// bnk.flo_namespace, including every ONE-namespace install (#66). `logs` and
+// `bnk status` then looked in a namespace nothing was running in and reported
+// "0 pods" for a healthy deployment.
+const nsBNK = ""
+
 var bnkComponents = []bnkComponent{
-	{"flo", "F5 Lifecycle Operator", "f5-bnk", "app.kubernetes.io/name=f5-lifecycle-operator"},
-	{"cis", "F5 BNK CIS controller", "f5-bnk", "app=f5-bnk-cis"},
+	{"flo", "F5 Lifecycle Operator", nsBNK, "app.kubernetes.io/name=f5-lifecycle-operator"},
+	{"cis", "F5 BNK CIS controller", nsBNK, "app=f5-bnk-cis"},
 	{"cert-manager", "cert-manager", "cert-manager", "app.kubernetes.io/instance=cert-manager"},
-	{"cneinstance", "BIG-IP TMM data plane (CNEInstance pods)", "f5-bnk", "app.kubernetes.io/component=tmm"},
+	{"cneinstance", "BIG-IP TMM data plane (CNEInstance pods)", nsBNK, "app.kubernetes.io/component=tmm"},
+}
+
+// bnkComponentsIn resolves the table against a concrete BNK namespace. An empty
+// floNS falls back to the terraform default, so a caller that cannot determine
+// the namespace behaves exactly as this code did before.
+func bnkComponentsIn(floNS string) []bnkComponent {
+	if floNS == "" {
+		floNS = config.DefaultFLONamespace
+	}
+	out := make([]bnkComponent, len(bnkComponents))
+	copy(out, bnkComponents)
+	for i := range out {
+		if out[i].Ns == nsBNK {
+			out[i].Ns = floNS
+		}
+	}
+	return out
+}
+
+// bnkNamespaceFromConfig reads bnk.flo_namespace for the active workspace.
+// Best-effort by design: `logs` has to keep working outside a workspace, and
+// falling back to the default is what it did before this was configurable.
+func bnkNamespaceFromConfig() string {
+	cctx, err := config.New(flagWorkspace)
+	if err != nil || cctx == nil || cctx.Workspace == nil {
+		return config.DefaultFLONamespace
+	}
+	flo, _ := cctx.Workspace.BNKNamespaces()
+	return flo
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
@@ -394,10 +431,14 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	return err
 }
 
+// lookupComponent resolves a component name against the active workspace's BNK
+// namespace, so `logs flo` follows a renamed or collapsed namespace instead of
+// looking in a literal f5-bnk.
 func lookupComponent(name string) *bnkComponent {
-	for i := range bnkComponents {
-		if bnkComponents[i].Name == name {
-			return &bnkComponents[i]
+	comps := bnkComponentsIn(bnkNamespaceFromConfig())
+	for i := range comps {
+		if comps[i].Name == name {
+			return &comps[i]
 		}
 	}
 	return nil
