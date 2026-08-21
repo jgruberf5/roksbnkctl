@@ -191,13 +191,35 @@ if command -v argo >/dev/null && command -v kubectl >/dev/null && kubectl get ns
     --from-literal=username="$ART_USER" \
     --from-literal=password="$ART_TOKEN" \
     --dry-run=client -o yaml >/dev/null
+  # ibmcloud-api-key is NOT optional in practice. The workflow declares it
+  # optional so a mirror with a pre-seeded source credential can run without
+  # one, but `registry bom` resolves the FAR service account from COS and needs
+  # a key to do it — omit it and the workflow's first real step exits 1 with
+  # "no IBM Cloud API key for workspace".
+  ART_SECRET_ARGS=(--from-literal=host="$ART_DOMAIN" --from-literal=repo="$ART_REPO"
+                   --from-literal=username="$ART_USER" --from-file=password=/dev/stdin)
+  if [[ -n "${IBMCLOUD_API_KEY:-}" ]]; then
+    ART_SECRET_ARGS+=(--from-literal=ibmcloud-api-key="$IBMCLOUD_API_KEY")
+  else
+    say "  ⚠ IBMCLOUD_API_KEY is not set — the Argo run will fail at registry bom,"
+    say "    which resolves the FAR service account from COS."
+  fi
   printf '%s' "$ART_TOKEN" | kubectl -n "$ARGO_NS" create secret generic artifactory-mirror \
-    --from-literal=host="$ART_DOMAIN" --from-literal=repo="$ART_REPO" \
-    --from-literal=username="$ART_USER" --from-file=password=/dev/stdin \
+    "${ART_SECRET_ARGS[@]}" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   begin_long
+  # The COS coordinates have to be PASSED. wf-artifactory-mirror.yaml declares
+  # cos-bucket with an empty default on purpose — bucket names are globally
+  # unique, so every account's is suffixed (bnk-artifacts-<hex>) and no default
+  # can be right. Leaving it empty does not fail loudly: the tool falls back to
+  # a bare "bnk-artifacts", which belongs to somebody else, and the run dies on
+  # a COS 403 that reads like a permissions problem rather than a missing
+  # setting.
   runmask argo submit -n "$ARGO_NS" "$HERE/wf-artifactory-mirror.yaml" \
-    -p runner-image="$RUNNER_IMAGE" -p bnk-version="$BNK_VERSION" --wait
+    -p runner-image="$RUNNER_IMAGE" -p bnk-version="$BNK_VERSION" \
+    -p cos-instance="${COS_INSTANCE:-}" -p cos-bucket="${COS_BUCKET:-}" \
+    -p cos-region="${COS_REGION:-}" --wait \
+    || FAILED_STEPS+=("argo submit (the container path)")
   end_long
   ok "the container reached the same verified mirror"
 else
