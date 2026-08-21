@@ -23,7 +23,17 @@ import (
 // there: it flips before TMM needs its license, so the License CR — gated on
 // this same id — can proceed and TMM reaches Available afterwards. Waiting on
 // the aggregate on 2.3 would deadlock against its own licensing step.
-func TestTheReadinessConditionIsLineSelected(t *testing.T) {
+// The GATE stays CNEControllerAvailable on BOTH lines, and the aggregate is
+// checked AFTER licensing. This test asserted the opposite until a live 2.4
+// install disproved it.
+//
+// Waiting on Available at the gate deadlocks: the License CR is gated on that
+// same readiness id, so Available cannot go True until TMM is licensed, TMM
+// cannot be licensed until the License CR applies, and the License CR waits on
+// the gate. Observed — 15 minutes, then 16 conditions True, F5TmmAvailable
+// Pending, and no License CR at all, because the wait had blocked the very step
+// that would have cleared it.
+func TestTheReadinessGateDoesNotWaitOnTheAggregate(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(repoRootForDemoTest(t),
 		filepath.FromSlash("terraform/modules/cne_instance/modules/cneinstance/main.tf")))
 	if err != nil {
@@ -31,19 +41,44 @@ func TestTheReadinessConditionIsLineSelected(t *testing.T) {
 	}
 	src := string(b)
 
-	if !strings.Contains(src, `cneinstance_ready_condition = local.line_pre_24 ? "CNEControllerAvailable" : "Available"`) {
-		t.Error("the readiness condition is not line-selected. 2.4 must wait on the aggregate " +
-			"Available — CNEControllerAvailable is True on an install where TMM is 0/3 and " +
-			"nothing passes traffic — while 2.3 must keep CNEControllerAvailable or it " +
-			"deadlocks against its own licensing step.")
+	if !strings.Contains(src, `cneinstance_ready_condition = "CNEControllerAvailable"`) {
+		t.Error("the readiness gate must wait on CNEControllerAvailable on both lines. It answers " +
+			"\"can licensing proceed\", which is the question it is asked; waiting on the " +
+			"aggregate Available there deadlocks against the License CR that is gated on it.")
 	}
-	// And the gate must actually USE it rather than keep a hardcoded condition.
-	if !strings.Contains(src, "--for condition=${local.cneinstance_ready_condition}=True") {
-		t.Error("the tfx wait still hardcodes a condition; the line-selected local is unused")
+	if strings.Contains(src, `? "CNEControllerAvailable" : "Available"`) {
+		t.Error("the gate is line-selected again — that is the deadlock, not a fix for it")
 	}
-	if strings.Contains(src, "--for condition=CNEControllerAvailable=True") {
-		t.Error("a hardcoded CNEControllerAvailable wait remains — on 2.4 it reports success " +
-			"on a broken install")
+}
+
+// And the aggregate IS still checked, after licensing, on 2.4. Without this the
+// original defect returns: a 2.3-style wait declares a 2.4 install successful
+// while TMM is Pending and nothing passes traffic.
+func TestTheAggregateIsCheckedAfterLicensing(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRootForDemoTest(t),
+		filepath.FromSlash("terraform/modules/license/modules/license/main.tf")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+
+	if !strings.Contains(src, "cneinstance_available_24") {
+		t.Fatal("nothing checks the CNEInstance's aggregate Available after licensing, so a 2.4 " +
+			"install with TMM Pending would still be reported as successful")
+	}
+	if !strings.Contains(src, "condition=Available=True") {
+		t.Error("the post-licensing check should wait on the aggregate Available")
+	}
+	// 2.4 only: 2.3's aggregate is not a reliable signal the same way, and adding
+	// a new failure mode to the line that ships today is not worth the symmetry.
+	if !strings.Contains(src, `var.bnk_line == "2.4"`) {
+		t.Error("the post-licensing check must be gated to 2.4")
+	}
+	// It must depend on the License CR, or it is just the gate again under
+	// another name.
+	if !strings.Contains(src, "depends_on = [kubectl_manifest.bnk_license]") {
+		t.Error("the check must run AFTER the License CR applies; otherwise it deadlocks exactly " +
+			"as the gate did")
 	}
 }
 
