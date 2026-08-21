@@ -118,7 +118,7 @@ This way, your CI script can tell "the tool said X failed" (typical exit codes) 
 
 This is separate from `1` because the two need opposite responses. An ordinary failed upgrade is safe to retry; this one cannot be retried at all, because there is nothing left to run. A wrapper that treats them alike either loops forever on a machine that will never recover, or reports a bricked install as routine.
 
-Note the overlap with the passthrough range above, which is deliberate and bounded: `0-125` is reserved for a *wrapped tool's* own status, and these two commands wrap no tool. There is no invocation that could mean both things at once. Only `upgrade` and `self update` can produce `125`.
+Note the overlap with the passthrough range above. It is deliberate and bounded, but it is an overlap: a wrapped tool that exits `125` still propagates `125`, exactly as the table says. What cannot happen is a *single invocation* meaning both — `upgrade` and `self update` spawn no child process at all (extraction, checksum verification and the install are in-process), so a `125` from those two commands has exactly one meaning, and a `125` from anything else is a child's status. This is the same bargain already made for `2`, which is both "bad invocation" and whatever a child chose to exit with.
 
 In practice this fires on Windows, where a running `.exe` is locked and the upgrade works by renaming the old binary aside before moving the new one in. A second process holding a handle at that moment — an antivirus scanner opening the freshly written file is the usual one — can make the second rename fail; if the rollback then fails too, this is the result.
 
@@ -204,13 +204,13 @@ The kill is process-only, not process-group. If `terraform` has spawned grandchi
 | Child binary couldn't be exec'd despite being present (e.g., not executable) | `126` | local backend (mid-run failure: we found the binary but couldn't spawn it) |
 | Ctx cancelled mid-run, child SIGKILL'd | `137` | `128 + SIGKILL` |
 
-`upgrade` / `self update` add one code of their own, outside this table because they wrap no child:
+Note the **126 vs 127 split**: 127 means "we never reached the tool" (binary missing, daemon unreachable, SSH refused); 126 means "we reached the tool but the backend itself broke after that point" (couldn't fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per [PRD 03 §"Backend interface"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface). CI scripts that distinguish "test infra broken" from "real test failure" can now key on the difference.
+
+`upgrade` / `self update` add one code of their own, listed separately because they wrap no child:
 
 | Outcome | Exit code | Source |
 |---|---|---|
 | Upgrade left no binary at the install path (rollback also failed) | `125` | `exitcode.SelfUpdateStranded` |
-
-Note the **126 vs 127 split**: 127 means "we never reached the tool" (binary missing, daemon unreachable, SSH refused); 126 means "we reached the tool but the backend itself broke after that point" (couldn't fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per [PRD 03 §"Backend interface"](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface). CI scripts that distinguish "test infra broken" from "real test failure" can now key on the difference.
 
 #### When to use it
 

@@ -126,12 +126,16 @@ func TestSilentErrorsAreDistinguishable(t *testing.T) {
 // cannot be seen from inside this package.
 func TestTheContractsValuesAreStable(t *testing.T) {
 	for name, tc := range map[string]struct{ got, want int }{
-		"OK":            {OK, 0},
-		"Failure":       {Failure, 1},
-		"Usage":         {Usage, 2},
-		"AuthFailed":    {AuthFailed, 126},
-		"ConnectFailed": {ConnectFailed, 127},
-		"Interrupted":   {Interrupted, 130},
+		"OK":      {OK, 0},
+		"Failure": {Failure, 1},
+		"Usage":   {Usage, 2},
+		// 125 was chosen because nothing in scripts/, .github/ or the Makefile
+		// keys on it, and it sits below the 126/127 pair. Moving it would break
+		// any wrapper that learned to retry on 1 but not on this.
+		"SelfUpdateStranded": {SelfUpdateStranded, 125},
+		"AuthFailed":         {AuthFailed, 126},
+		"ConnectFailed":      {ConnectFailed, 127},
+		"Interrupted":        {Interrupted, 130},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %d, want %d — scripts branch on these; changing one breaks callers", name, tc.got, tc.want)

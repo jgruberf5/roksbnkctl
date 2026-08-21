@@ -45,8 +45,16 @@ const (
 	// loops forever on a machine that will never recover, or reports a bricked
 	// install as a routine error. See #154.
 	//
-	// 125 sits just below the 126/127 pair, which are also about the binary
-	// itself rather than about what it did.
+	// 125 is free: nothing in scripts/, .github/ or the Makefile keys on it, and
+	// it sits below the 126/127 pair rather than colliding with them.
+	//
+	// It DOES overlap the range a wrapped tool's own status is passed through
+	// on — a child exiting 125 propagates as 125, and that is unchanged. The
+	// two never meet in one invocation: `upgrade` and `self update` spawn no
+	// child process at all (no os/exec in that path; extraction, checksums and
+	// the install are all in-process), so a 125 from those commands has exactly
+	// one meaning. This is the same bargain already struck for Usage=2 against
+	// a child that exits 2.
 	SelfUpdateStranded = 125
 
 	// AuthFailed — "permission denied": SSH authentication, a host-key

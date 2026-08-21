@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -108,14 +109,50 @@ func TestARecoverableUpgradeFailureStillExitsFailure(t *testing.T) {
 	}
 }
 
-// Ctrl-C during an upgrade is still Interrupted. FromError gives cancellation
-// precedence over a carried code, and that ordering must not change just
-// because a new code was added near it.
-func TestCancellationStillOutranksTheNewCode(t *testing.T) {
+// Cancellation outranks a carried code in FromError, and that ordering is
+// already pinned by TestFromErrorResolvesTheContract in internal/exitcode. What
+// is worth recording HERE is the consequence of the ordering meeting this
+// particular error, which is not obvious and is not covered there.
+//
+// errRollbackFailed.Unwrap() returns BOTH causes, so errors.Is walks into each.
+// If a cancellation ever reaches either one, FromError returns Interrupted and
+// the 125 is lost — a bricked install would report as a clean Ctrl-C.
+//
+// Not reachable today: renameFile is os.Rename, which never returns
+// context.Canceled, and installByMoveAside never consults a ctx. But renameFile
+// is a package var installed as a test seam, and runUpgrade holds a cancellable
+// ctx a few frames up, so a ctx-aware rename is the natural future edit that
+// would silently flip this. The test states the current answer so a change to
+// it is a decision rather than an accident.
+func TestACancellationInEitherCauseOutranksTheStrandedCode(t *testing.T) {
 	stranded := exitcode.Wrap(exitcode.SelfUpdateStranded, errRollbackFailed{
-		install: errors.New("x"), rollback: errors.New("y"), old: "a", target: "b",
+		install:  context.Canceled,
+		rollback: fs.ErrPermission,
+		old:      "a", target: "b",
+	})
+	if got := exitcode.FromError(stranded); got != exitcode.Interrupted {
+		t.Errorf("a cancellation in the install cause should give %d, got %d",
+			exitcode.Interrupted, got)
+	}
+
+	// And through the rollback cause, which is the second element of Unwrap.
+	stranded = exitcode.Wrap(exitcode.SelfUpdateStranded, errRollbackFailed{
+		install:  fs.ErrPermission,
+		rollback: context.Canceled,
+		old:      "a", target: "b",
+	})
+	if got := exitcode.FromError(stranded); got != exitcode.Interrupted {
+		t.Errorf("a cancellation in the rollback cause should give %d, got %d",
+			exitcode.Interrupted, got)
+	}
+
+	// With no cancellation anywhere, the code stands.
+	stranded = exitcode.Wrap(exitcode.SelfUpdateStranded, errRollbackFailed{
+		install:  fs.ErrPermission,
+		rollback: fs.ErrPermission,
+		old:      "a", target: "b",
 	})
 	if got := exitcode.FromError(stranded); got != exitcode.SelfUpdateStranded {
-		t.Fatalf("precondition: want %d, got %d", exitcode.SelfUpdateStranded, got)
+		t.Errorf("without a cancellation the stranded code must stand, got %d", got)
 	}
 }
