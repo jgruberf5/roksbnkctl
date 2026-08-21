@@ -112,6 +112,16 @@ check gateway_route_examples '["GRPCRoute","L4Route"]'   accept
 check gateway_route_examples '["TCPRoute"]'              reject "accepts only GRPCRoute and L4Route"
 check gateway_route_examples '["HTTPRoute"]'             reject "accepts only GRPCRoute and L4Route"
 
+# The BNK release line. roksbnkctl derives it from bnk.manifest_version, so a
+# bad value only reaches terraform on a hand-run apply — which is exactly when
+# there is no guard upstream to catch it, and when planning the wrong line
+# silently builds the wrong release.
+check bnk_line "2.3"     accept
+check bnk_line "2.4"     accept
+check bnk_line "v2.4"    reject "must be 2.3 or 2.4"
+check bnk_line "2.5"     reject "must be 2.3 or 2.4"
+check bnk_line ""        reject "must be 2.3 or 2.4"
+
 if (( fails )); then
   echo "==> $fails variable-validation case(s) FAILED"
   exit 1

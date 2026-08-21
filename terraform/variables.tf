@@ -304,6 +304,29 @@ variable "f5_cne_subscription_jwt" {
   sensitive   = true
 }
 
+# The BNK release line the rest of this tree gates on.
+#
+# WHY A VARIABLE AND NOT AN OVERLAY. Per-line HCL could live in terraform/lines/
+# (see lines/README.md), but 2.4's differences are overwhelmingly ADDITIVE — new
+# CR kinds alongside the old ones — and `count` expresses that without forking a
+# file. An overlay is a copy, and two copies of a file drift.
+#
+# DERIVED, NOT CONFIGURED. roksbnkctl renders this from bnk.manifest_version, so
+# it cannot disagree with the release actually being installed. It is declared
+# with a default so a hand-run `terraform apply` still plans something coherent,
+# and validated so a typo fails at plan time rather than by quietly building the
+# wrong line.
+variable "bnk_line" {
+  description = "BNK release line driving per-release resource gating (2.3 or 2.4). Derived by roksbnkctl from bnk.manifest_version — set it by hand only for a standalone terraform run."
+  type        = string
+  default     = "2.3"
+
+  validation {
+    condition     = contains(["2.3", "2.4"], var.bnk_line)
+    error_message = "bnk_line must be 2.3 or 2.4."
+  }
+}
+
 variable "flo_namespace" {
   description = "Kubernetes namespace for the F5 Lifecycle Operator"
   type        = string

@@ -479,6 +479,7 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 // keeps a rendered tfvars diffable across runs, so these are called in the
 // same sequence the single function emitted them.
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
+	renderBNKLine(w, ws)
 	renderBNKNamespaces(w, ws)
 	renderBNKTrustedProfile(w, ws)
 	if err := renderBNKGTM(w, ws); err != nil {
@@ -499,6 +500,29 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	renderBNKNetwork(w, ws)
 	renderBNKCIS(w, ws)
 	return nil
+}
+
+// renderBNKLine emits the BNK release line (2.3, 2.4, …) derived from
+// bnk.manifest_version.
+//
+// Rendered ALWAYS, like cluster_network_mode and for the same reason: it decides
+// which resources a module creates, so the terraform default and the tool
+// default must never be able to disagree about it. Rendering it only when
+// "interesting" would leave a workspace on a 2.4 manifest silently planning 2.3
+// resources, which is the failure this variable exists to prevent.
+//
+// Derived, never configured. It comes from the manifest version already in
+// config.yaml, so it cannot drift from the release actually being installed —
+// there is deliberately no bnk.line field to set.
+//
+// An unparseable manifest version renders nothing rather than guessing: the line
+// is wrong, not absent, and BNKLine() reports that as an error on the paths that
+// can act on it. Terraform's own default then applies, and the support-matrix
+// guard refuses the run before any of it matters.
+func renderBNKLine(w io.Writer, ws *config.Workspace) {
+	if line := ws.BNKLineOrEmpty(); line != "" {
+		fmt.Fprintf(w, "bnk_line = %q\n", line)
+	}
 }
 
 // renderBNKNamespaces emits the FLO / utility namespaces.
