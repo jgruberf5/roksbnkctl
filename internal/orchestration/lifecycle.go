@@ -728,7 +728,20 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	}
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy")
-	return destroyWithRetry(ctx, tfws, varFiles)
+	if err := destroyWithRetry(ctx, tfws, varFiles); err != nil {
+		return err
+	}
+	// The CWC licence secrets survive the destroy — terraform never created them,
+	// so it has nothing to remove (#172). They break the NEXT install rather than
+	// this teardown: licensing reads them, finds a previous activation, and does
+	// not re-activate, which surfaces much later as a licence gate timing out on a
+	// cluster that looks clean.
+	//
+	// Best-effort and after a SUCCESSFUL destroy only. If the destroy failed the
+	// install is still there and its secrets are still live; deleting them then
+	// would break a running system to tidy up after a failure.
+	sweepLicenseSecrets(ctx, cctx, w)
+	return nil
 }
 
 // ── exported helper seams (consumed by the cli cluster-phase adapter) ─
