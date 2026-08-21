@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# cluster-lifecycle-ci-demo.sh  (roksbnkctl v1.50.0)
+# cluster-lifecycle-ci-demo.sh  (roksbnkctl v1.51.0)
 #
 # The SAME lifecycle as cluster-lifecycle-cli-demo, told the way it actually ships:
 # as a CI pipeline. ZERO host install — every step is a `docker run` of the

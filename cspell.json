@@ -109,6 +109,7 @@
     "edns",
     "empt",
     "envFrom",
+    "finalizers",
     "envoverride",
     "envsubst",
     "errgroup",
