@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/registry/mirror"
 )
 
 func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
@@ -45,27 +47,15 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	}
 	results := eng.Replicate(cmdContext(cmd), bom)
 
-	var failed int
-	mirrored := make([]config.MirrorArtifact, 0, len(results))
-	for _, r := range results {
-		if r.Err != nil {
-			failed++
-			fmt.Fprintf(os.Stderr, "  FAIL %s/%s:%s — %v\n", r.Artifact.Kind, r.Artifact.Name, r.Artifact.Tag, r.Err)
-			continue
-		}
-		verb := "copied"
-		if r.Skipped {
-			verb = "skipped"
-		}
-		if !flagQuiet {
-			fmt.Fprintf(os.Stderr, "  %s %s/%s:%s %s\n", verb, r.Artifact.Kind, r.Artifact.Name, r.Artifact.Tag, r.Digest)
-		}
-		mirrored = append(mirrored, config.MirrorArtifact{
-			Kind: string(r.Artifact.Kind), Name: r.Artifact.Name, Tag: r.Artifact.Tag, Digest: r.Digest,
-		})
-	}
+	mirrored, failed := summarizeReplication(results, os.Stderr, flagQuiet)
 
 	rec := &config.RegistryMirror{
+		// MissingCount is what lets everything downstream tell this record apart
+		// from a clean one. The partial record is still written on purpose — a
+		// re-run skips what already copied — but the up-path guard refuses to
+		// build an install from it (#150). A clean run writes 0, which clears
+		// the flag from a previous partial attempt.
+		MissingCount:    failed,
 		Target:          registryTargetKind(ws),
 		Namespace:       target.MirrorNamespace(),
 		ChartHost:       target.ChartHostPath(),
@@ -93,4 +83,36 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ mirrored %d artifacts into %s\n", len(mirrored), target.ChartHostPath())
 	return nil
+}
+
+// summarizeReplication reports the artifacts that made it into the mirror and
+// how many did not, printing one line per artifact as it goes.
+//
+// Split out of runRegistryReplicate so the count that becomes MissingCount can
+// be driven directly. It used to be an inline loop, which left the invariant —
+// every failed artifact increments the count that later gates the install —
+// testable only by scanning the source for an assignment. A scan cannot tell
+// live code from a comment, and an adversarial review of #150 demonstrated
+// exactly that: commenting the line out left the guard test passing.
+func summarizeReplication(results []mirror.Result, w io.Writer, quiet bool) ([]config.MirrorArtifact, int) {
+	var failed int
+	mirrored := make([]config.MirrorArtifact, 0, len(results))
+	for _, r := range results {
+		if r.Err != nil {
+			failed++
+			fmt.Fprintf(w, "  FAIL %s/%s:%s — %v\n", r.Artifact.Kind, r.Artifact.Name, r.Artifact.Tag, r.Err)
+			continue
+		}
+		verb := "copied"
+		if r.Skipped {
+			verb = "skipped"
+		}
+		if !quiet {
+			fmt.Fprintf(w, "  %s %s/%s:%s %s\n", verb, r.Artifact.Kind, r.Artifact.Name, r.Artifact.Tag, r.Digest)
+		}
+		mirrored = append(mirrored, config.MirrorArtifact{
+			Kind: string(r.Artifact.Kind), Name: r.Artifact.Name, Tag: r.Artifact.Tag, Digest: r.Digest,
+		})
+	}
+	return mirrored, failed
 }

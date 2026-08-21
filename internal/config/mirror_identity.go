@@ -170,3 +170,29 @@ func MirrorRecordMismatchError(workspace string, ws *Workspace, rec *RegistryMir
 	fmt.Fprintf(&b, "  Already filled: roksbnkctl -w %s registry adopt       (no source access needed)", workspace)
 	return fmt.Errorf("%s", b.String())
 }
+
+// MirrorRecordIncompleteError reports a mirror record whose replicate did not
+// finish, or nil when the record is complete.
+//
+// Separate from MirrorRecordMismatchError because the two failures are
+// different questions about the same record: mismatch asks whether it describes
+// the RIGHT mirror, this asks whether that mirror actually holds everything the
+// install will ask for. A record can be the right mirror and still be missing
+// three images.
+//
+// Both are checked where the record becomes infrastructure, because that is the
+// last moment the answer is cheap. After apply, the symptom is an
+// ImagePullBackOff on a node and nothing points back here.
+func MirrorRecordIncompleteError(workspace string, rec *RegistryMirror) error {
+	if rec == nil || rec.MissingCount <= 0 {
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "the recorded registry mirror is incomplete: %d artifact(s) failed to replicate.\n", rec.MissingCount)
+	b.WriteString("  Installing from it would point every image and chart at a mirror missing some of them,\n")
+	b.WriteString("  which surfaces later as ImagePullBackOff on a node rather than as an error here.\n")
+	fmt.Fprintf(&b, "  See what is missing:  roksbnkctl -w %s registry diff        (needs the FAR source)\n", workspace)
+	fmt.Fprintf(&b, "  Retry the copy:       roksbnkctl -w %s registry replicate   (needs the FAR source)\n", workspace)
+	fmt.Fprintf(&b, "  Filled another way:   roksbnkctl -w %s registry adopt       (no source access needed)", workspace)
+	return fmt.Errorf("%s", b.String())
+}

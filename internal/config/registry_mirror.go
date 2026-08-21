@@ -31,6 +31,24 @@ type RegistryMirror struct {
 	// in-cluster image-registry service). Empty ⇒ no per-node CA trust needed.
 	RegistryHost string `json:"registry_host,omitempty"`
 
+	// MissingCount is the number of BOM artifacts that FAILED to replicate on
+	// the run that wrote this record, and zero on a clean one.
+	//
+	// The record is written even when a replicate partially fails, deliberately:
+	// it is what lets a re-run skip what already copied. But without this field
+	// nothing downstream could tell a 89/89 record from one that lost three
+	// artifacts to a flake, so the tfvars render — which turns the record into
+	// the whole install's image and chart source — trusted a partial mirror as
+	// authoritative and terraform applied it without complaint. The failure then
+	// surfaced minutes later on a node as ImagePullBackOff, nowhere near its
+	// cause.
+	//
+	// omitempty, so records written before this field existed read as complete.
+	// That is the right default: they describe mirrors whose replicate outcome
+	// is unknown, and treating an unknown as incomplete would break workspaces
+	// that are fine.
+	MissingCount int `json:"missing_count,omitempty"`
+
 	// CACert is the PEM-encoded CA (or self-signed leaf) the mirror serves its
 	// TLS with. When set, the air-gap `bnk up` path installs it into every
 	// node's /etc/containers/certs.d/<RegistryHost>/ca.crt before pulling, so

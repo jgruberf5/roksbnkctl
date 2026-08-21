@@ -845,6 +845,22 @@ func guardRegistryMirror(workspaceName string, ws *config.Workspace) error {
 		return fmt.Errorf("the registry-mirror record is incomplete (missing %s) — re-run `roksbnkctl registry replicate`, or `roksbnkctl registry adopt` if the mirror is already populated",
 			missingMirrorHosts(m))
 	}
+	// Nor is "has both hosts" the same as "holds everything". A partial
+	// replicate still writes a record — that is what lets a re-run resume — so
+	// the record can name the right mirror, carry both hosts, and still be
+	// missing artifacts the install will ask for (#150).
+	//
+	// Checked HERE rather than at tfvars render time, which was the first
+	// attempt: WriteTFVarsForWorkspace is the shared preamble for up AND down,
+	// so refusing there blocked `bnk down`, `cluster down`, `flp down`,
+	// `gateway down`, `testing down` and `tgw disconnect` — stranding a ROKS
+	// cluster, VPC, TGW and jumphosts because a registry mirror was missing
+	// three images. Teardown does not read from the mirror and must never be
+	// gated on it.
+	if err := config.MirrorRecordIncompleteError(workspaceName, m); err != nil {
+		return err
+	}
+
 	// Present and complete is not the same as current. The record describes the
 	// mirror as it was last replicated; the config can have been repointed at a
 	// different registry or repository since, and nothing re-probes on read. A
