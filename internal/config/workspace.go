@@ -448,6 +448,24 @@ type BNKCfg struct {
 	FLONamespace      string `yaml:"flo_namespace,omitempty"`
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
 
+	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
+	// (#170).
+	//
+	// On 2.4 the FLO crd-installer no longer forces its own Gateway API CRDs — it
+	// logs a graceful skip and leaves the cluster on whatever bundle OpenShift
+	// ships. That is correct for a base install. Only an mTLS deployment needs
+	// Gateway API 1.5.0 standard, and installing it means deleting the
+	// ingress-operator's ValidatingAdmissionPolicy and its binding, which the
+	// platform recreates — the race the admission sweep exists to win.
+	//
+	// So the sweep is not redundant on 2.4; it is CONDITIONAL. Off by default,
+	// because deleting a platform admission policy on a cluster that does not need
+	// the newer bundle is a change nobody asked for.
+	//
+	// Ignored on 2.3, where the sweep always runs: there the crd-installer does
+	// force the CRDs and is blocked without it.
+	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty"`
+
 	// GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name
 	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
 	// (unset).

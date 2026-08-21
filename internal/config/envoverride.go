@@ -34,6 +34,9 @@ import (
 //	ROKSBNKCTL_RESOURCE_GROUP       → ibmcloud.resource_group
 //	ROKSBNKCTL_CLUSTER_NAME         → cluster.name
 //	ROKSBNKCTL_CLUSTER_CREATE       → cluster.create (bool: true/false/1/0)
+//	ROKSBNKCTL_GATEWAY_API_MTLS     → bnk.gateway_api_mtls (bool) — install the
+//	                                  Gateway API bundle 2.4 needs for mTLS; off by
+//	                                  default, ignored on 2.3
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
@@ -126,6 +129,15 @@ func OverrideFromEnv(ws *Workspace) []string {
 		if b, err := strconv.ParseBool(v); err == nil {
 			ws.Cluster.Create = b
 			applied = append(applied, "cluster.create (ROKSBNKCTL_CLUSTER_CREATE)")
+		}
+	}
+	// Opt into the Gateway API bundle BNK 2.4 needs for mTLS (#170). Off by
+	// default: installing it means deleting a platform admission policy, which is
+	// not something to do on a cluster that does not need the newer bundle.
+	if v := envValue("ROKSBNKCTL_GATEWAY_API_MTLS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			ws.BNK.GatewayAPIMTLS = b
+			applied = append(applied, "bnk.gateway_api_mtls (ROKSBNKCTL_GATEWAY_API_MTLS)")
 		}
 	}
 	if v := envValue("ROKSBNKCTL_WORKERS_PER_ZONE"); v != "" {
@@ -753,6 +765,7 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_EXISTING_SUBNET_IDS",
 	"ROKSBNKCTL_FAR_AUTH_FILE",
 	"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE",
+	"ROKSBNKCTL_GATEWAY_API_MTLS",
 	"ROKSBNKCTL_FLP_MODE",
 	"ROKSBNKCTL_FLP_NAMESPACE",
 	"ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB",

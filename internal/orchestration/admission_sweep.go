@@ -52,9 +52,43 @@ const admissionSweepName = "openshift-ingress-operator-gatewayapi-crd-admission"
 // covering the crd-installer window. The sweep is best-effort; the apply's result
 // is what's returned.
 func applyBNKWithAdmissionSweep(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, varFiles []string) error {
+	if !admissionSweepNeeded(cctx) {
+		return applyWithRetry(ctx, tfws, varFiles)
+	}
 	stop := startAdmissionPolicySweep(ctx, cctx, tfws)
 	defer stop()
 	return applyWithRetry(ctx, tfws, varFiles)
+}
+
+// admissionSweepNeeded reports whether this install has to fight the OpenShift
+// ingress-operator for the Gateway API CRDs (#170).
+//
+// 2.3 always does: its FLO crd-installer forces the CRDs and is blocked by the
+// platform's ValidatingAdmissionPolicy without the sweep. The symptom is not a
+// CRD error — it is CNEControllerAvailable never appearing, fifteen minutes
+// later, which is why the sweep announces itself loudly when it cannot run.
+//
+// 2.4 usually does NOT. Its crd-installer logs a graceful skip and leaves the
+// cluster on whatever bundle OpenShift ships, which is correct for a base
+// install. Only mTLS needs Gateway API 1.5.0 standard, and installing that means
+// deleting the policy and its binding — which the platform recreates quickly,
+// the race the sweep wins.
+//
+// So the sweep is conditional on 2.4, not redundant. An earlier reading of the
+// graceful-skip log concluded it could be removed; that would have handled the
+// policy by giving up, and left an mTLS install without the bundle it requires.
+func admissionSweepNeeded(cctx *config.Context) bool {
+	if cctx == nil || cctx.Workspace == nil {
+		return true // unknown workspace: keep today's behaviour
+	}
+	// An unreadable or unrecognised line keeps the 2.3 behaviour. Running the
+	// sweep when it was not needed costs a background goroutine that finds
+	// nothing; skipping it when it was needed costs a fifteen-minute timeout with
+	// no useful error.
+	if cctx.Workspace.BNKLineOrEmpty() != "2.4" {
+		return true
+	}
+	return cctx.Workspace.BNK.GatewayAPIMTLS
 }
 
 // startAdmissionPolicySweep resolves a dynamic client (fresh admin kubeconfig) and
