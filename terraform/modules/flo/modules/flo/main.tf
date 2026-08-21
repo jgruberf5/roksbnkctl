@@ -1113,3 +1113,35 @@ resource "ibm_iam_trusted_profile_policy" "cne_controller_vpc" {
     value = var.cluster_vpc_id
   }
 }
+
+# Second access policy: Kubernetes Service, scoped to THIS cluster, Viewer (#166).
+#
+# The VPC policy above lets the controller write network objects; this one lets it
+# read the cluster it is running in. BNK 2.4's CNE controller needs both — applying
+# an Infra CR makes it enumerate the cluster's workers to next-hop the routes it
+# adds to the custom routing table, and it cannot do that with a VPC policy alone.
+#
+# Viewer only, deliberately. The controller reads cluster topology; it has no reason
+# to mutate the cluster through the IKS API, and the VPC policy already carries the
+# write capability it does need. An over-broad profile here would be invisible until
+# something used it.
+#
+# Created on both lines. 2.3's controller does not consult it, so this is inert
+# there rather than conditional — a `count` on the line would make the profile's
+# shape depend on the manifest version, which is a worse thing to reason about
+# during a 2.3 -> 2.4 move than one unused read grant.
+resource "ibm_iam_trusted_profile_policy" "cne_controller_cluster" {
+  count  = local.global_enabled ? 1 : 0
+  iam_id = ibm_iam_trusted_profile.cne_controller[0].iam_id
+  roles  = ["Viewer"]
+
+  resource_attributes {
+    name  = "serviceName"
+    value = "containers-kubernetes"
+  }
+
+  resource_attributes {
+    name  = "clusterId"
+    value = var.openshift_cluster_id
+  }
+}

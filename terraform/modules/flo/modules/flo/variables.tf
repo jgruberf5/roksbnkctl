@@ -263,6 +263,20 @@ variable "openshift_cluster_crn" {
   default     = ""
 }
 
+variable "openshift_cluster_id" {
+  description = <<-EOT
+    The ROKS cluster's IBM Cloud id, used to scope the CNE controller's Trusted
+    Profile Kubernetes-Service policy to this cluster alone (#166).
+
+    Distinct from the CRN above: IAM's containers-kubernetes resource attribute is
+    the bare cluster id, not the CRN. Empty is tolerated — the policy is created
+    with the other trusted-profile resources, which are themselves gated on the
+    cluster existing.
+  EOT
+  type        = string
+  default     = ""
+}
+
 variable "cluster_vpc_id" {
   description = "ID of the cluster VPC (used to grant trusted profile Viewer and Editor IAM roles)"
   type        = string

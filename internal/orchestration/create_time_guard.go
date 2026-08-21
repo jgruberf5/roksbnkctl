@@ -76,6 +76,14 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 		if err := config.CheckNamespaceTopology(cctx.Workspace, applied); err != nil {
 			return err
 		}
+		// ── enforced: the BNK release line (#177) ────────────────────────────
+		// Same snapshot, same reasoning: the line describes the BNK install, not
+		// the cluster, and a cluster outlives its installs. A 2.3 -> 2.4 flip
+		// leaves GTM objects on an external BIG-IP that nothing here can reach,
+		// and abandons the whole F5SPK* network surface in place.
+		if err := config.CheckLineChange(cctx.Workspace, applied); err != nil {
+			return err
+		}
 	}
 
 	if out == nil || out.ClusterID == "" {
