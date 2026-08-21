@@ -202,3 +202,8 @@ trap 'echo >&2; echo "${R}Interrupted.${N}" >&2; exit 130' INT
 # preflight was a "command not found" there — in the one demo that ships the
 # local binary to a VSI, where a stale binary has the widest blast radius.
 source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/preflight-binary.sh"
+
+# ── forge mode (#164) ───────────────────────────────────────────────────────
+# BNK Forge gates exactly one phase of the lifecycle demos; forge_mode decides
+# whether that phase runs rather than letting its absence kill the whole demo.
+source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/forge-mode.sh"

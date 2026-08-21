@@ -79,7 +79,8 @@ cat >&2 <<EOF
 The story, in six phases:
   1. One declarative ${B}config.yaml${N} -> ${B}init${N}. No interview.
   2. ${B}cluster up${N} — a real ROKS cluster (${C}${CLUSTER_NAME}${N}, OCP ${OCP_VERSION}).
-  3. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge.
+  3. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge. (Skipped
+     unless FORGE_URL / FORGE_USER / FORGE_PASS are set; nothing else needs them.)
   4. ${B}bnk up${N} — BIG-IP Next for Kubernetes + its licence.
   5. ${B}testing up${N} + ${B}test${N} — jump hosts, then the probes.
   6. ${B}bnk down${N} then ${B}bnk up${N} — swap BNK, the cluster never moves.
@@ -87,10 +88,10 @@ Then the demo STOPS, leaving everything up so you can explore. `teardown` remove
 EOF
 [[ -z "${IBMCLOUD_API_KEY:-}" && -f "$HERE/.env" ]] && { set -a; source "$HERE/.env"; set +a; }
 [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"; export IBMCLOUD_API_KEY
-[[ -n "$FORGE_URL"  ]] || die "set FORGE_URL — phase 3 registers with a live BNK Forge"
-[[ -n "$FORGE_USER" ]] || die "set FORGE_USER"
-[[ -n "$FORGE_PASS" ]] || die "set FORGE_PASS"
-export BNK_FORGE_PASSWORD="$FORGE_PASS"
+# #164: Forge gates phase 3 ONLY. All three set = run it; none set = skip it and
+# run the other five; a partial set is a mistake and still dies. Exports
+# BNK_FORGE_* when enabled — the password never reaches argv.
+forge_mode
 # These demos are RECORDED: register every credential so banner/say/ok/show and
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
 secret "$IBMCLOUD_API_KEY" "$FORGE_PASS"
@@ -102,7 +103,11 @@ preflight_binary "$ROKSBNKCTL_BIN"
 run "$ROKSBNKCTL_BIN" version
 say "doctor is roksbnkctl's own preflight — it checks the host tooling and the IBM Cloud access it needs."
 run "$ROKSBNKCTL_BIN" doctor
-ok "preflight: roksbnkctl + terraform + helm present, BNK Forge at $FORGE_URL"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  ok "preflight: roksbnkctl + terraform + helm present, BNK Forge at $FORGE_URL"
+else
+  ok "preflight: roksbnkctl + terraform + helm present — no BNK Forge configured, phase 3 will be skipped"
+fi
 
 # ============================ Phase 1: config + init =========================
 pause; phase P1 "PHASE 1/6  —  One declarative config.yaml, then init"
@@ -150,13 +155,17 @@ endphase P2
 
 # ============================ Phase 3: BNK Forge =============================
 pause; phase P3 "PHASE 3/6  —  bnkforge register: hand the cluster to BNK Forge"
-say "The cluster is durable, so register it with BNK Forge over its REST API. The password comes"
-say "from BNK_FORGE_PASSWORD in the environment — never from the command line, never from argv."
-REG_ARGS=(-w "$WS" bnkforge register --url "$FORGE_URL" --username "$FORGE_USER")
-[[ "$FORGE_INSECURE" == "true" ]] && REG_ARGS+=(--insecure)
-[[ -n "$FORGE_PROJECT" ]] && REG_ARGS+=(--project "$FORGE_PROJECT")
-run "$ROKSBNKCTL_BIN" "${REG_ARGS[@]}"
-ok "registered with BNK Forge"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  say "The cluster is durable, so register it with BNK Forge over its REST API. The password comes"
+  say "from BNK_FORGE_PASSWORD in the environment — never from the command line, never from argv."
+  REG_ARGS=(-w "$WS" bnkforge register --url "$FORGE_URL" --username "$FORGE_USER")
+  [[ "$FORGE_INSECURE" == "true" ]] && REG_ARGS+=(--insecure)
+  [[ -n "$FORGE_PROJECT" ]] && REG_ARGS+=(--project "$FORGE_PROJECT")
+  run "$ROKSBNKCTL_BIN" "${REG_ARGS[@]}"
+  ok "registered with BNK Forge"
+else
+  forge_skip_note "PHASE 3/6 (bnkforge register)"
+fi
 endphase P3
 
 # ============================ Phase 4: bnk up ================================

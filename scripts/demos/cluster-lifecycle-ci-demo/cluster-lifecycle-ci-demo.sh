@@ -90,7 +90,8 @@ The story, in seven phases — every one of them a ${B}docker run${N}:
   1. The runner image ${B}IS${N} roksbnkctl. Nothing is installed on this host.
   2. One declarative ${B}config.yaml${N} on /work -> ${B}init${N}. No prompts, ever.
   3. ${B}cluster up${N} — a real ROKS cluster (${C}${WS}${N}, OCP ${OCP_VERSION}).
-  4. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge.
+  4. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge. (Skipped
+     unless FORGE_URL / FORGE_USER / FORGE_PASS are set; nothing else needs them.)
   5. ${B}bnk up${N} — BIG-IP Next for Kubernetes + its licence.
   6. ${B}testing up${N} + ${B}test${N} — jump hosts, then the probes.
   7. ${B}bnk down${N} then ${B}bnk up${N} — swap BNK, the cluster never moves.
@@ -98,11 +99,11 @@ Then the pipeline STOPS, leaving everything up so you can explore. \`teardown\` 
 EOF
 [[ -z "${IBMCLOUD_API_KEY:-}" && -f "$HERE/.env" ]] && { set -a; source "$HERE/.env"; set +a; }
 [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"
-[[ -n "$FORGE_URL"  ]] || die "set FORGE_URL — phase 4 registers with a live BNK Forge"
-[[ -n "$FORGE_USER" ]] || die "set FORGE_USER"
-[[ -n "$FORGE_PASS" ]] || die "set FORGE_PASS"
 export IBMCLOUD_API_KEY
-export BNK_FORGE_URL="$FORGE_URL" BNK_FORGE_USER="$FORGE_USER" BNK_FORGE_PASSWORD="$FORGE_PASS"
+# #164: Forge gates phase 4 ONLY. All three set = run it; none set = skip it and
+# run the other six; a partial set is a mistake and still dies. Exports BNK_FORGE_*
+# when enabled — the runner reads them by name, never from argv.
+forge_mode
 # These demos are RECORDED: register every credential so banner/say/ok/show and
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
 secret "$IBMCLOUD_API_KEY" "$FORGE_PASS"
@@ -111,7 +112,11 @@ command -v docker >/dev/null || die "docker not found — a CI runner already pr
 # The runner image runs as uid 1000, so the bind-mounted state dir must be
 # writable; and init refuses to clobber an existing workspace, so start clean.
 [[ "$DRY_RUN" == "1" ]] || { mkdir -p "$WORK"; chmod 777 "$WORK"; rm -rf "$WORK/.roksbnkctl/$WS"; }
-ok "preflight: docker present, state volume $WORK ready, BNK Forge at $FORGE_URL"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  ok "preflight: docker present, state volume $WORK ready, BNK Forge at $FORGE_URL"
+else
+  ok "preflight: docker present, state volume $WORK ready — no BNK Forge configured, phase 4 will be skipped"
+fi
 
 # ============================ Phase 1: the runner container ==================
 pause; phase P1 "PHASE 1/7  —  The runner container IS roksbnkctl"
@@ -169,12 +174,16 @@ endphase P3
 
 # ============================ Phase 4: BNK Forge =============================
 pause; phase P4 "PHASE 4/7  —  bnkforge register: hand the cluster to BNK Forge"
-say "roksbnkctl registers over BNK Forge's REST API. The URL, user and password come from the CI"
-say "environment — BNK_FORGE_* passed into the container by name, never on the command line."
-REG=(bnkforge register)
-[[ "$FORGE_INSECURE" == "true" ]] && REG+=(--insecure)
-run "${RUN[@]}" "${REG[@]}"
-ok "registered with BNK Forge"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  say "roksbnkctl registers over BNK Forge's REST API. The URL, user and password come from the CI"
+  say "environment — BNK_FORGE_* passed into the container by name, never on the command line."
+  REG=(bnkforge register)
+  [[ "$FORGE_INSECURE" == "true" ]] && REG+=(--insecure)
+  run "${RUN[@]}" "${REG[@]}"
+  ok "registered with BNK Forge"
+else
+  forge_skip_note "PHASE 4/7 (bnkforge register)"
+fi
 endphase P4
 
 # ============================ Phase 5: bnk up ================================
