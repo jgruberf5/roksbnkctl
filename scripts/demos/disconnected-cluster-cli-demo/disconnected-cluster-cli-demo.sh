@@ -68,7 +68,8 @@ FAR_AUTH_LOCAL_FILE="${FAR_AUTH_LOCAL_FILE:-$HOME/f5/f5-far-auth-key.tgz}"
 SUBSCRIPTION_JWT_LOCAL_FILE="${SUBSCRIPTION_JWT_LOCAL_FILE:-$HOME/f5/subscription.jwt}"
 FLP_STATUS_IMAGE_BUILD="${FLP_STATUS_IMAGE_BUILD:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/flp-status-build}"  # dir with a prebuilt flp-status linux binary + Dockerfile
 
-ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"        # LOCAL binary (v1.47.0); shipped to the VSI
+ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"        # LOCAL binary; shipped to the VSI. preflight_binary below
+                                                      # prints which version this actually resolves to (#143).
 STATE_DIR="${STATE_DIR:-$PWD/.demo-state}"; mkdir -p "$STATE_DIR"
 TS_FILE="${TS_FILE:-$STATE_DIR/phase-timestamps.txt}"; : > "$TS_FILE"
 AUTO_ADVANCE="${AUTO_ADVANCE:-1}"              # 1 = hands-off; 0 = wait for ENTER
@@ -224,6 +225,8 @@ EOF
 [[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"; export IBMCLOUD_API_KEY
 secret "$IBMCLOUD_API_KEY" "$HARBOR_ADMIN_PASSWORD"
 for c in "$ROKSBNKCTL_BIN" ibmcloud jq; do command -v "$c" >/dev/null || die "$c not found"; done
+# #143: print the binary + version this demo will actually run, and warn on drift.
+preflight_binary "$ROKSBNKCTL_BIN"
 [[ -f "$FAR_AUTH_LOCAL_FILE" ]]        || die "FAR auth file not found: $FAR_AUTH_LOCAL_FILE"
 [[ -f "$SUBSCRIPTION_JWT_LOCAL_FILE" ]] || die "subscription JWT not found: $SUBSCRIPTION_JWT_LOCAL_FILE"
 [[ -f "$SSH_KEY_FILE" ]]               || die "SSH private key not found: $SSH_KEY_FILE (SSH_KEY_FILE)"

@@ -111,6 +111,8 @@ secret "$IBMCLOUD_API_KEY" "$REGISTRY_ADMIN_PASSWORD"
 # roksbnkctl shells out to helm to pull the classic-Helm charts in the BOM; the
 # image copies are crane, in-process.
 for c in "$ROKSBNKCTL_BIN" helm jq; do command -v "$c" >/dev/null || die "$c not found"; done
+# #143: print the binary + version this demo will actually run, and warn on drift.
+preflight_binary "$ROKSBNKCTL_BIN"
 run "$ROKSBNKCTL_BIN" version
 ok "preflight: roksbnkctl + helm present, target registry $REGISTRY_DOMAIN"
 

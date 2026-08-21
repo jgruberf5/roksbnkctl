@@ -122,6 +122,8 @@ EOF
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
 secret "$IBMCLOUD_API_KEY" "$REGISTRY_ADMIN_PASSWORD"
 for c in "$ROKSBNKCTL_BIN" terraform helm jq; do command -v "$c" >/dev/null || die "$c not found"; done
+# #143: print the binary + version this demo will actually run, and warn on drift.
+preflight_binary "$ROKSBNKCTL_BIN"
 run "$ROKSBNKCTL_BIN" version
 ok "preflight: two clusters named, registry $REGISTRY_DOMAIN, roksbnkctl + terraform + helm present"
 

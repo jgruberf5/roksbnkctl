@@ -194,3 +194,56 @@ pause(){
   [[ "$a" == "q" ]] && { echo Quit. >&2; exit 0; }
 }
 trap 'echo >&2; echo "${R}Interrupted.${N}" >&2; exit 130' INT
+
+# ── binary preflight (#143) ──────────────────────────────────────────────────
+#
+# ROKSBNKCTL_BIN defaults to whatever `roksbnkctl` is on PATH. During the
+# v1.50.0 validation that was v1.43.0 — eighteen releases old — and the CLI half
+# of a demo ran against it for two full passes before anyone checked.
+#
+# That is worse than an ordinary stale pin, because the demo LOOKS right: the
+# banner says the current version, the Argo runner image is correct, and the CLI
+# steps quietly exercise an old build. A validation pass can report green for a
+# release that was never run.
+#
+# The Argo half never had this problem because its preflight already prints the
+# runner image it resolved. This is the same idea for the binary: put the
+# resolved path and version on screen — and so into the recording — and say
+# loudly when it does not match the newest CHANGELOG entry.
+#
+# WARN, do not die. Running a demo against a locally built binary is a normal
+# thing to do while developing, and a hard refusal would block it. The point is
+# that the mismatch cannot pass unnoticed, not that it is forbidden.
+#
+# Usage: preflight_binary "$RBK"   (or "$ROKSBNKCTL_BIN")
+preflight_binary(){
+  local bin="${1:?preflight_binary needs the binary}"
+  local resolved ver installed latest changelog
+
+  resolved="$(command -v "$bin" 2>/dev/null)" \
+    || { die "$bin not found on PATH — set ROKSBNKCTL_BIN to the binary you mean to demo"; }
+
+  # `version` prints e.g. "roksbnkctl v1.50.0 (commit abc1234, built ...)".
+  ver="$("$bin" version 2>/dev/null | head -1)"
+  installed="$(printf '%s' "$ver" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+  ok "preflight: roksbnkctl ${installed:-unknown} at $resolved"
+
+  # Same extraction as TestDemoRunnerTagMatchesTheCurrentRelease, so the shell
+  # check and the Go guard cannot disagree about what "current" means.
+  changelog="${DEMO_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}/CHANGELOG.md"
+  [[ -r "$changelog" ]] || return 0
+  latest="$(grep -m1 -oE '^## v[0-9]+\.[0-9]+\.[0-9]+' "$changelog" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+')"
+  [[ -n "$latest" ]] || return 0
+
+  if [[ -z "$installed" ]]; then
+    note "could not read a version from \`$bin version\` — cannot confirm this demo is exercising $latest"
+    return 0
+  fi
+  if [[ "$installed" != "$latest" ]]; then
+    note "VERSION MISMATCH: this demo will run roksbnkctl $installed, but the newest release is $latest.
+      Binary:  $resolved
+      If you meant to demo the release, install it and re-run; if you are testing a
+      local build, carry on — but the recording will show $installed, not $latest."
+  fi
+}
