@@ -66,6 +66,12 @@ func runRegistryReplicate(cmd *cobra.Command, _ []string) error {
 	}
 
 	rec := &config.RegistryMirror{
+		// MissingCount is what lets everything downstream tell this record apart
+		// from a clean one. The partial record is still written on purpose — a
+		// re-run skips what already copied — but the tfvars render refuses to
+		// build an install from it (#150). A clean run writes 0, which clears
+		// the flag from a previous partial attempt.
+		MissingCount:    failed,
 		Target:          registryTargetKind(ws),
 		Namespace:       target.MirrorNamespace(),
 		ChartHost:       target.ChartHostPath(),
