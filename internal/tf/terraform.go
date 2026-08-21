@@ -206,9 +206,19 @@ func Open(
 	if cacheDir, cerr := config.PluginCacheDir(); cerr == nil {
 		if os.MkdirAll(cacheDir, 0o755) == nil {
 			_ = os.Setenv("TF_PLUGIN_CACHE_DIR", cacheDir)
-			// We ship no committed lock file, so let the cache populate the
-			// per-workspace lock with single-platform (h1:) hashes instead
-			// of erroring on the absent zip (zh:) checksums.
+			// The shipped lockfile carries zh: checksums for every provider
+			// and h1: for all five release platforms, so a cache-populated
+			// install verifies cleanly and this opt-out is now belt-and-braces
+			// (an init with it unset succeeds and leaves the lockfile
+			// byte-identical). It stays for the workspace that has evolved its
+			// own lock: that one is written by whichever platform ran init, so
+			// it holds a single h1: and no zh:, and a cache hit would otherwise
+			// error on the absent zip checksum.
+			//
+			// Note what this does NOT do: it never skips verification. A
+			// tampered cache entry still fails ("Failed to install provider
+			// from shared cache"); the variable only permits recording a hash
+			// the lockfile does not yet carry.
 			_ = os.Setenv("TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE", "1")
 		}
 	}

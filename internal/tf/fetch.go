@@ -160,6 +160,28 @@ func extractEmbeddedTF(baseDir, line string) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
+		// The lockfile is a SEED, not an authority. Every other file here is
+		// ours and is rewritten on each run so a binary upgrade picks up new
+		// HCL; the lockfile is terraform's, and after the first `init` the copy
+		// in this directory is the workspace's own — evolved by terraform,
+		// recording exactly what that workspace installed.
+		//
+		// Clobbering it would silently downgrade a live workspace's providers
+		// on the first run after a binary upgrade, and terraform.go inits with
+		// Upgrade(false), so it could never self-heal. Downgrading below the
+		// provider that wrote the state is a hard failure ("Resource instance
+		// managed by newer provider version"), with no way out from inside the
+		// tool.
+		//
+		// So: seed a fresh workspace with the pinned, multi-platform set, and
+		// leave an established one alone. A workspace that wants the newer
+		// baseline deletes its lockfile or runs `terraform init -upgrade` — the
+		// same answer terraform gives everywhere else.
+		if filepath.Base(target) == ".terraform.lock.hcl" {
+			if _, serr := os.Stat(target); serr == nil {
+				return nil
+			}
+		}
 		return os.WriteFile(target, body, 0o644)
 	})
 	if err != nil {
@@ -224,6 +246,28 @@ func applyLineOverlay(srcFS fs.FS, destRoot, line string) error {
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
+		}
+		// The lockfile is a SEED, not an authority. Every other file here is
+		// ours and is rewritten on each run so a binary upgrade picks up new
+		// HCL; the lockfile is terraform's, and after the first `init` the copy
+		// in this directory is the workspace's own — evolved by terraform,
+		// recording exactly what that workspace installed.
+		//
+		// Clobbering it would silently downgrade a live workspace's providers
+		// on the first run after a binary upgrade, and terraform.go inits with
+		// Upgrade(false), so it could never self-heal. Downgrading below the
+		// provider that wrote the state is a hard failure ("Resource instance
+		// managed by newer provider version"), with no way out from inside the
+		// tool.
+		//
+		// So: seed a fresh workspace with the pinned, multi-platform set, and
+		// leave an established one alone. A workspace that wants the newer
+		// baseline deletes its lockfile or runs `terraform init -upgrade` — the
+		// same answer terraform gives everywhere else.
+		if filepath.Base(target) == ".terraform.lock.hcl" {
+			if _, serr := os.Stat(target); serr == nil {
+				return nil
+			}
 		}
 		return os.WriteFile(target, body, 0o644)
 	})
