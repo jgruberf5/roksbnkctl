@@ -29,6 +29,9 @@
 # cluster running Argo Workflows (../lib/bootstrap-argo.sh stands one up).
 # =============================================================================
 set -uo pipefail
+
+# Steps whose failure must change the final verdict (see the banner at the end).
+FAILED_STEPS=()
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 source "$HERE/../lib/demo-format.sh"
 
@@ -161,7 +164,7 @@ phase 6 "REPLICATE FAR INTO ARTIFACTORY"
 say "Registry to registry, by digest. Nothing is written to disk and no cluster"
 say "is contacted; this host is only the pipe between repo.f5.com and Artifactory."
 begin_long
-runmask "$RBK" -w "$WS" registry replicate
+runmask "$RBK" -w "$WS" registry replicate || FAILED_STEPS+=("registry replicate")
 end_long
 
 # --------------------------------------------------------------------------- 7
@@ -169,7 +172,7 @@ phase 7 "VERIFY — THE STEP THAT PROVES IT"
 say "replicate reports what it pushed. verify re-reads the bill of materials and"
 say "checks every artifact against the digest it should have, so a partial copy or"
 say "a tag that moved underneath us is caught here rather than at install time."
-run "$RBK" -w "$WS" registry verify
+run "$RBK" -w "$WS" registry verify || FAILED_STEPS+=("registry verify")
 run "$RBK" -w "$WS" registry diff
 ok "diff is empty — the mirror and the bill of materials agree"
 
@@ -202,6 +205,18 @@ else
 Stand one up with ../lib/bootstrap-argo.sh, or apply the YAML above to any
 cluster running Argo Workflows. The workflow needs only the artifactory-mirror
 secret and the runner image."
+fi
+
+# The banner asserts a fact, so it has to be earned. This demo used to print
+# "DONE — FAR IS MIRRORED" unconditionally, and did exactly that after both
+# `registry replicate` and `registry verify` failed on a missing API key —
+# a green banner over a red screen, on a demo that gets recorded.
+if (( ${#FAILED_STEPS[@]} )); then
+  banner "FAILED — THE MIRROR IS NOT COMPLETE"
+  say "These steps did not succeed:"
+  for f in "${FAILED_STEPS[@]}"; do say "  ✗ $f"; done
+  say "Scroll up for the error. Nothing below this line was proven."
+  exit 1
 fi
 
 banner "DONE — FAR IS MIRRORED INTO ARTIFACTORY"

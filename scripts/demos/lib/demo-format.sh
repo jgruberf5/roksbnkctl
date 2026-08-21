@@ -128,11 +128,44 @@ is_rbk_cmd(){
 clear_screen(){ printf '\033[3J\033[2J\033[H' >&2; }
 show(){ { echo; echo "${B}\$ $(redact "$*")${N}"; } >&2; if is_rbk_cmd "$*"; then sleep "$CMD_RENDER_HOLD"; ts COMMAND MARK "$(redact "$*")"; sleep "$CMD_POST_HOLD"; fi; }
 outmark(){ if is_rbk_cmd "$*"; then sleep "$OUT_SETTLE_HOLD"; ts OUTPUT MARK "$(redact "$*")"; sleep "$OUT_POST_HOLD"; fi; }
-run(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@"; outmark "$@"; }
+# run <cmd...> — run a command on camera and RETURN ITS STATUS.
+#
+# The status used to be outmark's, not the command's, so a failing step was
+# invisible to any caller that checked. Same defect as runmask below; both are
+# fixed together because a caller cannot be expected to know which of the two
+# reports honestly.
+run(){
+  show "$@"
+  [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }
+  "$@"
+  local rc=$?
+  outmark "$@"
+  return "$rc"
+}
 # runmask <cmd…> — like run, but the command's OUTPUT is masked too. Use for any
 # command that may echo a credential; prefer plain run elsewhere so roksbnkctl and
 # terraform keep their TTY colours.
-runmask(){ show "$@"; [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }; "$@" 2>&1 | mask; outmark "$@"; }
+# runmask <cmd...> — run a command on camera with secrets masked, and RETURN ITS
+# STATUS.
+#
+# The status used to be discarded: the command was piped into `mask`, so `$?`
+# was mask's, and no caller looked anyway. A failing step scrolled its error
+# past and the demo carried on to its success banner — the artifactory demo
+# printed "DONE — FAR IS MIRRORED INTO ARTIFACTORY" after both `registry
+# replicate` and `registry verify` had errored out. On a recorded demo that is
+# a green banner over a red screen.
+#
+# PIPESTATUS[0] is the command's own status, not the pipeline's. Callers are
+# free to ignore it (none of these scripts run under `set -e`), but it is now
+# there to check.
+runmask(){
+  show "$@"
+  [[ "$DRY_RUN" == "1" ]] && { say "  (dry-run)"; return 0; }
+  "$@" 2>&1 | mask
+  local rc=${PIPESTATUS[0]}
+  outmark "$@"
+  return "$rc"
+}
 # show_file <path> [drop-regex] — put a file on camera with every registered secret
 # masked, optionally dropping lines matching drop-regex (for long, noisy values).
 # ALWAYS use this instead of `run cat` / `run grep` on a file that holds inputs.
