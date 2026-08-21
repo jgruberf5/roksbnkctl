@@ -38,7 +38,7 @@ This book assumes:
 
 You do **not** need prior experience with:
 
-- **Terraform** — `roksbnkctl` embeds a vetted HCL tree and drives `terraform` for you. You can ignore the underlying HCL until you want to customise it ([Chapter 13](./13-terraform-variables.md)).
+- **Terraform** — `roksbnkctl` embeds a vetted HCL tree and drives `terraform` for you. You can ignore the underlying HCL until you want to customize it ([Chapter 13](./13-terraform-variables.md)).
 - **OpenShift specifics** — the tool treats ROKS as Kubernetes with a thin SCC + project overlay; the few OpenShift-specific gotchas are called out in [Chapter 22](./22-throughput-testing.md) and [Chapter 26](./26-troubleshooting.md).
 - **F5 BIG-IP Next** — BNK is the thing the book deploys; you don't need to be a Big-IP engineer to evaluate it. [Chapter 1](./01-what-is-bnk.md) is the 5-minute "what is this product" primer.
 
