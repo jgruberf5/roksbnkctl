@@ -50,7 +50,20 @@ locals {
   # without deadlocking against its own licensing step; 2.4 must, because
   # CNEControllerAvailable is True on an install where TMM is 0/3 and nothing
   # passes traffic.
-  cneinstance_ready_condition = local.line_pre_24 ? "CNEControllerAvailable" : "Available"
+  # The GATE is CNEControllerAvailable on BOTH lines, and that is not the same
+  # question as "is this install healthy".
+  #
+  # It flips when the CNE controller is up, which is what licensing needs — and
+  # the License CR is gated on this id. Waiting on the aggregate Available here
+  # DEADLOCKS on either line: Available cannot go True until TMM is licensed, TMM
+  # cannot be licensed until the License CR applies, and the License CR waits on
+  # this gate. Observed on a live 2.4 install (#167): 16 conditions True,
+  # F5TmmAvailable=False (Pending), no License CR, and the 15-minute wait timed
+  # out having blocked the very step that would have cleared it.
+  #
+  # The aggregate is checked AFTER licensing instead — see
+  # null_resource.cneinstance_available_24 below.
+  cneinstance_ready_condition = "CNEControllerAvailable"
 
   # The 2.4 set: the one binding the install needs.
   #

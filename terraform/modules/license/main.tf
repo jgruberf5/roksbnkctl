@@ -39,7 +39,9 @@ terraform {
 # ============================================================
 
 module "license" {
-  source = "./modules/license"
+  bnk_line      = var.bnk_line
+  flo_namespace = var.flo_namespace
+  source        = "./modules/license"
 
   providers = {
     ibm     = ibm

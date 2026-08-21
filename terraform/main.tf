@@ -215,6 +215,8 @@ module "cne_instance" {
 # ============================================================
 
 module "license" {
+  # For the post-licensing health check on the 2.4 line (#167).
+  bnk_line       = var.bnk_line
   source         = "./modules/license"
   cluster_absent = var.cluster_absent
   providers      = { http = http }

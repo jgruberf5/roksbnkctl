@@ -1,3 +1,15 @@
+variable "flo_namespace" {
+  description = "Namespace the CNEInstance lives in, for the 2.4 post-licensing health check (#167)."
+  type        = string
+  default     = "f5-bnk"
+}
+
+variable "bnk_line" {
+  description = "BNK release line ('2.3' or '2.4') for per-release gating. See PRD 18 §4."
+  type        = string
+  default     = "2.3"
+}
+
 # ============================================================
 # Root Terraform Variables
 # F5 BNK Orchestrator for existing ROKS cluster

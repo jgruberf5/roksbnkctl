@@ -349,3 +349,41 @@ resource "null_resource" "license_active" {
 
   depends_on = [kubectl_manifest.bnk_license]
 }
+
+# ── 2.4: the aggregate health check, AFTER licensing (#167) ──────────────────
+#
+# The CNEInstance's readiness GATE is CNEControllerAvailable, on both lines,
+# because the License CR is downstream of it. That gate answers "can licensing
+# proceed", not "is this install healthy" — and on 2.4 those diverge in the
+# direction that matters. Observed on a live 2.4 install:
+#
+#     CNEControllerAvailable = True     <- what the gate sees
+#     Available              = False    <- the truth
+#     F5TmmAvailable         = False (Pending)
+#
+# 16 conditions True, TMM pending, nothing passing traffic. A run that stopped at
+# the gate would have reported that install successful.
+#
+# So the aggregate is checked HERE instead, after the License CR has applied and
+# TMM has had what it needs. Waiting on Available at the gate deadlocks: Available
+# cannot go True until TMM is licensed, TMM cannot be licensed until this module
+# runs, and this module waits on the gate.
+#
+# 2.4 only. 2.3's aggregate is not a reliable signal in the same way, and adding a
+# new failure mode to a line that ships today is not worth the symmetry.
+resource "null_resource" "cneinstance_available_24" {
+  count = var.enabled && var.bnk_line == "2.4" ? 1 : 0
+
+  triggers = {
+    license = kubectl_manifest.bnk_license[0].id
+  }
+
+  provisioner "local-exec" {
+    command = "${var.roksbnkctl_binary} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${var.flo_namespace}-f5-cne-controller --for condition=Available=True --timeout 15m"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
+  }
+
+  depends_on = [kubectl_manifest.bnk_license]
+}
