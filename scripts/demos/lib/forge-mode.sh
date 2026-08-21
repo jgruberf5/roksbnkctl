@@ -25,6 +25,23 @@
 forge_mode(){
   local set_count=0 missing=() present=()
 
+  # Accept the tool's OWN variable names as a fallback (#164 review).
+  #
+  # roksbnkctl reads BNK_FORGE_URL / BNK_FORGE_USER / BNK_FORGE_PASSWORD — that is
+  # what internal/cli/bnkforge.go looks for and what chapter 24a documents. An
+  # operator who exports those three, and nothing else, has genuinely configured
+  # Forge; reading only FORGE_* declared them unconfigured and silently skipped
+  # the phase. In the CI demo that was worse than a wasted opportunity: the
+  # runner forwards -e BNK_FORGE_* into the container, so it would have had
+  # working credentials for a phase that was skipped anyway.
+  #
+  # Silently skipping when Forge IS configured is the exact outcome the
+  # partial-config die below exists to prevent, so it cannot be tolerated here
+  # either.
+  FORGE_URL="${FORGE_URL:-${BNK_FORGE_URL:-}}"
+  FORGE_USER="${FORGE_USER:-${BNK_FORGE_USER:-}}"
+  FORGE_PASS="${FORGE_PASS:-${BNK_FORGE_PASSWORD:-}}"
+
   [[ -n "${FORGE_URL:-}"  ]] && { set_count=$((set_count+1)); present+=(FORGE_URL);  } || missing+=(FORGE_URL)
   [[ -n "${FORGE_USER:-}" ]] && { set_count=$((set_count+1)); present+=(FORGE_USER); } || missing+=(FORGE_USER)
   [[ -n "${FORGE_PASS:-}" ]] && { set_count=$((set_count+1)); present+=(FORGE_PASS); } || missing+=(FORGE_PASS)

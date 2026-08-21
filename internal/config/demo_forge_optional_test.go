@@ -54,23 +54,96 @@ func forgeGatedDemos(t *testing.T) map[string]string {
 	return out
 }
 
-// The preflight must not refuse to start. This is the regression itself: a
-// `die` on a missing FORGE_* before phase 1 is what made the Forge-free
-// majority of each demo unreachable.
-func TestNoDemoDiesInPreflightForAMissingForge(t *testing.T) {
-	// A `die` whose message mentions FORGE_URL/USER/PASS. The partial-config
-	// die inside forge_mode is fine and lives in lib/, which is excluded.
-	dieOnForge := regexp.MustCompile(`(?m)^\s*\[\[[^\n]*FORGE_(URL|USER|PASS)[^\n]*\]\]\s*\|\|\s*die`)
+// The preflight must not refuse to start. This is the regression itself.
+//
+// Asserted by RUNNING each demo with no Forge in the environment and checking it
+// reaches its LAST phase. The first version was a regex over the `[[ … ]] || die`
+// form, and an adversarial review reinstated the exact regression using
+// `if [ -z "$FORGE_URL" ]; then die …; fi` — one of six spellings that evaded it.
+// A pattern match can always be spelled around; "does the demo still get to the
+// end" cannot.
+//
+// The host toolchain is stubbed, so this runs anywhere: the demos check for
+// roksbnkctl/terraform/helm/jq on PATH, and CI has none of them.
+func TestDemosReachTheirLastPhaseWithNoForgeConfigured(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("no bash: %v", err)
+	}
+	if testing.Short() {
+		t.Skip("drives both demos end to end; runs in the full suite")
+	}
+	root := repoRootForDemoTest(t)
+	stub := stubToolchain(t)
 
-	for name, body := range forgeGatedDemos(t) {
-		if m := dieOnForge.FindString(body); m != "" {
-			t.Errorf("%s refuses to start without BNK Forge:\n  %s\n\n"+
-				"Forge gates one phase, not the demo. Killing the run in preflight makes the "+
-				"cluster build and the BNK install — neither of which touches Forge — "+
-				"unreachable without credentials they do not use. Call forge_mode instead.",
-				name, strings.TrimSpace(m))
+	for name := range forgeGatedDemos(t) {
+		t.Run(filepath.Base(name), func(t *testing.T) {
+			script := filepath.Join(root, name)
+			// The last phase banner the demo prints, e.g. "PHASE 6/6" or "PHASE 7/7".
+			body, rerr := os.ReadFile(script)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			last := regexp.MustCompile(`PHASE (\d+)/(\d+)`).FindAllStringSubmatch(string(body), -1)
+			if len(last) == 0 {
+				t.Fatal("no phase banners found")
+			}
+			total := last[0][2]
+			want := "PHASE " + total + "/" + total
+
+			cmd := exec.Command(bash, script)
+			cmd.Dir = filepath.Dir(script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+stub+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"IBMCLOUD_API_KEY=stub-key-for-the-dry-run-000",
+				"DRY_RUN=1", "AUTO_ADVANCE=1",
+				// The recording holds exist to make a video readable; a test does
+				// not need them, and they dominate the runtime (184s -> a few).
+				"PHASE_DELAY=0", "CMD_RENDER_HOLD=0", "CMD_POST_HOLD=0",
+				"OUT_SETTLE_HOLD=0", "OUT_POST_HOLD=0", "PHASE_BANNER_HOLD=0",
+				// Explicitly empty: the point is a demo with NO Forge anywhere.
+				"FORGE_URL=", "FORGE_USER=", "FORGE_PASS=",
+				"BNK_FORGE_URL=", "BNK_FORGE_USER=", "BNK_FORGE_PASSWORD=",
+			)
+			out, _ := cmd.CombinedOutput()
+
+			if !strings.Contains(string(out), want) {
+				t.Errorf("%s never reached %s without Forge configured.\n"+
+					"Forge gates one phase; refusing in preflight makes the cluster build and the "+
+					"BNK install — neither of which touches Forge — unreachable without "+
+					"credentials they do not use.\n--- output tail ---\n%s",
+					name, want, tail(string(out), 25))
+			}
+		})
+	}
+}
+
+// stubToolchain puts fake roksbnkctl/terraform/helm/jq/docker on PATH so the
+// demos' `command -v` preflight passes on a machine that has none of them. The
+// roksbnkctl stub answers `version` in the real format, which preflight_binary
+// parses.
+func stubToolchain(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range []string{"terraform", "helm", "jq", "docker"} {
+		write := filepath.Join(dir, tool)
+		if err := os.WriteFile(write, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
+	rbk := "#!/bin/sh\ncase \"$1\" in version) echo \"roksbnkctl v99.0.0 (commit stub, built now)\";; esac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "roksbnkctl"), []byte(rbk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func tail(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Deciding the mode is not enough; the register phase has to respect it. Scoped
@@ -145,6 +218,16 @@ func TestForgeModeResolvesTheThreeStates(t *testing.T) {
 		wantOut  string
 	}{
 		{"all three set", []string{"FORGE_URL=https://f", "FORGE_USER=u", "FORGE_PASS=p"}, 0, "true"},
+		// The names roksbnkctl itself reads (internal/cli/bnkforge.go, chapter
+		// 24a). An operator who exports these has configured Forge; treating
+		// them as unconfigured silently skipped the phase, and in the CI demo
+		// the container would have had working credentials anyway (#164 review).
+		{"BNK_FORGE_* names only", []string{
+			"BNK_FORGE_URL=https://f", "BNK_FORGE_USER=u", "BNK_FORGE_PASSWORD=p"}, 0, "true"},
+		{"mixed FORGE_ and BNK_FORGE_", []string{
+			"FORGE_URL=https://f", "BNK_FORGE_USER=u", "BNK_FORGE_PASSWORD=p"}, 0, "true"},
+		{"partial across both spellings", []string{
+			"FORGE_URL=https://f", "BNK_FORGE_USER=u"}, 3, ""},
 		{"none set", nil, 0, "false"},
 		{"url only", []string{"FORGE_URL=https://f"}, 3, ""},
 		{"missing password", []string{"FORGE_URL=https://f", "FORGE_USER=u"}, 3, ""},
