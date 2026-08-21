@@ -511,25 +511,66 @@ func installBinary(target, staged string) error {
 	return nil
 }
 
+// renameFile indirects os.Rename so the unrecoverable branch below can be
+// driven in a test. Ordinary filesystem permissions cannot reach it: renaming
+// needs write on the containing directory, and target and target.old share one,
+// so any permission change that fails the rollback also fails the first rename
+// and the function returns before the branch runs. Rather than leave the one
+// path that strands a user uncovered, the syscall gets a seam.
+var renameFile = os.Rename
+
 // installByMoveAside implements the Windows-safe replace: a running .exe cannot
 // be overwritten, but it CAN be renamed (the process's handle follows the
 // rename). So move target to target.old, then rename the staged binary into
 // target's place. The .old file stays locked until the old process exits;
-// sweepStaleBinary removes it on the next run. On failure the move is rolled
-// back so the caller is never left without a working binary.
+// sweepStaleBinary removes it on the next run.
+//
+// On failure the move is rolled back. If the rollback ITSELF fails there is no
+// binary at target and the only copy is the sidecar, so the error says so and
+// names the file — see errRollbackFailed. That is the one outcome this function
+// cannot prevent, and the difference between a one-command recovery and a user
+// who thinks the tool deleted itself.
 func installByMoveAside(target, staged string) error {
 	old := target + ".old"
 	_ = os.Remove(old) // clear a stale sidecar from a prior upgrade
-	if err := os.Rename(target, old); err != nil {
+	if err := renameFile(target, old); err != nil {
 		return fmt.Errorf("moving current binary aside: %w", err)
 	}
-	if err := os.Rename(staged, target); err != nil {
-		_ = os.Rename(old, target) // roll back
+	if err := renameFile(staged, target); err != nil {
+		if rerr := renameFile(old, target); rerr != nil {
+			return errRollbackFailed{install: err, rollback: rerr, old: old, target: target}
+		}
 		return fmt.Errorf("installing new binary: %w", err)
 	}
 	_ = os.Remove(old) // best-effort now (locked while running); swept next start
 	return nil
 }
+
+// errRollbackFailed reports the one state installByMoveAside cannot recover
+// from: the new binary would not move into place AND the old one would not move
+// back, leaving nothing at target.
+//
+// It exists as a type rather than a fmt.Errorf so both underlying errors stay
+// available to errors.Is/As — a caller checking for fs.ErrPermission should see
+// it through either cause — and so the recovery path can be asserted in a test
+// without matching on prose.
+type errRollbackFailed struct {
+	install  error // why the new binary could not be installed
+	rollback error // why the old binary could not be put back
+	old      string
+	target   string
+}
+
+func (e errRollbackFailed) Error() string {
+	return fmt.Sprintf(
+		"installing new binary: %v; rolling back also failed: %v\n"+
+			"There is now NO binary at %s. Your previous one is intact at %s — "+
+			"rename it back to recover:\n    mv %q %q",
+		e.install, e.rollback, e.target, e.old, e.old, e.target)
+}
+
+// Unwrap exposes both causes so errors.Is/As match either one.
+func (e errRollbackFailed) Unwrap() []error { return []error{e.install, e.rollback} }
 
 // sweepStaleBinary removes a <self>.old left by a prior Windows upgrade, once
 // the old process is gone (so the file is unlocked). Best-effort and a no-op
