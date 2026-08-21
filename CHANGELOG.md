@@ -27,6 +27,17 @@ one-namespace defects that work uncovered.
 
 ### Fixed
 
+- **The lifecycle demos no longer require a BNK Forge account to run at all.**
+  Both `cluster-lifecycle-cli-demo.sh` and its CI twin died in their *preflight*
+  without `FORGE_URL` / `FORGE_USER` / `FORGE_PASS`, while Forge is used by one
+  phase — `bnkforge register` — and nothing else: no Forge variable reaches
+  terraform, and two sibling demos already run `bnk up` without it. The gate was
+  holding the entire terraform half of the demo behind a credential it never
+  uses. All three set runs the phase, none skips it and runs the rest, and a
+  partial set still fails loudly — a typo in one variable must not quietly cost
+  the registration step. The `BNK_FORGE_*` names `roksbnkctl` itself reads are
+  accepted too. ([#164](https://github.com/jgruberf5/roksbnkctl/issues/164))
+
 - **`bnk up` refuses a namespace change that would delete the utils namespace.**
   Collapsing `flo_utils_namespace` into `flo_namespace` on a workspace that has
   already installed takes `kubernetes_namespace_v1.f5_utils` from count 1 to 0,

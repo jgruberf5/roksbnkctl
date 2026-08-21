@@ -1,0 +1,153 @@
+# Terraform gates for the shipped tree.
+#
+# WHY THIS EXISTS. Until now CI ran no terraform check of any kind — `make
+# tf-validation-test` was a pre-tag gate on a maintainer's laptop, so a broken
+# variable block or a type error reached a tag before anything looked at it.
+# support_matrix.yaml states that "a cell with no coverage is a claim nobody has
+# checked"; this is the terraform half of that coverage.
+#
+# It is deliberately CREDENTIAL-FREE. A full `terraform plan` of this tree needs
+# real IBM Cloud auth — it fails at `ListVpcsWithContext ... authenticate` — so a
+# plan job cannot be the everyday gate. `validate` and the variable-validation
+# harness both run without a key and catch the two failure classes that have
+# actually shipped here: a type error, and a validation condition that explodes
+# at plan time. See the `plan` job below for the part that needs a key.
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - 'scripts/tf-variable-validation-test.sh'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - 'scripts/tf-variable-validation-test.sh'
+      - '.github/workflows/terraform.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  # Per-line, because the whole 2.4 effort gates modules on `bnk_line` with
+  # `count`. A line that does not even type-check is worth catching before the
+  # line-conditional resources land, not after.
+  validate:
+    name: validate (bnk_line ${{ matrix.line }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        line: ['2.3', '2.4']
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned to roksbnkctl's stated floor, not "latest". Terraform CHANGED
+      # `||` short-circuiting in validation conditions between 1.10 and 1.15, so
+      # a gate on latest tests a terraform no user is required to have — the
+      # exact hole that let the v1.40.0 cluster_vpc_cidr bug ship.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.10.5'
+          terraform_wrapper: false
+
+      - name: terraform init (no backend, no credentials)
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform validate -no-color
+
+      # `validate` type-checks but never evaluates a variable against a value, so
+      # it cannot tell a good line from a bad one. This does, and it is the only
+      # per-line assertion available without a key.
+      - name: the line variable accepts this line and rejects a bogus one
+        working-directory: terraform
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          python3 - variables.tf "$work/main.tf" <<'PY'
+          import sys, pathlib
+          src, out = sys.argv[1], sys.argv[2]
+          t = pathlib.Path(src).read_text()
+          i = t.index('variable "bnk_line"')
+          depth = 0; j = i
+          while True:
+              if t[j] == '{': depth += 1
+              elif t[j] == '}':
+                  depth -= 1
+                  if depth == 0: break
+              j += 1
+          pathlib.Path(out).write_text(t[i:j+1] + "\n")
+          PY
+          terraform -chdir="$work" init -backend=false -input=false >/dev/null
+
+          echo "==> bnk_line = ${{ matrix.line }} must be ACCEPTED"
+          terraform -chdir="$work" plan -input=false -no-color \
+            -var 'bnk_line=${{ matrix.line }}' >/dev/null
+
+          echo "==> a bogus line must be REJECTED"
+          if terraform -chdir="$work" plan -input=false -no-color \
+               -var 'bnk_line=9.9' >/dev/null 2>&1; then
+            echo "FAIL: bnk_line accepted 9.9 — the validation block is not doing its job," \
+                 "and a hand-run apply would plan a release that does not exist" >&2
+            exit 1
+          fi
+          echo "OK"
+
+  # The existing harness, which runs real plans against scratch modules holding
+  # one variable block each — no providers, no credentials. Line-agnostic, so it
+  # runs once rather than per line.
+  variable-validation:
+    name: variable validation conditions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.10.5'
+          terraform_wrapper: false
+      # TF_TEST_LOCAL=1 takes terraform from PATH. The script prefers the runner
+      # image so it tests the version this checkout ships; on a CI runner the
+      # pinned setup-terraform above is that version, and pulling the image would
+      # cost a registry round trip for the same binary.
+      - run: TF_TEST_LOCAL=1 ./scripts/tf-variable-validation-test.sh
+
+  # The real thing, and the one that needs a key. Skipped unless a repo secret
+  # exists, so it activates the day someone adds one rather than needing to be
+  # remembered then.
+  #
+  # This is where the PRD's regression gate belongs: `docs/prd/18-BNK-2-4-SUPPORT.md`
+  # §6 Step 1 makes "2.3 produces a byte-identical plan to today" the acceptance
+  # criterion for the entire 2.4 effort, and nothing can check that without
+  # planning against a real account.
+  plan:
+    name: plan (bnk_line ${{ matrix.line }})
+    runs-on: ubuntu-latest
+    if: ${{ vars.TF_PLAN_ENABLED == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        line: ['2.3', '2.4']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.10.5'
+          terraform_wrapper: false
+      - name: terraform plan
+        working-directory: terraform
+        env:
+          IBMCLOUD_API_KEY: ${{ secrets.IBMCLOUD_API_KEY }}
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform plan -input=false -no-color \
+            -var "ibmcloud_api_key=$IBMCLOUD_API_KEY" \
+            -var 'region=us-east' \
+            -var 'resource_group=default' \
+            -var 'prefix=ci-plan' \
+            -var 'bnk_line=${{ matrix.line }}'
