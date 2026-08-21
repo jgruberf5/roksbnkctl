@@ -27,8 +27,19 @@ lines:
   #   `bnk up` on an adopted cluster.
   #
   #   Result: CNEInstance 18/18 conditions True, f5-tmm x3 at 5/5 Running,
-  #   bnk-license Active. Gateway phase (Infra + GatewaySettings) NOT exercised
-  #   in that run — it is a separate phase and a separate claim.
+  #   bnk-license Active.
+  #
+  #   The GATEWAY phase has since been exercised too, on the same cluster:
+  #   `gateway up` applies Infra + GatewaySettings and both reach Accepted,
+  #   ResolvedRefs and Programmed = True, with the CNEInstance still 18/18 and
+  #   the licence still Active afterwards. Running it is what found the three
+  #   defects that made it impossible before: the gateway plan failed outright
+  #   on 2.4, USE_GATEWAY_SETTINGS was never set so nothing reconciled the CRs,
+  #   and the cneinstance_advanced_env override that was meant to let you set it
+  #   read by no terraform at all.
+  #
+  #   Still NOT exercised, and so not claimed: mTLS, multi-NIC, disconnected
+  #   licensing, EgressGateway CRs, and the contract boundary.
   #
   # This row originally claimed multi-NIC on the expectation that 2.4 would add
   # it. The BNK 2.4 EA install guide does not: it is single-NIC throughout — one
@@ -46,7 +57,8 @@ lines:
     notes: >-
       Verified against 2.4.0-EA: bnk up reaches 18/18 CNEInstance conditions with
       TMM 5/5 and the licence Active, on a single-NIC OCP 4.20 cluster with
-      connected licensing. Single-NIC only — the 2.4 EA install guide shows no
+      connected licensing, and `gateway up` brings Infra + GatewaySettings to
+      Programmed. Single-NIC only — the 2.4 EA install guide shows no
       multi-NIC path, and the verified run was single-NIC. Drives clusters
       created before multi-NIC existed, so an existing deployment can move to 2.4
       without touching its cluster.
