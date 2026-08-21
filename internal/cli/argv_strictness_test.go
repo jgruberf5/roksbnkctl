@@ -91,9 +91,12 @@ import (
 // (`internal/cli`) test can exercise it.
 
 var (
-	binBuildOnce  sync.Once
-	binBuildPath  string
-	binBuildErr   error
+	binBuildOnce sync.Once
+	binBuildPath string
+	binBuildErr  error
+	// binBuildDir is the directory binBuildPath lives in, kept so TestMain can
+	// remove it. See #157: it used to be left behind on every run.
+	binBuildDir   string
 	binBuildSetup = func(t *testing.T) (string, error) { return buildRoksbnkctlBinary(t) }
 )
 
@@ -122,14 +125,20 @@ func buildRoksbnkctlBinary(t *testing.T) (string, error) {
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
 	}
-	// Build into a process-lifetime tempdir (not t.TempDir()) so the
-	// same binary serves every subprocess sub-test in the run via the
-	// sync.Once cache. The os.TempDir-rooted location is cleaned up by
-	// the OS / nothing important else lives there.
+	// Build into a process-lifetime tempdir rather than t.TempDir(), because the
+	// same binary serves every subprocess sub-test in the run via the sync.Once
+	// cache and per-test cleanup would delete it out from under a later caller.
+	//
+	// TestMain removes it when the process exits, which is the binary's actual
+	// lifetime. This used to rely on "the OS cleans up os.TempDir" instead (#157)
+	// — which is not true on a tmpfs that only clears at reboot. Each run left
+	// 112MB behind; 94 runs filled a 16GB /tmp and the symptom was a linker
+	// error in an unrelated package.
 	outDir, err := os.MkdirTemp("", "roksbnkctl-argv-build-")
 	if err != nil {
 		return "", err
 	}
+	binBuildDir = outDir
 	bin := filepath.Join(outDir, exeName)
 	cmd := exec.Command("go", "build", "-o", bin, "./cmd/roksbnkctl")
 	cmd.Dir = repoRoot
