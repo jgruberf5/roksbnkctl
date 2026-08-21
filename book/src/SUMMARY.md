@@ -27,6 +27,7 @@
 - [Air-gapped install: mirroring BNK into a private registry](./10a-air-gapped-install.md)
 - [Registry targets: ICR and Artifactory](./10b-registry-targets.md)
 - [Licensing BNK with the F5 License Proxy (FLP)](./10c-flp-licensing.md)
+- [BNK 2.4](./10d-bnk-2-4.md)
 - [Tearing down](./11-tearing-down.md)
 
 # Part IV — Configuration
