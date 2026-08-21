@@ -23,7 +23,11 @@ UIs so you can explore. It builds a real ROKS cluster — expect **45–90 min**
 
 **You provide** (see `.env.example`):
 - an IBM Cloud **API key** (VPC + Kubernetes-Service + Transit-Gateway),
-- a **BNK Forge** account — `FORGE_URL` / `FORGE_USER` / `FORGE_PASS`,
+- *optionally* a **BNK Forge** account — `FORGE_URL` / `FORGE_USER` / `FORGE_PASS`
+  (or the `BNK_FORGE_*` names `roksbnkctl` itself reads). Forge is used by phase 3
+  and nothing else: set all three to include that phase, or none to skip it and run
+  the rest. Setting only some of them is treated as a mistake and stops the demo,
+  so a typo cannot quietly cost you the registration step.
 - the cluster shape you want: `REGION`, `RESOURCE_GROUP`, `CLUSTER_NAME`,
   `OCP_VERSION`, `WORKERS_PER_ZONE`.
 

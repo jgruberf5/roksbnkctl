@@ -83,6 +83,30 @@ teardown(){
 }
 [[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
 
+# Source .env when EITHER the API key or the Forge credentials are missing.
+# Keying only on IBMCLOUD_API_KEY meant that exporting the key in your shell made
+# the whole file invisible, so FORGE_* sitting in .env were never read and the
+# registration phase was silently skipped (#164 review). `set -a` sourcing does
+# not clobber an already-exported value, so an override on the command line wins.
+if [[ -f "$HERE/.env" ]] && [[ -z "${IBMCLOUD_API_KEY:-}" || -z "${FORGE_URL:-}${BNK_FORGE_URL:-}" ]]; then
+  set -a; source "$HERE/.env"; set +a
+fi
+[[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"
+export IBMCLOUD_API_KEY
+# #164: Forge gates phase 4 ONLY. All three set = run it; none set = skip it and
+# run the other six; a partial set is a mistake and still dies. Exports BNK_FORGE_*
+# when enabled — the runner reads them by name, never from argv.
+forge_mode
+
+# Resolved BEFORE the opening banner so the story below states what will actually
+# happen. The banner is the first frame of the recording; announcing a phase that
+# will be skipped is the same defect as claiming one ran (#164 review).
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  FORGE_INTRO_NOTE=""
+else
+  FORGE_INTRO_NOTE=" (SKIPPED — no FORGE_URL / FORGE_USER / FORGE_PASS set; nothing else needs them.)"
+fi
+
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — THE CLUSTER LIFECYCLE AS A CI PIPELINE"
 cat >&2 <<EOF
@@ -90,19 +114,12 @@ The story, in seven phases — every one of them a ${B}docker run${N}:
   1. The runner image ${B}IS${N} roksbnkctl. Nothing is installed on this host.
   2. One declarative ${B}config.yaml${N} on /work -> ${B}init${N}. No prompts, ever.
   3. ${B}cluster up${N} — a real ROKS cluster (${C}${WS}${N}, OCP ${OCP_VERSION}).
-  4. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge.
+  4. ${B}bnkforge register${N} — hand the durable cluster to BNK Forge.${FORGE_INTRO_NOTE}
   5. ${B}bnk up${N} — BIG-IP Next for Kubernetes + its licence.
   6. ${B}testing up${N} + ${B}test${N} — jump hosts, then the probes.
   7. ${B}bnk down${N} then ${B}bnk up${N} — swap BNK, the cluster never moves.
 Then the pipeline STOPS, leaving everything up so you can explore. \`teardown\` removes it.
 EOF
-[[ -z "${IBMCLOUD_API_KEY:-}" && -f "$HERE/.env" ]] && { set -a; source "$HERE/.env"; set +a; }
-[[ -n "${IBMCLOUD_API_KEY:-}" ]] || die "set IBMCLOUD_API_KEY"
-[[ -n "$FORGE_URL"  ]] || die "set FORGE_URL — phase 4 registers with a live BNK Forge"
-[[ -n "$FORGE_USER" ]] || die "set FORGE_USER"
-[[ -n "$FORGE_PASS" ]] || die "set FORGE_PASS"
-export IBMCLOUD_API_KEY
-export BNK_FORGE_URL="$FORGE_URL" BNK_FORGE_USER="$FORGE_USER" BNK_FORGE_PASSWORD="$FORGE_PASS"
 # These demos are RECORDED: register every credential so banner/say/ok/show and
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
 secret "$IBMCLOUD_API_KEY" "$FORGE_PASS"
@@ -111,7 +128,11 @@ command -v docker >/dev/null || die "docker not found — a CI runner already pr
 # The runner image runs as uid 1000, so the bind-mounted state dir must be
 # writable; and init refuses to clobber an existing workspace, so start clean.
 [[ "$DRY_RUN" == "1" ]] || { mkdir -p "$WORK"; chmod 777 "$WORK"; rm -rf "$WORK/.roksbnkctl/$WS"; }
-ok "preflight: docker present, state volume $WORK ready, BNK Forge at $FORGE_URL"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  ok "preflight: docker present, state volume $WORK ready, BNK Forge at $FORGE_URL"
+else
+  ok "preflight: docker present, state volume $WORK ready — no BNK Forge configured, phase 4 will be skipped"
+fi
 
 # ============================ Phase 1: the runner container ==================
 pause; phase P1 "PHASE 1/7  —  The runner container IS roksbnkctl"
@@ -146,11 +167,19 @@ resources:
 bnk:
   manifest_version: ${BNK_VERSION}
   far_repo_url: ${FAR_REPO_URL}
+YAML
+# Only when Forge is configured. Emitting it unconditionally put an empty stanza
+# on camera and persisted `bnkforge: {insecure: true}` into the workspace — a
+# config declaring TLS verification disabled against a server that does not
+# exist (#164 review).
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  cat >> "$WORK/config.yaml" <<YAML
 bnkforge:
   url: ${FORGE_URL}
   username: ${FORGE_USER}
   insecure: ${FORGE_INSECURE}
 YAML
+fi
 show_file "$WORK/config.yaml"
 run "${RUN[@]}" init --config-file /work/config.yaml --override-from-env
 ok "workspace '$WS' seeded on the /work volume — it outlives every container"
@@ -169,12 +198,16 @@ endphase P3
 
 # ============================ Phase 4: BNK Forge =============================
 pause; phase P4 "PHASE 4/7  —  bnkforge register: hand the cluster to BNK Forge"
-say "roksbnkctl registers over BNK Forge's REST API. The URL, user and password come from the CI"
-say "environment — BNK_FORGE_* passed into the container by name, never on the command line."
-REG=(bnkforge register)
-[[ "$FORGE_INSECURE" == "true" ]] && REG+=(--insecure)
-run "${RUN[@]}" "${REG[@]}"
-ok "registered with BNK Forge"
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  say "roksbnkctl registers over BNK Forge's REST API. The URL, user and password come from the CI"
+  say "environment — BNK_FORGE_* passed into the container by name, never on the command line."
+  REG=(bnkforge register)
+  [[ "$FORGE_INSECURE" == "true" ]] && REG+=(--insecure)
+  run "${RUN[@]}" "${REG[@]}"
+  ok "registered with BNK Forge"
+else
+  forge_skip_note "PHASE 4/7 (bnkforge register)"
+fi
 endphase P4
 
 # ============================ Phase 5: bnk up ================================
@@ -230,14 +263,22 @@ endphase P7
 MASTER_URL="$(jq -r '.master_url // empty' "$WORK/.roksbnkctl/$WS/cluster-outputs.json" 2>/dev/null || true)"
 
 banner "DEMO COMPLETE"
+# See the CLI demo's note: the closing frame must not claim a skipped phase ran.
+if [[ "$FORGE_ENABLED" == "true" ]]; then
+  PHASE_CHAIN="cluster up -> bnkforge register -> bnk up -> testing up + test -> bnk down -> bnk up"
+  FORGE_LINE="  BNK Forge:          ${FORGE_URL}   (login: ${FORGE_USER} / your FORGE_PASS)"
+else
+  PHASE_CHAIN="cluster up -> bnk up -> testing up + test -> bnk down -> bnk up   (bnkforge register skipped)"
+  FORGE_LINE="  BNK Forge:          not registered — set FORGE_URL / FORGE_USER / FORGE_PASS to include phase 4"
+fi
 cat >&2 <<EOF
 Nothing was ever installed on this host. Every step was one docker run of
   ${RUNNER}
-  cluster up -> bnkforge register -> bnk up -> testing up + test -> bnk down -> bnk up
+  ${PHASE_CHAIN}
   Cluster ${WS} (${REGION}); workspace state lives on the /work volume at ${WORK}.
 
 Reachable web UIs (explore before you tear down):
-  BNK Forge:          ${FORGE_URL}   (login: ${FORGE_USER} / your FORGE_PASS)
+${FORGE_LINE}
   OpenShift console:  https://cloud.ibm.com/kubernetes/clusters — open ${WS},
                       then "OpenShift web console"   (login: your IBM Cloud identity)
   Cluster API:        ${MASTER_URL:-<see: docker run … \$RUNNER -w $WS cluster config>}
