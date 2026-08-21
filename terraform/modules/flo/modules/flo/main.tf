@@ -1155,8 +1155,14 @@ resource "ibm_iam_trusted_profile_policy" "cne_controller_cluster" {
     value = "containers-kubernetes"
   }
 
+  # serviceInstance, not clusterId. IAM rejects the latter outright —
+  # "Invalid Attribute(s): clusterId", HTTP 400 — and it does so at APPLY time,
+  # after the cluster is built, because a policy body is only validated when the
+  # API sees it. The VPC policy above scopes with vpcId, which is why the wrong
+  # name looked plausible; containers-kubernetes uses the generic
+  # serviceInstance slot for the cluster id.
   resource_attributes {
-    name  = "clusterId"
+    name  = "serviceInstance"
     value = var.openshift_cluster_id
   }
 }
