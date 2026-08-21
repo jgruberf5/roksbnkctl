@@ -2,7 +2,9 @@ package exec
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
+	"sort"
 )
 
 // redactMarker is the placeholder substituted for any matched secret.
@@ -37,22 +39,127 @@ type redactor struct {
 // boundaries. Empty / zero-length secrets are ignored (passing nil or
 // the zero slice yields a transparent passthrough).
 //
+// Each secret is registered in its raw form AND in its base64 forms (see
+// base64Variants), because that is how credentials actually move through this
+// system — *_b64 config fields, Kubernetes Secret values, anything a tool
+// dumps from a rendered config. Registering only the raw form would mask half
+// the shapes the same credential takes.
+//
 // The returned io.Writer also implements io.Closer; callers MUST call
 // Close() at end-of-stream so the held-back tail bytes drain to w.
 // Backends call Close() in their cleanup defer; tests use the test-
 // helper that detects the io.Closer and calls it.
 func NewRedactor(w io.Writer, secrets []string) io.Writer {
 	r := &redactor{w: w}
+	seen := make(map[string]bool)
+	add := func(b []byte) {
+		if len(b) == 0 || seen[string(b)] {
+			return
+		}
+		seen[string(b)] = true
+		r.secrets = append(r.secrets, b)
+	}
 	for _, s := range secrets {
 		if s == "" {
 			continue
 		}
-		r.secrets = append(r.secrets, []byte(s))
-		if len(s) > r.maxLen {
-			r.maxLen = len(s)
+		add([]byte(s))
+		for _, v := range base64Variants(s) {
+			add(v)
+		}
+	}
+	// Longest first, so an overlapping pair redacts the longer match. Without
+	// this the scan takes whichever happens to be registered first: a short
+	// alignment fragment could match inside a longer standalone encoding and
+	// leave the surrounding base64 characters in the stream.
+	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
+	for _, b := range r.secrets {
+		if len(b) > r.maxLen {
+			r.maxLen = len(b)
 		}
 	}
 	return r
+}
+
+// minBase64Secret is the shortest secret worth generating base64 variants for.
+// Encoded fragments of a very short secret are themselves short enough to
+// collide with ordinary output, and redacting legitimate text is its own kind
+// of failure. Real credentials — API keys, passwords, tokens — clear this by a
+// wide margin.
+const minBase64Secret = 8
+
+// base64Variants returns the encoded forms of s that may appear in a stream.
+//
+// Secrets in this system routinely travel base64-encoded: ibmcloud.api_key_b64,
+// registry.generic_password_b64, bnk.cis.bigip_password_b64, bnk.gtm.password_b64,
+// bnkforge.ca_b64, and every Kubernetes Secret, whose values are base64 by
+// definition. A redactor that knows only the raw form passes all of those
+// through untouched.
+//
+// Two shapes are covered:
+//
+//   - The standalone encodings, padded and unpadded, in both the standard and
+//     URL alphabets. This is the common case: a value encoded on its own, as in
+//     a Secret's data map or a *_b64 config field.
+//
+//   - The alignment-shifted middles. When s is encoded as part of a LARGER blob
+//     (a whole kubeconfig run through base64), its encoding depends on where it
+//     starts modulo 3, and none of the standalone forms appear. For each of the
+//     three offsets this emits the run of characters that encode only 3-byte
+//     groups lying entirely inside s — contaminated leading and trailing groups
+//     dropped — which is therefore guaranteed to appear verbatim.
+//
+// Not covered, and worth stating plainly: an encoding whose alphabet differs
+// from these two, and any transformation applied before encoding (compression,
+// encryption). The redactor is defense-in-depth against a tool that prints a
+// credential, not a general exfiltration control.
+func base64Variants(s string) [][]byte {
+	if len(s) < minBase64Secret {
+		return nil
+	}
+	raw := []byte(s)
+	out := [][]byte{
+		[]byte(base64.StdEncoding.EncodeToString(raw)),
+		[]byte(base64.RawStdEncoding.EncodeToString(raw)),
+		[]byte(base64.URLEncoding.EncodeToString(raw)),
+		[]byte(base64.RawURLEncoding.EncodeToString(raw)),
+	}
+	for off := 0; off < 3; off++ {
+		if m := alignedMiddle(raw, off); len(m) >= minBase64Secret {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// alignedMiddle returns the base64 characters that depend only on raw, for a
+// stream in which raw begins at a byte position congruent to off modulo 3.
+//
+// Base64 encodes in 3-byte groups. A group that also contains bytes from
+// outside raw encodes to characters this function cannot predict, so the
+// leading group (when off > 0) and any trailing partial group are dropped. What
+// remains encodes whole groups drawn entirely from raw, and appears verbatim in
+// the stream regardless of what surrounds it.
+//
+// The filler bytes are arbitrary — they only exist to shift the alignment, and
+// every character they influence is dropped.
+func alignedMiddle(raw []byte, off int) []byte {
+	buf := make([]byte, off, off+len(raw))
+	buf = append(buf, raw...)
+	enc := base64.RawStdEncoding.EncodeToString(buf)
+
+	front := 0
+	if off > 0 {
+		front = 4 // the first group mixes filler with raw
+	}
+	tail := 0
+	if rem := len(buf) % 3; rem != 0 {
+		tail = rem + 1 // the last group is partial, so the next bytes change it
+	}
+	if front+tail >= len(enc) {
+		return nil
+	}
+	return []byte(enc[front : len(enc)-tail])
 }
 
 // Write implements io.Writer. The contract is:
