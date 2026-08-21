@@ -71,6 +71,7 @@ module "cneinstance" {
   cneinstance_firewall_acl         = true
   cneinstance_pseudocni            = true
   cneinstance_env_discovery        = false
+  cneinstance_advanced_env         = var.cneinstance_advanced_env
   cneinstance_cloud_env            = true
   cneinstance_cloud_provider       = "ibm"
   cneinstance_vpc_name             = try(data.ibm_is_vpc.cluster_vpc[0].name, "")

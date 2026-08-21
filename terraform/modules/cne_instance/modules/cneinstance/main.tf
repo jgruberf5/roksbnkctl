@@ -194,6 +194,148 @@ locals {
     { name = "GTM_PASSWORD", value = var.cneinstance_gtm_password },
   ]
 
+  # ── advanced.<component>.env ────────────────────────────────────────────────
+  #
+  # The defaults this module has always emitted, hoisted so that
+  # `cneinstance_advanced_env` (#175) can actually reach them. That variable was
+  # declared, rendered as a tfvar and documented, but nothing in terraform read
+  # it — the override was a no-op end to end.
+  #
+  # A user entry REPLACES a default of the same name rather than appending a
+  # second copy: the CNEInstance spec is read by the lifecycle operator, not by
+  # kubelet, so "last duplicate wins" is not a rule we get to rely on.
+  #
+  # With no overrides set, the filter removes nothing and the appended list is
+  # empty, so every component renders exactly the bytes it rendered before.
+  adv_env_defaults = {
+    coremon = [
+      {
+        name  = "COREMOND_OVERRIDE_CORE_PATTERN"
+        value = "true"
+      }
+    ]
+    cneController = concat([
+      {
+        name  = "TMM_DEFAULT_MTU"
+        value = "9000"
+      },
+      {
+        name  = "CLOUD_ENV"
+        value = tostring(var.cneinstance_cloud_env)
+      },
+      {
+        name  = "CLOUD_PROVIDER"
+        value = var.cneinstance_cloud_provider
+      },
+      {
+        name  = "CLOUD_NETWORK_CONFIGMAP"
+        value = "cloud-network-mapping"
+      },
+      {
+        name  = "VPC_NAME"
+        value = var.cneinstance_vpc_name
+      },
+      {
+        name  = "CLOUD_REGION"
+        value = var.cneinstance_cloud_region
+      },
+      {
+        name  = "IBM_TRUSTED_PROFILE_ID"
+        value = var.cneinstance_ibm_trusted_profile_id
+      },
+      {
+        name  = "GSLB_DATACENTER_NAME"
+        value = var.cneinstance_gslb_datacenter_name
+      },
+      {
+        name  = "CLOUD_VPC"
+        value = var.cneinstance_vpc_name
+      },
+      {
+        name  = "CLOUD_TRUSTED_PROFILE"
+        value = var.cneinstance_ibm_trusted_profile_id
+      }
+    ], local.cnecontroller_gtm_env)
+    tmm = [
+      {
+        name  = "TMM_CALICO_ROUTER"
+        value = "default"
+      },
+      {
+        name  = "TMM_DEFAULT_MTU"
+        value = "9000"
+      },
+      {
+        name  = "PAL_CPU_SET"
+        value = "0,2"
+      },
+      {
+        name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
+        value = "TRUE"
+      },
+      # Pod CIDR TMM routes to (install-guide value = ROKS default pod
+      # subnet). Was missing — without it TMM can't route to application
+      # pods.
+      {
+        name  = "TMM_K8S_ROUTES"
+        value = var.cneinstance_tmm_k8s_routes
+      }
+    ]
+    pseudoCNI = [
+      {
+        name  = "DISABLE_CHECKSUM_OFFLOAD"
+        value = "true"
+      }
+    ]
+  }
+
+  # 2.4 runs the controller off Infra + GatewaySettings instead of the
+  # cloud-network-mapping ConfigMap, and the flag that selects that model is
+  # this one. Without it the controller never reconciles the CRs `gateway up`
+  # applies: they sit at Accepted=Unknown / "Waiting for controller" forever,
+  # with an epoch-zero transition time showing nothing ever touched them.
+  # Verified against a live 2.4 cluster, which is how this was found.
+  #
+  # It is a default, not an opt-in, because on 2.4 there is no working
+  # configuration without it. It stays overridable like any other entry.
+  adv_env_line = local.line_pre_24 ? {} : {
+    cneController = [
+      {
+        name  = "USE_GATEWAY_SETTINGS"
+        value = "true"
+      },
+    ]
+  }
+
+  # `lookup(m, k, [])` is not usable here: adv_env_defaults is an OBJECT (its
+  # keys hold lists of different lengths), and lookup() requires the default to
+  # match the collection's element type. `terraform validate` accepts it and it
+  # fails at evaluation, so this is written as an explicit key test instead.
+  # The user map is part of the key set, not just the value set: a component
+  # that exists only there still has to get an entry in adv_env, or the
+  # adv_env_extra lookup below indexes a key that was never built.
+  adv_env_base = { for c in distinct(concat(keys(local.adv_env_defaults), keys(local.adv_env_line), keys(var.cneinstance_advanced_env))) :
+    c => concat(
+      contains(keys(local.adv_env_defaults), c) ? local.adv_env_defaults[c] : [],
+      contains(keys(local.adv_env_line), c) ? local.adv_env_line[c] : [],
+    )
+  }
+
+  adv_env = { for c, d in local.adv_env_base :
+    c => concat(
+      [for e in d : e if !contains(keys(lookup(var.cneinstance_advanced_env, c, {})), e.name)],
+      [for k in sort(keys(lookup(var.cneinstance_advanced_env, c, {}))) :
+        { name = k, value = var.cneinstance_advanced_env[c][k] }
+      ],
+    )
+  }
+
+  # Components the product gains between releases: named only in the user map,
+  # with no defaults here. Empty map -> merge() is the identity.
+  adv_env_extra = { for c in setsubtract(keys(var.cneinstance_advanced_env), keys(local.adv_env_defaults)) :
+    c => { env = local.adv_env[c] }
+  }
+
   cneinstance_spec = {
     product = {
       gatewayAPI = var.cneinstance_gateway_api
@@ -231,15 +373,10 @@ locals {
     coreCollection = {
       enabled = true
     }
-    advanced = {
+    advanced = merge({
       coremon = {
         hostPath = true
-        env = [
-          {
-            name  = "COREMOND_OVERRIDE_CORE_PATTERN"
-            value = "true"
-          }
-        ]
+        env      = local.adv_env["coremon"]
       }
       envDiscovery = {
         enabled         = var.cneinstance_env_discovery
@@ -247,48 +384,7 @@ locals {
         runAfterSuccess = var.cneinstance_env_discovery
       }
       cneController = {
-        env = concat([
-          {
-            name  = "TMM_DEFAULT_MTU"
-            value = "9000"
-          },
-          {
-            name  = "CLOUD_ENV"
-            value = tostring(var.cneinstance_cloud_env)
-          },
-          {
-            name  = "CLOUD_PROVIDER"
-            value = var.cneinstance_cloud_provider
-          },
-          {
-            name  = "CLOUD_NETWORK_CONFIGMAP"
-            value = "cloud-network-mapping"
-          },
-          {
-            name  = "VPC_NAME"
-            value = var.cneinstance_vpc_name
-          },
-          {
-            name  = "CLOUD_REGION"
-            value = var.cneinstance_cloud_region
-          },
-          {
-            name  = "IBM_TRUSTED_PROFILE_ID"
-            value = var.cneinstance_ibm_trusted_profile_id
-          },
-          {
-            name  = "GSLB_DATACENTER_NAME"
-            value = var.cneinstance_gslb_datacenter_name
-          },
-          {
-            name  = "CLOUD_VPC"
-            value = var.cneinstance_vpc_name
-          },
-          {
-            name  = "CLOUD_TRUSTED_PROFILE"
-            value = var.cneinstance_ibm_trusted_profile_id
-          }
-        ], local.cnecontroller_gtm_env)
+        env = local.adv_env["cneController"]
       }
       demoMode = {
         enabled = true
@@ -297,41 +393,12 @@ locals {
         enabled = false
       }
       tmm = {
-        env = [
-          {
-            name  = "TMM_CALICO_ROUTER"
-            value = "default"
-          },
-          {
-            name  = "TMM_DEFAULT_MTU"
-            value = "9000"
-          },
-          {
-            name  = "PAL_CPU_SET"
-            value = "0,2"
-          },
-          {
-            name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
-            value = "TRUE"
-          },
-          # Pod CIDR TMM routes to (install-guide value = ROKS default pod
-          # subnet). Was missing — without it TMM can't route to application
-          # pods.
-          {
-            name  = "TMM_K8S_ROUTES"
-            value = var.cneinstance_tmm_k8s_routes
-          }
-        ]
+        env = local.adv_env["tmm"]
       }
       pseudoCNI = {
-        env = [
-          {
-            name  = "DISABLE_CHECKSUM_OFFLOAD"
-            value = "true"
-          }
-        ]
+        env = local.adv_env["pseudoCNI"]
       }
-    }
+    }, local.adv_env_extra)
   }
 }
 

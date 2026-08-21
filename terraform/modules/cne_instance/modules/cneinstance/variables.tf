@@ -309,3 +309,9 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+variable "cneinstance_advanced_env" {
+  description = "Per-component advanced.<component>.env passthrough (#175). See the root variable of the same name."
+  type        = map(map(string))
+  default     = {}
+}

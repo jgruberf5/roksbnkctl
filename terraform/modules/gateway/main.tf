@@ -438,8 +438,14 @@ resource "kubectl_manifest" "static_route" {
 # The egress VXLAN needs the UDP port open inbound on the cluster SG
 # (kube-<clusterid>). Resolve the cluster id → SG → add the rule.
 
+# NOTE: this trio — the cluster lookup, the SG lookup that indexes it, and the
+# rule itself — must carry the SAME count expression. VXLAN is the dataplane on
+# BOTH lines (2.4 configures it through GatewaySettings' egress-vxlan-* pools
+# rather than F5SPKEgress, but the UDP ingress still has to be permitted), so
+# the gate here is `local.enabled` and nothing else. Gating only the lookup
+# leaves `cluster[0]` indexing an empty tuple, which fails at plan time.
 data "ibm_container_vpc_cluster" "cluster" {
-  count = local.enabled && local.line_pre_24 ? 1 : 0
+  count = local.enabled ? 1 : 0
   name  = var.roks_cluster_name_or_id
 }
 

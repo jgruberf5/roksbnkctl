@@ -175,6 +175,8 @@ module "cne_instance" {
   source         = "./modules/cne_instance"
   cluster_absent = var.cluster_absent
 
+  cneinstance_advanced_env = var.cneinstance_advanced_env
+
   ibmcloud_api_key                    = var.ibmcloud_api_key
   ibmcloud_cluster_region             = var.ibmcloud_cluster_region
   ibmcloud_resource_group             = var.ibmcloud_resource_group

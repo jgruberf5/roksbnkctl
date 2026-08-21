@@ -258,3 +258,9 @@ variable "cluster_absent" {
   type        = bool
   default     = false
 }
+
+variable "cneinstance_advanced_env" {
+  description = "Per-component advanced.<component>.env passthrough (#175). See the root variable of the same name."
+  type        = map(map(string))
+  default     = {}
+}
