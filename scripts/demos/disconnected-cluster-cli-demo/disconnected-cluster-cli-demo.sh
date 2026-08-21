@@ -52,6 +52,11 @@ SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/bnk-airgap-key}"  # its PRIVATE key on 
 # bare chmod, so pointing it at a key on /mnt/… failed exactly the way the helper
 # exists to prevent. Use `$(ssh_key)` in place of "$SSH_KEY_FILE" for ssh/scp.
 source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/ssh-key.sh"
+# This demo inlines its own copies of the format helpers rather than sourcing
+# lib/demo-format.sh, so preflight_binary has to be sourced explicitly — it was
+# a "command not found" here, silently, because the script runs without `set -e`
+# (#143). Same readlink -f form as above so a symlinked checkout still resolves.
+source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/preflight-binary.sh"
 
 HARBOR_VSI_PROFILE="${HARBOR_VSI_PROFILE:-bx2-4x16}"
 # Resolved at RUN TIME, not hardcoded. IBM retires stock image names: the previous
