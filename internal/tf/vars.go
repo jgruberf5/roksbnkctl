@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -480,6 +481,7 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 // same sequence the single function emitted them.
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	renderBNKLine(w, ws)
+	renderBNKAdvancedEnv(w, ws)
 	renderBNKNamespaces(w, ws)
 	renderBNKTrustedProfile(w, ws)
 	if err := renderBNKGTM(w, ws); err != nil {
@@ -901,4 +903,56 @@ func renderNetworkZones(w io.Writer, zones []config.BNKZoneCfg) {
 		fmt.Fprintln(w, "  },")
 	}
 	fmt.Fprintln(w, "]")
+}
+
+// renderBNKAdvancedEnv emits the per-component env passthrough for the 2.4
+// CNEInstance's advanced.<component>.env[] lists (#175).
+//
+// ADDITIVE BY CONSTRUCTION. An empty map emits NOTHING — not an empty object,
+// not a zero value — so a workspace that never sets one of these renders exactly
+// what it rendered before. internal/tf/additive_guarantee_test.go enforces that,
+// and with this many new fields it is the invariant most likely to break by
+// accident. There are two deliberate exceptions in this file already
+// (cluster_network_mode, bnk_line); there should not be a third.
+//
+// Deterministic ordering. Go map iteration is randomised, so an unsorted render
+// would produce a different tfvars byte-for-byte on every run — which shows up
+// as a spurious diff in the applied-tfvars snapshot and defeats the
+// byte-identical-plan comparison the 2.4 work is verified against.
+func renderBNKAdvancedEnv(w io.Writer, ws *config.Workspace) {
+	if ws == nil || len(ws.BNK.Advanced) == 0 {
+		return
+	}
+	components := make([]string, 0, len(ws.BNK.Advanced))
+	for c := range ws.BNK.Advanced {
+		components = append(components, c)
+	}
+	sort.Strings(components)
+
+	var b strings.Builder
+	b.WriteString("cneinstance_advanced_env = {\n")
+	any := false
+	for _, c := range components {
+		envs := ws.BNK.Advanced[c].Env
+		if len(envs) == 0 {
+			continue
+		}
+		names := make([]string, 0, len(envs))
+		for n := range envs {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		any = true
+		fmt.Fprintf(&b, "  %q = {\n", c)
+		for _, n := range names {
+			fmt.Fprintf(&b, "    %q = %q\n", n, envs[n])
+		}
+		b.WriteString("  }\n")
+	}
+	b.WriteString("}\n")
+	// Every component carried an empty env map: still nothing to say.
+	if !any {
+		return
+	}
+	fmt.Fprint(w, b.String())
 }

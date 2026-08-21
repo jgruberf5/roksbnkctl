@@ -295,6 +295,8 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// self-IPs). Fixed indexed env vars ROKSBNKCTL_ZONE<n>_* for up to maxZones;
 	// a zone is emitted only when all six of its fields are set.
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
+	// Per-component env passthrough for the 2.4 CNEInstance (#175).
+	applied = append(applied, OverrideAdvancedEnvFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
@@ -823,6 +825,10 @@ func SupportedOverrideNames() []string {
 	}
 	out = append(out, bespokeOverrideNames...)
 	out = append(out, zoneOverrideNames()...)
+	// The advanced.* family is reported from the ENVIRONMENT rather than
+	// enumerated, because the component set belongs to the product (#175). An
+	// unset environment contributes nothing, so this changes no existing report.
+	out = append(out, AdvancedEnvOverrideNames()...)
 	sort.Strings(out)
 	return out
 }

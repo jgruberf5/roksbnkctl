@@ -1058,3 +1058,25 @@ variable "cluster_vpc_default_sg_inbound_cidrs" {
     error_message = "cluster_vpc_default_sg_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
   }
 }
+
+variable "cneinstance_advanced_env" {
+  description = <<-EOT
+    Per-component environment passthrough for the BNK 2.4 CNEInstance's
+    advanced.<component>.env[] lists (#175).
+
+    A map of component name to a map of env name/value, e.g.
+
+      cneinstance_advanced_env = {
+        tmm           = { TMM_DEFAULT_MTU = "9000" }
+        cneController = { USE_GATEWAY_SETTINGS = "true" }
+      }
+
+    Empty renders no advanced block at all, so a workspace that sets none of
+    these plans exactly as it did before. A map rather than a typed object
+    because the component set belongs to the product — F5 adds components between
+    releases, and a typed schema would make each addition a code change here
+    before anyone could use it.
+  EOT
+  type        = map(map(string))
+  default     = {}
+}

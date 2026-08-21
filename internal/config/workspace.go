@@ -466,6 +466,17 @@ type BNKCfg struct {
 	// force the CRDs and is blocked without it.
 	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty"`
 
+	// Advanced carries per-component environment passthrough for the 2.4
+	// CNEInstance's advanced.<component>.env[] lists (#175).
+	//
+	// A map rather than a struct because the component set belongs to the
+	// product: F5 adds components between releases, and a struct would make each
+	// addition a code change here before anyone could use it.
+	//
+	// omitempty, and the renderer emits nothing for an empty map — a 2.3
+	// workspace's plan stays byte-identical.
+	Advanced map[string]AdvancedComponentCfg `yaml:"advanced,omitempty"`
+
 	// GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name
 	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
 	// (unset).
@@ -1191,4 +1202,11 @@ func rejectPlaintextSecrets(b []byte) error {
 		return fmt.Errorf("plaintext secret detected (offset %d): workspace config.yaml must not contain credentials — use IBMCLOUD_API_KEY env var or the OS keychain (see `roksbnkctl init`)", loc[0])
 	}
 	return nil
+}
+
+// AdvancedComponentCfg is one component's advanced settings. Only env is
+// surfaced today; the CR's advanced block carries more, and this is the shape
+// that lets those arrive without moving what already works.
+type AdvancedComponentCfg struct {
+	Env map[string]string `yaml:"env,omitempty"`
 }
