@@ -209,7 +209,83 @@ func bnkProbe(ctx context.Context, outs map[string]config.StateOutput) map[strin
 		}
 		res[c.Name] = fmt.Sprintf("%d/%d ready", ready, len(pods.Items))
 	}
+
+	// The CNEInstance's own conditions (#167). Pod counts say what is running;
+	// the conditions say what the product thinks of itself, and on 2.4 those can
+	// disagree in the direction that matters: CNEControllerAvailable=True with
+	// Available=False and F5TmmAvailable=False, TMM 0/3, nothing passing traffic.
+	//
+	// Reported as the aggregate plus any component condition that is NOT True, so
+	// a failure names the component instead of leaving the operator with a
+	// timeout. All-True prints only the aggregate rather than eighteen lines
+	// nobody reads.
+	if ns := outString(outs, "flo_namespace"); ns != "" {
+		if agg, bad := cneInstanceConditions(tctx, kcPath, ns); agg != "" {
+			res["cneinstance"] = agg
+			if len(bad) > 0 {
+				sort.Strings(bad)
+				res["cneinstance_not_ready"] = strings.Join(bad, ", ")
+			}
+		}
+	}
 	return res
+}
+
+// cneInstanceConditions returns the CNEInstance's aggregate Available condition
+// and the names of any component conditions that are not True.
+//
+// Best-effort: a cluster without the CRD, or without an instance, returns empty
+// and the caller simply omits the lines. This is a status report, not a gate —
+// inventing an error here would make `bnk status` fail on a cluster that is
+// merely mid-install.
+func cneInstanceConditions(ctx context.Context, kubeconfig, ns string) (string, []string) {
+	dyn, err := k8s.BuildDynamicClient(kubeconfig)
+	if err != nil {
+		return "", nil
+	}
+	mapper, err := k8s.BuildRESTMapper(kubeconfig)
+	if err != nil {
+		return "", nil
+	}
+	mapping, err := mapper.RESTMapping(schema.GroupKind{Group: "k8s.f5.com", Kind: "CNEInstance"})
+	if err != nil {
+		return "", nil // CRD absent: not a 2.x BNK cluster, or not installed yet
+	}
+	list, err := dyn.Resource(mapping.Resource).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if err != nil || list == nil || len(list.Items) == 0 {
+		return "", nil
+	}
+	u := &list.Items[0]
+	conds, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if !found {
+		return "present (no conditions yet)", nil
+	}
+	var agg string
+	var bad []string
+	for _, c := range conds {
+		m, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		st, _ := m["status"].(string)
+		if t == "Available" {
+			reason, _ := m["reason"].(string)
+			if reason != "" {
+				agg = fmt.Sprintf("Available=%s (%s)", st, reason)
+			} else {
+				agg = fmt.Sprintf("Available=%s", st)
+			}
+			continue
+		}
+		if st != "True" {
+			bad = append(bad, fmt.Sprintf("%s=%s", t, st))
+		}
+	}
+	if agg == "" {
+		agg = "present (no Available condition)"
+	}
+	return agg, bad
 }
 
 // testingProbe TCP-dials port 22 on each jumphost IP from the outputs.

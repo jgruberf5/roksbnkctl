@@ -46,6 +46,12 @@ locals {
   # running cluster.
   line_pre_24 = var.bnk_line != "2.4"
 
+  # See the note on the readiness gate below. 2.3 cannot wait on the aggregate
+  # without deadlocking against its own licensing step; 2.4 must, because
+  # CNEControllerAvailable is True on an install where TMM is 0/3 and nothing
+  # passes traffic.
+  cneinstance_ready_condition = local.line_pre_24 ? "CNEControllerAvailable" : "Available"
+
   # The 2.4 set: the one binding the install needs.
   #
   # The guide also asks for one per APPLICATION namespace (`-n f5-app -z default`).
@@ -483,8 +489,27 @@ resource "null_resource" "cnecontroller_ready" {
   # tfx wait (watch-first, event-driven) replaces the curl+grep+tr poll: block until
   # the CNEInstance reports condition CNEControllerAvailable=True. No interpreter =>
   # cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
+  # WHICH CONDITION, and why it differs by line (#167).
+  #
+  # 2.3 waits on CNEControllerAvailable. That is correct there and deliberate: it
+  # flips when the CNE controller is up, BEFORE TMM needs its license, so the
+  # License CR — which is gated on this id — can proceed and TMM reaches Available
+  # afterwards. Waiting on the aggregate on 2.3 would deadlock: TMM cannot become
+  # Available until it is licensed, and licensing waits on this gate.
+  #
+  # 2.4 must wait on the aggregate Available. On a live 2.4 cluster, while
+  # unlicensed:
+  #
+  #     CNEControllerAvailable=True      <- what a 2.3-style wait sees
+  #     Available=False                  <- the truth
+  #     F5TmmAvailable=False
+  #
+  # TMM was 0/3 Ready and nothing could pass traffic, and a 2.3-style wait would
+  # have declared that install successful. A false green is worse than a timeout:
+  # it sends the operator looking at their own configuration for a fault that is
+  # not there.
   provisioner "local-exec" {
-    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=CNEControllerAvailable=True --timeout 15m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=${local.cneinstance_ready_condition}=True --timeout 15m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }
