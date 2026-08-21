@@ -17,6 +17,12 @@ locals {
   # only turns an accidental phase combination into a clean no-op, not a crash.
   enabled = var.deploy_gateway && !var.create_roks_cluster
 
+  # The 2.3 network surface. A 2.4 controller runs with USE_GATEWAY_SETTINGS=true
+  # and ignores the F5SPK* family and the F5BnkGateway entirely, reading Infra +
+  # GatewaySettings instead (#168) — so creating them there leaves objects nothing
+  # reads. `!= "2.4"` keeps the 2.3 behaviour for an unrecognised line.
+  line_pre_24 = var.bnk_line != "2.4"
+
   zone_names = [for i in range(length(var.cneinstance_network_zones)) : "${var.ibmcloud_cluster_region}-${i + 1}"]
 
   # The GatewayClass controllerName is not a free-form label — it is the string
@@ -164,7 +170,7 @@ resource "kubectl_manifest" "gateway_class" {
 }
 
 resource "kubectl_manifest" "bnk_gateway" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5BnkGateway"
@@ -321,7 +327,7 @@ resource "kubectl_manifest" "l4_route_example" {
 # ── Egress: SnatPool + Egress CRs ────────────────────────────────────────────
 
 resource "kubectl_manifest" "snatpool" {
-  count = local.enabled && local.do_snatpool ? 1 : 0
+  count = local.enabled && local.do_snatpool && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKSnatpool"
@@ -338,7 +344,7 @@ resource "kubectl_manifest" "snatpool" {
 }
 
 resource "kubectl_manifest" "egress_automap" {
-  count = local.enabled && local.do_automap ? 1 : 0
+  count = local.enabled && local.do_automap && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v3"
     kind       = "F5SPKEgress"
@@ -355,7 +361,7 @@ resource "kubectl_manifest" "egress_automap" {
 }
 
 resource "kubectl_manifest" "egress_snatpool" {
-  count = local.enabled && local.do_snatpool ? 1 : 0
+  count = local.enabled && local.do_snatpool && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v3"
     kind       = "F5SPKEgress"
@@ -398,7 +404,7 @@ resource "kubectl_manifest" "static_route" {
 # (kube-<clusterid>). Resolve the cluster id → SG → add the rule.
 
 data "ibm_container_vpc_cluster" "cluster" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && local.line_pre_24 ? 1 : 0
   name  = var.roks_cluster_name_or_id
 }
 
