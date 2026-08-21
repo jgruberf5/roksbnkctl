@@ -512,7 +512,9 @@ func installBinary(target, staged string) error {
 }
 
 // renameFile indirects os.Rename so the unrecoverable branch below can be
-// driven in a test. Ordinary filesystem permissions cannot reach it: renaming
+// driven in a test. Tests that stub it must not run in parallel — nothing in
+// internal/cli calls t.Parallel() today, and adding it to a test that touches
+// this var would race. Ordinary filesystem permissions cannot reach it: renaming
 // needs write on the containing directory, and target and target.old share one,
 // so any permission change that fails the rollback also fails the first rename
 // and the function returns before the branch runs. Rather than leave the one
@@ -565,8 +567,32 @@ func (e errRollbackFailed) Error() string {
 	return fmt.Sprintf(
 		"installing new binary: %v; rolling back also failed: %v\n"+
 			"There is now NO binary at %s. Your previous one is intact at %s — "+
-			"rename it back to recover:\n    mv %q %q",
-		e.install, e.rollback, e.target, e.old, e.old, e.target)
+			"rename it back to recover:\n    %s",
+		e.install, e.rollback, e.target, e.old, recoverCommand(runtime.GOOS, e.old, e.target))
+}
+
+// recoverCommand returns the shell command that puts the old binary back.
+//
+// installBinary only calls installByMoveAside when GOOS is windows, so in
+// practice every reader of this message is on Windows — where `mv` is not a
+// command. cmd.exe has no such builtin and ships no mv.exe; PowerShell aliases
+// it to Move-Item, so Unix advice happens to work in one of the two shells a
+// Windows user might be in and fails silently in the other, at the moment they
+// have no working binary. printPATHGuidance in install.go exists because this
+// same class of bug shipped once already.
+//
+// The paths are interpolated with %s inside literal quotes rather than %q: %q
+// applies Go escaping, which doubles every backslash and produces a command
+// naming a path that does not exist.
+// goos is a parameter rather than a read of runtime.GOOS so both branches are
+// testable anywhere: CI builds for Windows but runs tests only on ubuntu and
+// macos, so a runtime.GOOS check would leave the branch that actually ships to
+// users permanently unexercised.
+func recoverCommand(goos, old, target string) string {
+	if goos == "windows" {
+		return fmt.Sprintf("Move-Item -LiteralPath \"%s\" -Destination \"%s\"", old, target)
+	}
+	return fmt.Sprintf("mv \"%s\" \"%s\"", old, target)
 }
 
 // Unwrap exposes both causes so errors.Is/As match either one.

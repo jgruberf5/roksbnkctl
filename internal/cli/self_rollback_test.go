@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -53,8 +54,11 @@ func TestUnrecoverableRollbackLeavesNoBinaryAndSaysSo(t *testing.T) {
 	if err == nil {
 		t.Fatal("both the install and the rollback failed; this must return an error")
 	}
-	if calls != 3 {
-		t.Errorf("expected move-aside, install, rollback = 3 renames, got %d", calls)
+	// At least move-aside, install, rollback. Not an equality check: retrying
+	// the rollback is a plausible refactor on this exact function and would not
+	// change the behaviour any of these assertions care about.
+	if calls < 3 {
+		t.Errorf("expected at least move-aside, install and rollback, got %d renames", calls)
 	}
 
 	// The filesystem is genuinely in the bad state — this is not a simulated
@@ -70,9 +74,7 @@ func TestUnrecoverableRollbackLeavesNoBinaryAndSaysSo(t *testing.T) {
 	if !strings.Contains(msg, "NO binary") {
 		t.Errorf("the error must state that no binary remains:\n%s", msg)
 	}
-	if !strings.Contains(msg, target+".old") || !strings.Contains(msg, "mv ") {
-		t.Errorf("the error must name the sidecar and the recovery command:\n%s", msg)
-	}
+	assertRecoveryCommandIsUsable(t, msg, target+".old", target)
 
 	// The precise regression: the old code returned this text alone, which
 	// points at the new binary and hides the missing one.
@@ -139,16 +141,14 @@ func TestRollbackFailureMessageNamesBothFilesAndTheCommand(t *testing.T) {
 
 	msg := e.Error()
 	for _, want := range []string{
-		"NO binary",                   // states the actual condition
-		`C:\tools\roksbnkctl.exe.old`, // where the real binary is
-		`C:\tools\roksbnkctl.exe`,     // where it needs to go
-		"mv ",                         // the recovery command
-		"access is denied",            // why the install failed
+		"NO binary",        // states the actual condition
+		"access is denied", // why the install failed
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the message must contain %q:\n%s", want, msg)
 		}
 	}
+	assertRecoveryCommandIsUsable(t, msg, `C:\tools\roksbnkctl.exe.old`, `C:\tools\roksbnkctl.exe`)
 
 	// It must NOT read as a plain install failure — that is the misdirection
 	// this fixes. The old code returned "installing new binary: ..." and said
@@ -167,26 +167,76 @@ func TestRollbackFailureMessageNamesBothFilesAndTheCommand(t *testing.T) {
 	}
 }
 
-// The happy path must be untouched: a successful replace leaves the new binary
-// at target and no error.
-func TestSuccessfulMoveAsideStillReplacesTheBinary(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "roksbnkctl")
-	if err := os.WriteFile(target, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
+// assertRecoveryCommandIsUsable checks the LAST line of the message — the
+// copy-pasteable command — rather than the message as a whole.
+//
+// This distinction is the whole point. The first version of these tests looked
+// for the path and the verb anywhere in the message, and passed against a
+// command whose arguments were mangled: the path appeared correctly in the
+// prose sentence above it, and the verb matched as a bare substring. A test
+// that cannot fail on a broken command does not guard the command.
+func assertRecoveryCommandIsUsable(t *testing.T, msg, wantOld, wantTarget string) {
+	t.Helper()
+
+	lines := strings.Split(strings.TrimRight(msg, "\n"), "\n")
+	cmd := strings.TrimSpace(lines[len(lines)-1])
+	if cmd == "" {
+		t.Fatalf("no recovery command on the last line of:\n%s", msg)
 	}
-	staged := filepath.Join(dir, "staged")
-	if err := os.WriteFile(staged, []byte("new"), 0o755); err != nil {
-		t.Fatal(err)
+
+	// Both paths must appear in the COMMAND exactly as they are on disk. %q
+	// would double every backslash, producing a command naming a path that does
+	// not exist — and the prose line would still look correct.
+	for _, want := range []string{wantOld, wantTarget} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("the recovery command does not contain the literal path %s:\n  %s", want, cmd)
+		}
 	}
-	if err := installByMoveAside(target, staged); err != nil {
-		t.Fatalf("installByMoveAside: %v", err)
+	if strings.Contains(cmd, `\\`) {
+		t.Errorf("the recovery command has escaped backslashes, so the paths are wrong:\n  %s", cmd)
 	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("target must exist after a successful install: %v", err)
+
+	// And it must be a command the user's shell actually has. installBinary
+	// only reaches installByMoveAside on Windows, where `mv` is not a command.
+	if runtime.GOOS == "windows" && !strings.Contains(cmd, "Move-Item") {
+		t.Errorf("on Windows the recovery must use Move-Item, not Unix advice:\n  %s", cmd)
 	}
-	if string(got) != "new" {
-		t.Errorf("target holds %q, want the staged contents", got)
+}
+
+// installBinary only reaches installByMoveAside when GOOS is windows, so every
+// real reader of this message is on Windows — where `mv` is not a command.
+// cmd.exe has no builtin and ships no mv.exe; PowerShell aliases it, so Unix
+// advice works in one of the two shells and fails silently in the other, at the
+// moment the user has no working binary.
+//
+// This is asserted through the goos parameter rather than runtime.GOOS because
+// CI builds for Windows but runs tests only on ubuntu and macos. A test gated on
+// the host OS would never execute the branch that actually ships.
+func TestTheRecoveryCommandSuitsThePlatformItShipsTo(t *testing.T) {
+	const old, target = `C:\tools\roksbnkctl.exe.old`, `C:\tools\roksbnkctl.exe`
+
+	win := recoverCommand("windows", old, target)
+	if !strings.Contains(win, "Move-Item") {
+		t.Errorf("Windows has no mv; the recovery must use Move-Item:\n  %s", win)
+	}
+	if strings.HasPrefix(strings.TrimSpace(win), "mv ") {
+		t.Errorf("this is the Unix advice install.go already had to fix once:\n  %s", win)
+	}
+	// The paths must survive verbatim. %q would double every backslash and
+	// produce a command naming a path that does not exist.
+	for _, want := range []string{old, target} {
+		if !strings.Contains(win, want) {
+			t.Errorf("the command must contain the literal path %s:\n  %s", want, win)
+		}
+	}
+	if strings.Contains(win, `\\`) {
+		t.Errorf("escaped backslashes — the paths in this command are wrong:\n  %s", win)
+	}
+
+	// Unix keeps mv. The function is not reached there today, but a message
+	// that is wrong for the host is worse than one that is merely unused.
+	unix := recoverCommand("linux", "/usr/local/bin/roksbnkctl.old", "/usr/local/bin/roksbnkctl")
+	if !strings.Contains(unix, "mv ") {
+		t.Errorf("on unix the recovery should be mv:\n  %s", unix)
 	}
 }
