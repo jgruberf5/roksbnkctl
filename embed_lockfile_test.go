@@ -3,8 +3,11 @@ package roksbnkctl
 import (
 	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
+
+	version "github.com/hashicorp/go-version"
 )
 
 // #147. The committed terraform/.terraform.lock.hcl pins every provider to an
@@ -26,23 +29,6 @@ func TestLockfileIsEmbedded(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "provider \"registry.terraform.io/") {
 		t.Error("the embedded lockfile has no provider blocks — it is not a lockfile")
-	}
-}
-
-// The embedded copy must BE the committed one. A lockfile that has drifted from
-// the repo is worse than none: CI would validate one provider set and users
-// would get another, which is the exact failure #147 describes.
-func TestEmbeddedLockfileMatchesTheCommittedOne(t *testing.T) {
-	embedded, err := fs.ReadFile(EmbeddedTerraform, "terraform/.terraform.lock.hcl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	onDisk, err := os.ReadFile("terraform/.terraform.lock.hcl")
-	if err != nil {
-		t.Fatalf("reading the committed lockfile: %v", err)
-	}
-	if string(embedded) != string(onDisk) {
-		t.Error("the embedded lockfile differs from terraform/.terraform.lock.hcl")
 	}
 }
 
@@ -88,24 +74,113 @@ func TestProviderCacheIsNotEmbedded(t *testing.T) {
 	}
 }
 
-// Every provider must be bounded. The lockfile governs what installs, but a
-// `terraform init -upgrade`, or any run reaching this config without the
-// lockfile, falls back to these constraints — and a bare ">=" accepts a
-// breaking major.
-func TestProviderConstraintsAreBounded(t *testing.T) {
+// Review of #153 (D3/D4) replaced two weak tests with these two.
+//
+// The one that compared the embedded bytes against the file on disk could not
+// fail: go:embed materialises from disk at compile time and `go test` compiles
+// immediately before running, so both sides were the same bytes by
+// construction. And the one that scanned versions.tf for a "~>" was evadable by
+// the one-line style already used at terraform/modules/flp_vsi/providers.tf,
+// and structurally could not see tls/time/local/external, which are declared
+// only in submodules and were genuinely unbounded.
+//
+// These two assert the invariants that actually matter, both derived from the
+// lockfile rather than from a text pattern.
+
+// providerRE matches a required_providers entry in either style used in this
+// tree: the block form in terraform/versions.tf, and the one-line form in
+// terraform/modules/flp_vsi/providers.tf.
+var providerRE = regexp.MustCompile(`source\s*=\s*"([^"]+)"[^}]*?version\s*=\s*"([^"]+)"`)
+
+// lockProviderRE matches a provider block header and its pinned version.
+var lockProviderRE = regexp.MustCompile(`provider\s+"registry\.terraform\.io/([^"]+)"\s*\{\s*\n\s*version\s*=\s*"([^"]+)"`)
+
+func rootConstraints(t *testing.T) map[string]string {
+	t.Helper()
 	body, err := os.ReadFile("terraform/versions.tf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(string(body), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "version") || !strings.Contains(trimmed, "=") {
+	out := map[string]string{}
+	for _, m := range providerRE.FindAllStringSubmatch(string(body), -1) {
+		out[strings.ToLower(m[1])] = m[2]
+	}
+	if len(out) == 0 {
+		t.Fatal("parsed no providers out of terraform/versions.tf")
+	}
+	return out
+}
+
+func lockedVersions(t *testing.T) map[string]string {
+	t.Helper()
+	body, err := fs.ReadFile(EmbeddedTerraform, "terraform/.terraform.lock.hcl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, m := range lockProviderRE.FindAllStringSubmatch(string(body), -1) {
+		out[strings.ToLower(m[1])] = m[2]
+	}
+	if len(out) == 0 {
+		t.Fatal("parsed no providers out of the embedded lockfile")
+	}
+	return out
+}
+
+// The failure this guards is fatal and unrecoverable from inside the tool: if a
+// constraint edit excludes the version the lockfile pins, `terraform init`
+// stops with "locked provider ... does not match configured version constraint
+// ... must use terraform init -upgrade", and internal/tf/terraform.go inits
+// with Upgrade(false). Every user hits it; none can get past it.
+//
+// Nothing else catches this. The lockfile and the constraints live in separate
+// files and are edited by separate actions — `terraform providers lock` writes
+// one, a human writes the other.
+func TestEveryLockedVersionSatisfiesItsRootConstraint(t *testing.T) {
+	constraints := rootConstraints(t)
+	for provider, locked := range lockedVersions(t) {
+		raw, ok := constraints[provider]
+		if !ok {
+			t.Errorf("%s is pinned in the lockfile at %s but has no constraint in "+
+				"terraform/versions.tf, so nothing bounds it", provider, locked)
 			continue
 		}
-		if strings.Contains(trimmed, "~>") || strings.Contains(trimmed, "<") {
+		cs, err := version.NewConstraint(raw)
+		if err != nil {
+			t.Errorf("%s: cannot parse constraint %q: %v", provider, raw, err)
 			continue
 		}
-		t.Errorf("unbounded provider constraint: %q\n"+
-			"Use \"~> MAJOR.MINOR\" so a breaking major is not silently accepted.", trimmed)
+		v, err := version.NewVersion(locked)
+		if err != nil {
+			t.Errorf("%s: cannot parse locked version %q: %v", provider, locked, err)
+			continue
+		}
+		if !cs.Check(v) {
+			t.Errorf("%s: the lockfile pins %s but versions.tf says %q.\n"+
+				"terraform init would fail with \"locked provider does not match configured "+
+				"version constraint\", and it inits with Upgrade(false), so no user can recover.\n"+
+				"Re-run `terraform providers lock` after changing a constraint.", provider, locked, raw)
+		}
+	}
+}
+
+// Every provider the lockfile pins must be bounded AT THE ROOT. terraform
+// intersects constraints across the whole tree, so a root bound governs
+// everywhere — but only for providers the root names. tls, time, local and
+// external are declared only in submodules and, before this, only with bare
+// ">=", which left them unbounded across the entire configuration.
+func TestEveryProviderIsBoundedAtTheRoot(t *testing.T) {
+	constraints := rootConstraints(t)
+	for provider := range lockedVersions(t) {
+		raw, ok := constraints[provider]
+		if !ok {
+			t.Errorf("%s is used by this configuration but is not declared in "+
+				"terraform/versions.tf, so no bound governs it anywhere", provider)
+			continue
+		}
+		if !strings.Contains(raw, "~>") && !strings.Contains(raw, "<") {
+			t.Errorf("%s has an unbounded constraint %q — a breaking major would be accepted.\n"+
+				"Use \"~> MAJOR.MINOR\", which preserves the floor and caps the major.", provider, raw)
+		}
 	}
 }
