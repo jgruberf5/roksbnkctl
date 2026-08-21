@@ -1,4 +1,11 @@
 locals {
+  # BNK 2.4 subsumes work this module does for 2.3 (#171). Named once so each
+  # gated resource reads as a statement about the release rather than repeating
+  # a version comparison. `!= "2.4"` rather than `== "2.3"`: an unrecognised
+  # line keeps the 2.3 behaviour, which is additive and harmless, where treating
+  # it as 2.4 would silently drop resources a future release may still need.
+  line_pre_24 = var.bnk_line != "2.4"
+
   global_enabled = var.enabled
   use_kubectl    = var.enabled
 
@@ -102,7 +109,8 @@ locals {
     }
   })
 
-  cneinstance_network_attachments = [local.nad_name_computed, "macvlan-conf"]
+  # macvlan-conf is 2.3-only; on 2.4 the product supplies its own internal NAD.
+  cneinstance_network_attachments = local.line_pre_24 ? [local.nad_name_computed, "macvlan-conf"] : [local.nad_name_computed]
 
   cis_helm_values = {
     global = {
@@ -721,8 +729,14 @@ resource "kubectl_manifest" "nad_ens3" {
   depends_on        = [kubernetes_namespace_v1.flo]
 }
 
+# 2.4 does not use macvlan-conf (#171). The guide's NAD list is ens3-ipvlan-l2
+# only, and the product creates its own internal NAD as `macvlan-internal` on
+# dummy0, owned by the F5Tmm CR. Dropping the name from
+# cneinstance_network_attachments is NOT sufficient — the resource has to be
+# count-gated off, or the object is orphaned on the cluster and risks a second,
+# conflicting internal interface against a name the guide reserves.
 resource "kubectl_manifest" "nad_macvlan" {
-  count             = local.use_kubectl ? 1 : 0
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.nad_macvlan_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -802,7 +816,7 @@ resource "null_resource" "flo_chart_pull" {
 }
 
 resource "null_resource" "cis_chart_pull" {
-  count = local.use_kubectl ? 1 : 0
+  count = local.use_kubectl && local.line_pre_24 ? 1 : 0
   lifecycle {
     precondition {
       condition     = local.cis_chart_version != ""
@@ -923,7 +937,7 @@ resource "kubectl_manifest" "cnemanifest" {
 }
 
 resource "helm_release" "cis" {
-  count = local.use_kubectl ? 1 : 0
+  count = local.use_kubectl && local.line_pre_24 ? 1 : 0
 
   name = "f5-bnk-cis"
   # Install from the locally-staged archive (see null_resource.cis_chart_pull) — no
@@ -971,7 +985,8 @@ resource "kubectl_manifest" "flo_scc_privileged" {
 }
 
 resource "kubectl_manifest" "cis_scc_privileged" {
-  for_each          = local.use_kubectl ? { cis = local.scc_clusterrolebinding.cis, cis_default = local.scc_clusterrolebinding.cis_default } : {}
+  # CIS is integrated into FLO on 2.4, so its SCC bindings go with the chart (#171).
+  for_each          = local.use_kubectl && local.line_pre_24 ? { cis = local.scc_clusterrolebinding.cis, cis_default = local.scc_clusterrolebinding.cis_default } : {}
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
@@ -985,7 +1000,7 @@ resource "kubectl_manifest" "cis_scc_privileged" {
       name     = "system:openshift:scc:privileged"
     }
     subjects = [{
-      kind      = "ServiceAccount"
+      kind      = "ServiceAccount" # unexpected shape
       name      = each.value.sa
       namespace = var.flo_namespace
     }]
@@ -998,7 +1013,7 @@ resource "kubectl_manifest" "cis_scc_privileged" {
 # edge); only the SA needs kube-system (always present).
 
 resource "kubectl_manifest" "node_labeler_sa" {
-  count             = local.use_kubectl ? 1 : 0
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.node_labeler_sa_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -1006,7 +1021,7 @@ resource "kubectl_manifest" "node_labeler_sa" {
 }
 
 resource "kubectl_manifest" "node_labeler_role" {
-  count             = local.use_kubectl ? 1 : 0
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.node_labeler_role_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -1014,7 +1029,7 @@ resource "kubectl_manifest" "node_labeler_role" {
 }
 
 resource "kubectl_manifest" "node_labeler_binding" {
-  count             = local.use_kubectl ? 1 : 0
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.node_labeler_binding_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -1023,7 +1038,7 @@ resource "kubectl_manifest" "node_labeler_binding" {
 }
 
 resource "kubectl_manifest" "node_labeler_job" {
-  count             = local.use_kubectl ? 1 : 0
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.node_labeler_job_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"

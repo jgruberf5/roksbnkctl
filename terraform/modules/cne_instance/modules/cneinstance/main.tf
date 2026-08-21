@@ -35,7 +35,37 @@ locals {
   # dropped all nine FLO-side bindings while the utils half stayed. The install
   # then failed in the cluster, at pod start, naming service accounts rather than
   # the setting that caused it (#65).
-  scc_policy_assignments = concat(
+  # BNK 2.4 collapses the SCC surface (#171). FLO grants its own components what
+  # they need, so the guide asks for ONE binding for the install — privileged on
+  # the FLO service account — plus one per application namespace. We create
+  # roughly nineteen for 2.3.
+  #
+  # `!= "2.4"` rather than `== "2.3"`: an unrecognised line keeps the 2.3 set,
+  # which is over-broad but working, where treating it as 2.4 would strip
+  # privileges a future release may still require and fail at pod admission on a
+  # running cluster.
+  line_pre_24 = var.bnk_line != "2.4"
+
+  # The 2.4 set: the one binding the install needs.
+  #
+  # The guide also asks for one per APPLICATION namespace (`-n f5-app -z default`).
+  # Those are not created here: this module knows the FLO and utils namespaces and
+  # nothing about where a user will run workloads, and inventing a list would
+  # either be empty or wrong. It stays an operator step until an app-namespace
+  # input exists, and #175 is where that surface gets designed.
+  # The name the resource and the outputs already use, now line-selected. Keeping
+  # it means the SCC report in outputs.tf describes what was actually applied
+  # rather than the 2.3 set regardless of line.
+  scc_policy_assignments = local.line_pre_24 ? local.scc_policy_assignments_23 : local.scc_policy_assignments_24
+
+  scc_policy_assignments_24 = [
+    {
+      namespace       = var.flo_namespace
+      service_account = "flo-f5-lifecycle-operator"
+    },
+  ]
+
+  scc_policy_assignments_23 = concat(
     # FLO-namespace service accounts.
     [
       {
