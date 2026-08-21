@@ -21,6 +21,7 @@ import (
 	"time"
 
 	version "github.com/hashicorp/go-version"
+	"github.com/jgruberf5/roksbnkctl/internal/exitcode"
 	"github.com/spf13/cobra"
 )
 
@@ -540,7 +541,10 @@ func installByMoveAside(target, staged string) error {
 	}
 	if err := renameFile(staged, target); err != nil {
 		if rerr := renameFile(old, target); rerr != nil {
-			return errRollbackFailed{install: err, rollback: rerr, old: old, target: target}
+			// Coded, so a wrapper can tell "retry this" from "there is nothing
+			// left to retry" (#154). The message already says it; $? did not.
+			return exitcode.Wrap(exitcode.SelfUpdateStranded,
+				errRollbackFailed{install: err, rollback: rerr, old: old, target: target})
 		}
 		return fmt.Errorf("installing new binary: %w", err)
 	}

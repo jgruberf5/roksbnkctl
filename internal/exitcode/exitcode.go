@@ -35,6 +35,20 @@ const (
 	// the command cannot accept. Nothing was attempted.
 	Usage = 2
 
+	// SelfUpdateStranded — an upgrade removed the old binary and could not put
+	// anything back, so there is no roksbnkctl at the install path and a human
+	// has to rename the sidecar by hand.
+	//
+	// Distinct from Failure because the two need opposite responses: an ordinary
+	// failed upgrade is safe to retry, and this one cannot be retried at all —
+	// there is nothing left to run. A wrapper that treats them alike either
+	// loops forever on a machine that will never recover, or reports a bricked
+	// install as a routine error. See #154.
+	//
+	// 125 sits just below the 126/127 pair, which are also about the binary
+	// itself rather than about what it did.
+	SelfUpdateStranded = 125
+
 	// AuthFailed — "permission denied": SSH authentication, a host-key
 	// mismatch, a credential the remote end refused.
 	AuthFailed = 126

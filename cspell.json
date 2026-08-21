@@ -112,6 +112,7 @@
     "envoverride",
     "envsubst",
     "errgroup",
+    "exitcode",
     "F5",
     "f5orph",
     "FAR",
