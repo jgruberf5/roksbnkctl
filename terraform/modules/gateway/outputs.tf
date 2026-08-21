@@ -90,3 +90,26 @@ output "gateway_static_routes" {
   description = "F5SPKStaticRoute set: name => { destination, prefix_len, gateway }"
   value       = local.enabled ? local.static_routes : {}
 }
+
+output "gateway_namespace" {
+  description = <<-EOT
+    Namespace the Gateway object actually lives in.
+
+    2.3 puts it in the application namespace; 2.4 puts it beside GatewaySettings
+    in the FLO namespace, because the guide requires them to share one (#173).
+    `gateway status` reads the allocated VIP from this Gateway's status, so it
+    needs to know where to look — computing it from the line in two places is how
+    they drift.
+  EOT
+  value       = local.gateway_ns_effective
+}
+
+output "gateway_settings_name" {
+  description = "Name of the 2.4 GatewaySettings CR, or empty on 2.3."
+  value       = local.line_pre_24 ? "" : var.gateway_settings_name
+}
+
+output "gateway_infra_name" {
+  description = "Name of the 2.4 Infra CR, or empty on 2.3."
+  value       = local.line_pre_24 ? "" : var.gateway_infra_name
+}

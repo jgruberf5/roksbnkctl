@@ -207,19 +207,39 @@ resource "kubernetes_namespace_v1" "app" {
   }
 }
 
+# The Gateway itself is line-conditional in two ways (#173):
+#
+#   parametersRef — 2.3 points at k8s.f5net.com/F5BnkGateway; 2.4 points at
+#   gateway.k8s.f5.com/GatewaySettings, the CR emitted in config_24.tf.
+#
+#   namespace — the 2.4 guide is explicit that "GatewaySettings and Gateways
+#   [are] to be applied in Same Namespace", and puts GatewaySettings, Gateway and
+#   EgressGateway all in the FLO namespace. On 2.3 the Gateway lives in the
+#   application namespace. The HTTPRoute stays in the app namespace on both lines
+#   and reaches across via parentRefs.namespace.
+locals {
+  gateway_ns_effective = local.line_pre_24 ? var.app_namespace : var.flo_namespace
+
+  gateway_parameters_ref = local.line_pre_24 ? {
+    group = "k8s.f5net.com"
+    kind  = "F5BnkGateway"
+    name  = var.gateway_bnkgateway_name
+    } : {
+    group = "gateway.k8s.f5.com"
+    kind  = "GatewaySettings"
+    name  = var.gateway_settings_name
+  }
+}
+
 resource "kubectl_manifest" "gateway" {
   count = local.enabled ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "gateway.networking.k8s.io/v1"
     kind       = "Gateway"
-    metadata   = { name = var.gateway_name, namespace = var.app_namespace }
+    metadata   = { name = var.gateway_name, namespace = local.gateway_ns_effective }
     spec = {
       infrastructure = {
-        parametersRef = {
-          group = "k8s.f5net.com"
-          kind  = "F5BnkGateway"
-          name  = var.gateway_bnkgateway_name
-        }
+        parametersRef = local.gateway_parameters_ref
       }
       gatewayClassName = var.gateway_class_name
       listeners        = local.gateway_listeners
@@ -228,7 +248,14 @@ resource "kubectl_manifest" "gateway" {
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [kubectl_manifest.bnk_gateway, kubernetes_namespace_v1.app]
+  # bnk_gateway is 2.3-only and count-gated; kubectl_manifest handles an empty
+  # list, so one depends_on serves both lines. gateway_settings_24 is likewise
+  # empty on 2.3.
+  depends_on = [
+    kubectl_manifest.bnk_gateway,
+    kubectl_manifest.gateway_settings_24,
+    kubernetes_namespace_v1.app,
+  ]
 }
 
 resource "kubectl_manifest" "http_route" {
@@ -238,9 +265,12 @@ resource "kubectl_manifest" "http_route" {
     kind       = "HTTPRoute"
     metadata   = { name = var.gateway_route_name, namespace = var.app_namespace }
     spec = {
+      # The route stays in the APPLICATION namespace on both lines; only the
+      # Gateway moves. On 2.4 that makes this a genuine cross-namespace parentRef
+      # (#173), which is what the guide's own example does.
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "http"
       }]
       rules = [{
@@ -274,9 +304,12 @@ resource "kubectl_manifest" "grpc_route_example" {
     kind       = "GRPCRoute"
     metadata   = { name = "${var.gateway_route_name}-grpc", namespace = var.app_namespace }
     spec = {
+      # The route stays in the APPLICATION namespace on both lines; only the
+      # Gateway moves. On 2.4 that makes this a genuine cross-namespace parentRef
+      # (#173), which is what the guide's own example does.
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "http"
       }]
       rules = [{
@@ -304,9 +337,11 @@ resource "kubectl_manifest" "l4_route_example" {
     kind       = "L4Route"
     metadata   = { name = "${var.gateway_route_name}-l4", namespace = var.app_namespace }
     spec = {
+      # As above: the route stays in the app namespace, the parentRef follows the
+      # Gateway to whichever namespace the line puts it in (#173).
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "tcp"
       }]
       protocol = "TCP"

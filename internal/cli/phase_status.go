@@ -288,7 +288,16 @@ func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[s
 		}
 	}
 
-	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", outString(outs, "gateway_app_namespace"), gwName)
+	// The Gateway does not always live in the application namespace: 2.4 puts it
+	// beside GatewaySettings in the FLO namespace, because the guide requires
+	// them to share one (#173). The module reports where it actually put it;
+	// falling back to the app namespace keeps older workspaces — whose outputs
+	// predate gateway_namespace — reading correctly.
+	gwNS := outString(outs, "gateway_namespace")
+	if gwNS == "" {
+		gwNS = outString(outs, "gateway_app_namespace")
+	}
+	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", gwNS, gwName)
 	if err != nil {
 		res["gateway"] = fmt.Sprintf("(error: %v)", err)
 	} else {
@@ -296,6 +305,27 @@ func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[s
 			res["gateway_address"] = addr
 		}
 		res["gateway"] = crConditionSummary(gw, "Programmed")
+	}
+
+	// 2.4: the CR carrying the ingress/egress configuration is GatewaySettings,
+	// and Infra carries the addressing. Reporting them is the 2.4 analogue of the
+	// F5BnkGateway line below — without it, `gateway status` on 2.4 shows a
+	// Gateway with no visible source of truth behind it.
+	if gsName := outString(outs, "gateway_settings_name"); gsName != "" {
+		gs, err := getCR(tctx, dyn, mapper, "gateway.k8s.f5.com", "GatewaySettings", outString(outs, "gateway_flo_namespace"), gsName)
+		if err != nil {
+			res["gatewaysettings"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["gatewaysettings"] = crBestEffortState(gs)
+		}
+	}
+	if infraName := outString(outs, "gateway_infra_name"); infraName != "" {
+		in, err := getCR(tctx, dyn, mapper, "gateway.k8s.f5.com", "Infra", outString(outs, "gateway_flo_namespace"), infraName)
+		if err != nil {
+			res["infra"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["infra"] = crBestEffortState(in)
+		}
 	}
 
 	if bnkGwName := outString(outs, "gateway_bnkgateway_name"); bnkGwName != "" {
