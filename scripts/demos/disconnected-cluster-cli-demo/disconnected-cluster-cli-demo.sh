@@ -57,6 +57,10 @@ source "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/ss
 # a "command not found" here, silently, because the script runs without `set -e`
 # (#143). Same readlink -f form as above so a symlinked checkout still resolves.
 source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/preflight-binary.sh"
+# Same reason as above: this demo inlines the format helpers rather than sourcing
+# demo-format.sh, so bnk_line_of has to be sourced explicitly or the cwc gate below
+# is a silent `command not found` (#169, and the #164 lesson).
+source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib" && pwd)/bnk-line.sh"
 
 HARBOR_VSI_PROFILE="${HARBOR_VSI_PROFILE:-bx2-4x16}"
 # Resolved at RUN TIME, not hardcoded. IBM retires stock image names: the previous
@@ -527,14 +531,23 @@ endphase P4
 pause; phase P5 "PHASE 5/5  —  Install BNK — disconnected, ONE pass (images from Harbor, licensing via FLP)"   # LONG
 say "bnk up resolves every chart/image from Harbor's mirror record and licenses through the FLP."
 say "bnk up gates the F5SPKVlan applies on a dry-run admission probe, so the CRs land in one pass."
-# Silent workaround for the f5-spk-cwc Multi-Attach deadlock (F5 defect: the
-# cluster-wide-controller Deployment mounts a ReadWriteOnce PVC but ships with a
-# RollingUpdate strategy, so an FLO rollover deadlocks the new pod on the RWO volume and
-# stalls licensing). Launch a background guard on the VSI that forces the cwc to Recreate
-# and clears any deadlock, so the license activates within this bnk up. It is a NO-OP if
-# the cwc never deadlocks. Remove once F5 ships f5-spk-cwc with strategy: Recreate (or an
-# RWX volume) — see cwc-guard.sh.
-[[ "$DRY_RUN" == "1" ]] || {
+# Silent workaround for the f5-spk-cwc Multi-Attach deadlock, BNK 2.3 ONLY.
+#
+# F5 defect on 2.3: the cluster-wide-controller Deployment mounts a ReadWriteOnce PVC but
+# ships with a RollingUpdate strategy, so an FLO rollover deadlocks the new pod on the RWO
+# volume and stalls licensing. This launches a background guard on the VSI that forces the
+# cwc to Recreate and clears the deadlock, so the license activates within this bnk up.
+#
+# FIXED IN 2.4 (#169): the 2.4 Deployment ships `strategy: Recreate` itself — observed on
+# a live 2.4.0-EA cluster, at revision 1 with no patch annotations, so it is the product's
+# own and not something a guard applied. Recreate makes the deadlock structurally
+# impossible: the old pod is terminated before the new one is created, so the RWO volume is
+# always released before anything attaches it.
+#
+# Gated, not removed. 2.3 still ships RollingUpdate and is still the default manifest, and
+# dropping the guard there reintroduces a hang that surfaces as bnk up's 15-minute license
+# gate timing out with no useful error.
+[[ "$DRY_RUN" == "1" || "$(bnk_line_of "$MANIFEST_VERSION")" != "2.3" ]] || {
   scp -i "$(ssh_key)" $SSH_OPTS "$HERE/cwc-guard.sh" ubuntu@"$HARBOR_FIP":/home/ubuntu/cwc-guard.sh >/dev/null 2>&1
   onvsi "setsid bash /home/ubuntu/cwc-guard.sh >/home/ubuntu/cwc-guard.log 2>&1 </dev/null & echo cwc-guard-launched" >/dev/null 2>&1
 }

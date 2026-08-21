@@ -13,8 +13,15 @@
 # volume freed) and clears any rollover deadlock by cycling replicas 0→1. Licensing then
 # activates within bnk up's window. It is silent and self-terminating.
 #
-# REMOVE this once F5 ships f5-spk-cwc with strategy: Recreate (or an RWX volume) — see the
-# defect filed for the RWO+RollingUpdate deadlock.
+# THIS IS NOW A BNK 2.3-ONLY WORKAROUND (#169). The removal condition above is MET in 2.4:
+# the 2.4.0-EA Deployment ships `strategy: Recreate` itself, observed at revision 1 with no
+# patch annotations, so it is the product's own. Callers gate on the manifest line
+# (`bnk_line_of` in ../lib/forge-mode.sh) rather than deleting this — 2.3 still ships
+# RollingUpdate and is still the default manifest version.
+#
+# The PVC is still ReadWriteOnce in 2.4; F5 took the Recreate route rather than RWX.
+# Evidence is one 2.4.0-EA cluster, so worth re-confirming at GA — though a strategy field
+# is unlikely to regress.
 set -uo pipefail
 export PATH=$PATH:/usr/local/bin
 KB=/home/ubuntu/kubectl

@@ -25,9 +25,19 @@ spec:
     parameters:
       - name: bnkforge
         value: "true"
-      # The cwc guard works around an F5 packaging defect (a single-replica RWO
-      # Deployment shipped with RollingUpdate, so the replacement pod cannot attach the
-      # volume). Set false once F5 ships `strategy: Recreate`.
+      # The cwc guard works around an F5 packaging defect on BNK 2.3: a single-replica
+      # RWO Deployment shipped with RollingUpdate, so the replacement pod cannot attach
+      # the volume and licensing never activates.
+      #
+      # FIXED IN 2.4 (#169) — the 2.4 Deployment ships `strategy: Recreate` itself,
+      # observed on a live 2.4.0-EA cluster at revision 1 with no patch annotations.
+      # SET THIS FALSE when running a 2.4.* manifest; leave it true for 2.3.*, which
+      # still ships RollingUpdate and is still the default manifest version.
+      #
+      # Deliberately a parameter rather than derived from the manifest here: an Argo
+      # parameter default cannot branch on another parameter, and a wrong-but-silent
+      # default is worse than an explicit one. The shell demos derive it — see
+      # bnk_line_of in scripts/demos/lib/bnk-line.sh.
       - name: cwc-guard
         value: "true"
   volumes:

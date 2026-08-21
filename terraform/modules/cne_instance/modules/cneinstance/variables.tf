@@ -1,3 +1,9 @@
+variable "bnk_line" {
+  description = "BNK release line ('2.3' or '2.4') for per-release `count` gating. See PRD 18 §4."
+  type        = string
+  default     = "2.3"
+}
+
 # CNEInstance Module Variables
 
 variable "enabled" {

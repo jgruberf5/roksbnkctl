@@ -53,6 +53,16 @@ spec:
         volumeMounts:
           - { name: work, mountPath: /work }
       sidecars:
+        # BNK 2.3 ONLY. Works around an F5 packaging defect on 2.3: a single-replica
+        # RWO Deployment shipped with RollingUpdate, so the replacement pod cannot
+        # attach the volume and licensing never activates.
+        #
+        # FIXED IN 2.4 (#169) — the 2.4 Deployment ships `strategy: Recreate` itself,
+        # observed on a live 2.4.0-EA cluster at revision 1 with no patch annotations.
+        # DELETE this sidecar when this workflow moves to a 2.4.* manifest; it is inert
+        # there (it would find Recreate already set and cycle nothing), but an inert
+        # workaround that outlives its defect is how the next reader loses an hour
+        # working out what it is for.
         - name: cwc-guard
           image: PLACEHOLDER_RUNNER_IMAGE
           envFrom:

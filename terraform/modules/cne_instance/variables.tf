@@ -1,3 +1,16 @@
+variable "bnk_line" {
+  description = <<-EOT
+    BNK release line driving per-release resource gating ("2.3" or "2.4").
+
+    Derived by roksbnkctl from bnk.manifest_version and rendered as a tfvar; the
+    modules gate with `count` on it rather than the tree being forked per line,
+    because the 2.4 changes are additive resources and two copies of a file
+    drift (PRD 18 §4).
+  EOT
+  type        = string
+  default     = "2.3"
+}
+
 # ============================================================
 # Root Terraform Variables
 # F5 BNK Orchestrator for existing ROKS cluster
