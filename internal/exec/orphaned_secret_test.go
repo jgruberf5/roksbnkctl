@@ -1,10 +1,13 @@
 package exec
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"os"
-	"regexp"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"strings"
 	"testing"
 
@@ -68,7 +71,7 @@ func TestSetSecretOwnerRefAttachesTheReference(t *testing.T) {
 		}
 		patched = true
 		body := string(pa.GetPatch())
-		for _, want := range []string{`"kind":"Job"`, `"name":"the-job"`, `"uid":"abc-123"`, `"blockOwnerDeletion":true`} {
+		for _, want := range []string{`"kind":"Job"`, `"name":"the-job"`, `"uid":"abc-123"`, `"controller":true`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("the patch should carry %s:\n%s", want, body)
 			}
@@ -79,37 +82,127 @@ func TestSetSecretOwnerRefAttachesTheReference(t *testing.T) {
 	}
 }
 
-// The wiring guard. opts.Files has no caller today, so this branch cannot be
-// reached at runtime and no functional test can cover the reporting itself —
-// the same situation that made #119's guard a source scan. What it pins is that
-// the error is not discarded, which is the whole defect.
-func TestTheOwnerRefFailureIsReportedNotDiscarded(t *testing.T) {
-	src, err := os.ReadFile("k8s.go")
-	if err != nil {
+// Review of #155, finding 1. blockOwnerDeletion is not what this code wants —
+// it holds the OWNER back until dependents are gone — and on OpenShift, which
+// is this project's target platform, it is the single reason the patch can be
+// rejected. The OwnerReferencesPermissionEnforcement admission plugin (on by
+// default there) refuses it unless the caller holds `update` on
+// batch/jobs/finalizers, which this backend's ClusterRole does not grant:
+//
+//	Error from server (Forbidden): secrets "..." is forbidden: cannot set
+//	blockOwnerDeletion if an ownerReference refers to a resource you can't
+//	set finalizers on
+//
+// Without it the same patch is accepted and the Secret is still collected with
+// the Job. The first version of this fix warned about the symptom while the
+// success test asserted the flag was present, pinning the cause in place.
+func TestThePatchDoesNotSetBlockOwnerDeletion(t *testing.T) {
+	cs := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "job-files", Namespace: "bnk-jobs"},
+	})
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "the-job", UID: types.UID("abc-123")}}
+	if err := setSecretOwnerRef(context.Background(), "bnk-jobs", cs, "job-files", job); err != nil {
 		t.Fatal(err)
 	}
-	body := string(src)
-
-	if m := regexp.MustCompile(`_\s*=\s*setSecretOwnerRef\(`).FindString(body); m != "" {
-		t.Errorf("the owner-ref failure is discarded (%q).\n"+
-			"Nothing else deletes this Secret: ttlSecondsAfterFinished removes the Job and the "+
-			"cleanup goroutine only runs on ctx cancel, so without the owner-ref a SUCCESSFUL run "+
-			"leaves credential material in the cluster with no signal.", m)
-	}
-
-	// The report has to be actionable and must not fail the run — the Job is
-	// already created and the work should proceed.
-	idx := strings.Index(body, "setSecretOwnerRef(ctx")
-	if idx < 0 {
-		t.Fatal("setSecretOwnerRef is no longer called from runJob")
-	}
-	window := body[idx:min(idx+600, len(body))]
-	for _, want := range []string{"warning:", "kubectl", "delete secret"} {
-		if !strings.Contains(window, want) {
-			t.Errorf("the failure report should mention %q so the Secret can be removed by hand:\n%s", want, window)
+	for _, a := range cs.Actions() {
+		pa, ok := a.(k8stesting.PatchAction)
+		if !ok {
+			continue
+		}
+		if strings.Contains(string(pa.GetPatch()), "blockOwnerDeletion") {
+			t.Errorf("the patch sets blockOwnerDeletion, which OpenShift's "+
+				"OwnerReferencesPermissionEnforcement rejects without jobs/finalizers access, "+
+				"and which this code does not need:\n%s", pa.GetPatch())
 		}
 	}
-	if strings.Contains(window, "return k8sExitFailedToStart") {
-		t.Error("a failed owner-ref must not fail the run: the Job exists and the work should proceed")
+}
+
+// Review of #155, finding 5. The warning went to the process's os.Stderr.
+// internal/exec is a library: every other output path here routes through
+// opts.Stderr and the credential redactor, and a caller that redirects output
+// should not have one line escape behind its back.
+func TestTheWarningGoesToTheCallersStderr(t *testing.T) {
+	var buf bytes.Buffer
+	warnOrphanedFilesSecret(&buf, "bnk-jobs", "job-files", errors.New("forbidden: cannot update"))
+
+	got := buf.String()
+	if got == "" {
+		t.Fatal("the warning did not reach the caller's stderr")
+	}
+	for _, want := range []string{"warning:", "bnk-jobs/job-files", "forbidden", "kubectl -n bnk-jobs delete secret job-files"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the warning should contain %q:\n%s", want, got)
+		}
+	}
+}
+
+// RunOpts.Stderr is optional, so a nil sink must not panic.
+func TestTheWarningToleratesANilWriter(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("a nil stderr must not panic: %v", r)
+		}
+	}()
+	warnOrphanedFilesSecret(nil, "bnk-jobs", "job-files", errors.New("boom"))
+}
+
+// Review of #155, finding 6. An interrupted run DOES delete the Secret — the
+// cleanup goroutine fires on ctx cancel regardless of owner-ref state. Telling
+// an operator to hand-delete something already gone is its own failure, and
+// Ctrl-C on a long terraform Job is routine, so the wording is conditional.
+func TestTheWarningDoesNotClaimTheSecretSurvivesACancelledRun(t *testing.T) {
+	var buf bytes.Buffer
+	warnOrphanedFilesSecret(&buf, "ns", "n", errors.New("boom"))
+	got := buf.String()
+
+	if strings.Contains(got, "it will NOT be auto-deleted") {
+		t.Errorf("unconditional: a cancelled run deletes this Secret via the cleanup "+
+			"goroutine, so the operator would be sent after a Secret that is gone:\n%s", got)
+	}
+	if !strings.Contains(got, "if this run completes") {
+		t.Errorf("the claim should be conditioned on the run completing:\n%s", got)
+	}
+}
+
+// The call site must hand the helper the CALLER's stderr. Asserted over the
+// parsed AST rather than the file's text, which is the direct answer to how the
+// previous guard failed review: a substring scan cannot tell live code from a
+// comment, and that reviewer proved it by satisfying the old check with a
+// comment and a `_ = err`. Comments are not in the AST.
+func TestTheWarningIsWiredToTheCallersStderr(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "k8s.go", nil, 0) // 0 = comments discarded
+	if err != nil {
+		t.Fatalf("parsing k8s.go: %v", err)
+	}
+
+	var args []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := call.Fun.(*ast.Ident)
+		if !ok || ident.Name != "warnOrphanedFilesSecret" || len(call.Args) == 0 {
+			return true
+		}
+		var buf bytes.Buffer
+		if err := printer.Fprint(&buf, fset, call.Args[0]); err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, buf.String())
+		return true
+	})
+
+	if len(args) == 0 {
+		t.Fatal("nothing calls warnOrphanedFilesSecret, so an owner-ref failure is silent again")
+	}
+	for _, got := range args {
+		if got != "opts.Stderr" {
+			t.Errorf("the warning is written to %s, not opts.Stderr.\n"+
+				"internal/exec is a library: every other output path here routes through the "+
+				"caller's sink and the credential redactor, and a caller that redirects output "+
+				"should not have one line escape to the process's stderr behind its back.", got)
+		}
 	}
 }

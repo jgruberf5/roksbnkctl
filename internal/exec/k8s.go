@@ -482,23 +482,9 @@ func (b *K8sBackend) runAsJob(ctx context.Context, cs kubernetes.Interface, argv
 
 	// Owner-ref the files Secret to the Job so it auto-deletes on Job
 	// cleanup. Done after Create so we have the Job's UID.
-	//
-	// A failure here is not fatal — the Job is running and the work should
-	// proceed — but it cannot be silent either. Nothing else deletes this
-	// Secret: the happy path relies entirely on ttlSecondsAfterFinished plus
-	// this owner-ref cascade, and the cleanup goroutine below only fires on
-	// ctx cancel. Without the owner-ref, TTL removes the Job and leaves the
-	// Secret holding credential material behind indefinitely, on a run that
-	// otherwise succeeded and printed nothing unusual.
-	//
-	// Same shape as the cluster-outputs.json write (#119): warn, name the
-	// recovery, do not fail the command.
 	if filesSecretCreated {
 		if err := setSecretOwnerRef(ctx, b.jobNS(), cs, filesSecretName, created); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not owner-ref secret %s/%s to its Job: %v\n",
-				b.jobNS(), filesSecretName, err)
-			fmt.Fprintf(os.Stderr, "         (it will NOT be auto-deleted — remove it with "+
-				"`kubectl -n %s delete secret %s`)\n", b.jobNS(), filesSecretName)
+			warnOrphanedFilesSecret(opts.Stderr, b.jobNS(), filesSecretName, err)
 		}
 	}
 
@@ -819,8 +805,52 @@ func jobFailureExitCode(ctx context.Context, ns string, cs kubernetes.Interface,
 // setSecretOwnerRef stamps the Job as the owner of the per-Job files
 // Secret so kube garbage-collection cleans it up when the Job is
 // deleted (TTL or explicit). Best-effort — failures don't break the run.
+// warnOrphanedFilesSecret reports an owner-ref that could not be attached.
+//
+// Not fatal: the Job is running and the work should proceed. But not silent
+// either — nothing else deletes this Secret on a successful run. The happy path
+// relies entirely on ttlSecondsAfterFinished plus the owner-ref cascade, so
+// without the reference the TTL removes the Job and leaves credential material
+// behind on a run that looked completely normal.
+//
+// Written to the caller's stderr rather than the process's. Every other output
+// path in this package routes through opts.Stderr and the credential redactor;
+// this is a library, and a caller that redirects output should not have one
+// line escape to os.Stderr behind its back. Falls back when nil, since
+// RunOpts.Stderr is optional.
+//
+// The wording is careful about the cancel case: an interrupted run DOES delete
+// the Secret, via the cleanup goroutine, regardless of owner-ref state. Telling
+// an operator to hand-delete a Secret that is already gone would be its own
+// small betrayal of trust, and Ctrl-C on a long terraform Job is routine.
+func warnOrphanedFilesSecret(w io.Writer, ns, name string, err error) {
+	if w == nil {
+		w = os.Stderr
+	}
+	fmt.Fprintf(w, "warning: could not owner-ref secret %s/%s to its Job: %v\n", ns, name, err)
+	fmt.Fprintf(w, "         (if this run completes it will not be auto-deleted — remove it with "+
+		"`kubectl -n %s delete secret %s`)\n", ns, name)
+}
+
 func setSecretOwnerRef(ctx context.Context, ns string, cs kubernetes.Interface, name string, owner *batchv1.Job) error {
-	patch := []byte(fmt.Sprintf(`{"metadata":{"ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":%q,"uid":%q,"controller":true,"blockOwnerDeletion":true}]}}`, owner.Name, owner.UID))
+	// No blockOwnerDeletion. It is not what this wants — it holds the OWNER
+	// back until dependents are gone, the opposite of the intent — and on
+	// OpenShift it is the single reason this patch can be rejected.
+	//
+	// OpenShift enables the OwnerReferencesPermissionEnforcement admission
+	// plugin by default, and that plugin refuses blockOwnerDeletion:true unless
+	// the caller holds `update` on batch/jobs/finalizers, which this backend's
+	// ClusterRole does not grant:
+	//
+	//   Error from server (Forbidden): secrets "..." is forbidden: cannot set
+	//   blockOwnerDeletion if an ownerReference refers to a resource you can't
+	//   set finalizers on
+	//
+	// Dropping it, the same patch is accepted and the Secret is still garbage
+	// collected with the Job — verified on a cluster with the plugin enabled.
+	// This is a ROKS/OpenShift project, so that is the target platform, not an
+	// edge case.
+	patch := []byte(fmt.Sprintf(`{"metadata":{"ownerReferences":[{"apiVersion":"batch/v1","kind":"Job","name":%q,"uid":%q,"controller":true}]}}`, owner.Name, owner.UID))
 	_, err := cs.CoreV1().Secrets(ns).Patch(ctx, name, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
 	return err
 }
