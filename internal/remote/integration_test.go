@@ -96,7 +96,22 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 	// jumphosts ship and what we want to validate against.
 	user := "testuser"
 	req := testcontainers.ContainerRequest{
-		Image:        "lscr.io/linuxserver/openssh-server:latest",
+		// Pinned by digest, not :latest (#161). Two reasons, both seen in CI:
+		//
+		// Reproducibility — this suite is the reference for backend behaviour, and
+		// a floating tag lets the image change under it. An upstream sshd change
+		// would surface as a mysterious backend failure with nothing in this repo
+		// having moved.
+		//
+		// Rate limits — a fresh pull of a moving tag is what got throttled:
+		// "toomanyrequests: retry-after: 448.763µs" failed five tests at once on a
+		// PR that touched none of this. A digest is cache-eligible, so a warm
+		// runner need not re-pull at all.
+		//
+		// This is the multi-arch INDEX digest, so it resolves on amd64 and arm64
+		// alike. Refresh with:
+		//   docker buildx imagetools inspect lscr.io/linuxserver/openssh-server:latest
+		Image:        "lscr.io/linuxserver/openssh-server@sha256:4e3054a3c64f19cf4ee28dcac64c030f3a722a4fe46a319f68f9e0952c7de074",
 		ExposedPorts: []string{"2222/tcp"},
 		Env: map[string]string{
 			"PUID":            "1000",
@@ -110,12 +125,33 @@ func startSSHContainer(ctx context.Context, t *testing.T) *sshFixture {
 		},
 		WaitingFor: wait.ForListeningPort("2222/tcp").WithStartupTimeout(60 * time.Second),
 	}
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: req,
-		Started:          true,
-	})
+	// Retry the start. A registry rate limit is transient by definition and
+	// testcontainers does not retry a pull on its own — one throttled response
+	// failed five tests at once. The retry also collapses a confusing
+	// second-order symptom: once the first pull is throttled, later tests report
+	// "No such image" instead of the rate limit, so one cause produced two
+	// different-looking failures and only one of them said why.
+	var c testcontainers.Container
+	for attempt := 1; attempt <= 3; attempt++ {
+		c, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: req,
+			Started:          true,
+		})
+		if err == nil {
+			break
+		}
+		if attempt == 3 {
+			break
+		}
+		t.Logf("start container attempt %d failed (%v); retrying", attempt, err)
+		select {
+		case <-time.After(time.Duration(attempt) * 2 * time.Second):
+		case <-ctx.Done():
+			t.Fatalf("start container: %v (ctx: %v)", err, ctx.Err())
+		}
+	}
 	if err != nil {
-		t.Fatalf("start container: %v", err)
+		t.Fatalf("start container after 3 attempts: %v", err)
 	}
 	t.Cleanup(func() {
 		// Best-effort cleanup; if termination fails, t.Cleanup logs are
