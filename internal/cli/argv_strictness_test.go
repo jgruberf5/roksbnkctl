@@ -107,7 +107,8 @@ var (
 //
 // The build runs `go build` against the repo root inferred from the
 // test CWD (`internal/cli` → repo root is two levels up). The binary
-// goes to t.TempDir() so the per-test cleanup deletes it.
+// goes to a FIXED path under os.TempDir(); see the comment at the
+// MkdirAll below for why it is fixed rather than unique.
 func buildRoksbnkctlBinary(t *testing.T) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -125,17 +126,32 @@ func buildRoksbnkctlBinary(t *testing.T) (string, error) {
 	if runtime.GOOS == "windows" {
 		exeName += ".exe"
 	}
-	// Build into a process-lifetime tempdir rather than t.TempDir(), because the
-	// same binary serves every subprocess sub-test in the run via the sync.Once
-	// cache and per-test cleanup would delete it out from under a later caller.
+	// A FIXED path, not MkdirTemp, and this is the whole fix (#157).
 	//
-	// TestMain removes it when the process exits, which is the binary's actual
-	// lifetime. This used to rely on "the OS cleans up os.TempDir" instead (#157)
-	// — which is not true on a tmpfs that only clears at reboot. Each run left
-	// 112MB behind; 94 runs filled a 16GB /tmp and the symptom was a linker
-	// error in an unrelated package.
-	outDir, err := os.MkdirTemp("", "roksbnkctl-argv-build-")
-	if err != nil {
+	// t.TempDir() is wrong here: the same binary serves every subprocess
+	// sub-test via the sync.Once cache, so per-test cleanup would delete it out
+	// from under a later caller.
+	//
+	// A UNIQUE tempdir plus cleanup in TestMain is also wrong, and that was the
+	// first attempt. TestMain's cleanup runs after m.Run() returns — which never
+	// happens when a test panics, when -timeout fires, or on Ctrl-C. Measured:
+	// a clean pass and a t.Fatal leave nothing, but a panic leaves 112MB, a
+	// timeout kill leaves 112MB, and a SIGINT leaves 199MB. Three panicking runs
+	// left three directories and 336MB. So the unbounded growth that filled a
+	// 16GB /tmp survived, for exactly the population the fix is aimed at:
+	// someone running the suite repeatedly, which is also who panics and
+	// interrupts tests, because that is what working on broken code looks like.
+	//
+	// A fixed name is self-truncating instead. `go build -o` overwrites, so the
+	// footprint is one binary — 112MB — after any number of runs, however each
+	// one dies. TestMain still removes it on a clean exit, so a normal run
+	// leaves nothing at all; the fixed path is what bounds the abnormal ones.
+	//
+	// Concurrent `go test` runs of this package would race on the path. They
+	// already raced on the sync.Once'd binary content, which is identical for a
+	// given tree, and `go test` serialises runs of the same package by default.
+	outDir := filepath.Join(os.TempDir(), "roksbnkctl-argv-build")
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return "", err
 	}
 	binBuildDir = outDir
