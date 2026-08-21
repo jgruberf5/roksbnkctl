@@ -336,3 +336,73 @@ var _ = io.Discard
 // one is used by tests only — keeping it here means staticcheck on
 // the default build doesn't flag it as U1000 unused.
 func ptrInt64(i int64) *int64 { return &i }
+
+// Review of #155, finding 7. opts.Files has no production caller, so the
+// per-Job Secret and its owner-ref had zero coverage against a real API server
+// — which is exactly how a patch that OpenShift rejects could sit here
+// unnoticed. A fake clientset would not have caught it either: fakes do not run
+// admission plugins.
+//
+// This drives the real path end to end: Secret created, owner-ref patched by a
+// real apiserver, and the Secret collected when the Job goes away.
+func TestIntegration_K8sBackend_FilesSecretIsOwnedByItsJob(t *testing.T) {
+	cs, cfg := k8sIntegrationClient(t)
+	ns := hermeticNamespace(t, cs)
+
+	b := &K8sBackend{
+		client:       cs,
+		config:       cfg,
+		jobNamespace: ns,
+		initFn:       func() (kubernetes.Interface, *rest.Config, error) { return cs, cfg, nil },
+	}
+
+	var stdout, stderr strings.Builder
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	rc, err := b.Run(ctx,
+		[]string{"ibmcloud", "--version"},
+		RunOpts{
+			Stdout: &noopBuilder{&stdout},
+			Stderr: &noopBuilder{&stderr},
+			Files:  map[string][]byte{"creds.json": []byte(`{"apikey":"not-a-real-key"}`)},
+		})
+	if err != nil {
+		t.Logf("Run error (rc=%d): %v", rc, err)
+	}
+	if rc != 0 {
+		t.Errorf("expected rc=0, got %d (stderr=%q)", rc, stderr.String())
+	}
+
+	// The owner-ref is the whole point: without it nothing deletes this Secret
+	// on a successful run. A warning on the caller's stderr means the patch was
+	// rejected — the failure mode this test exists to catch.
+	if strings.Contains(stderr.String(), "could not owner-ref secret") {
+		t.Errorf("the API server rejected the owner-ref patch:\n%s", stderr.String())
+	}
+
+	secrets, lerr := cs.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+		LabelSelector: "roksbnkctl.io/job",
+	})
+	if lerr != nil {
+		t.Fatalf("listing files secrets: %v", lerr)
+	}
+	for _, s := range secrets.Items {
+		if len(s.OwnerReferences) == 0 {
+			t.Errorf("secret %s/%s has no owner reference, so nothing will ever delete it",
+				s.Namespace, s.Name)
+			continue
+		}
+		or := s.OwnerReferences[0]
+		if or.Kind != "Job" {
+			t.Errorf("secret %s is owned by a %s, not a Job", s.Name, or.Kind)
+		}
+		// blockOwnerDeletion is what OpenShift's
+		// OwnerReferencesPermissionEnforcement rejects, and it is not needed
+		// for the Secret to be collected.
+		if or.BlockOwnerDeletion != nil && *or.BlockOwnerDeletion {
+			t.Errorf("secret %s sets blockOwnerDeletion; it is unnecessary here and is "+
+				"refused on OpenShift without jobs/finalizers access", s.Name)
+		}
+	}
+}
