@@ -6,6 +6,59 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+Groundwork for driving **BNK 2.4** from the same build that drives 2.3, plus the
+one-namespace defects that work uncovered.
+
+### Added
+
+- **`bnk_line`, a derived terraform variable** carrying the BNK release line
+  (`2.3` / `2.4`) so modules can gate per-release resources with `count` rather
+  than a forked copy of the tree. It comes from `bnk.manifest_version` and
+  nothing else — there is deliberately **no** `bnk.line` config field and no
+  `ROKSBNKCTL_BNK_LINE` override, because a second way to say which release this
+  is, is a second thing that can disagree with the manifest being installed.
+  Rendered on both the prefix-driven and legacy render paths: covering only the
+  first would let a legacy workspace on a 2.4 manifest silently plan 2.3.
+
+- **RFC 1123 validation on `flo_namespace` / `flo_utils_namespace`**, which the
+  configuration reference has claimed for some time and nothing enforced. An
+  invalid name previously surfaced as a Kubernetes admission error partway
+  through an apply.
+
+### Fixed
+
+- **`bnk up` refuses a namespace change that would delete the utils namespace.**
+  Collapsing `flo_utils_namespace` into `flo_namespace` on a workspace that has
+  already installed takes `kubernetes_namespace_v1.f5_utils` from count 1 to 0,
+  so terraform **deletes** it — along with CWC, RabbitMQ, Coremond,
+  CRDConversion, Observer, Fluentd, OTEL, IPAM and the `bnk-license` CR, none of
+  which terraform manages and none of which come back. In a plan it reads as one
+  namespace being removed. One namespace ([#66](https://github.com/jgruberf5/roksbnkctl/issues/66))
+  is a **create-time** choice: safe on a new install, destructive on an existing
+  one, and nothing said so. Renames are refused for the same reason.
+
+- **One-namespace installs now work outside the FLO module.** #66 collapsed the
+  namespaces and verified it; four things downstream still assumed two. The
+  gateway phase's application namespace was created unconditionally, so pointing
+  it at the BNK namespace failed with `already exists` (its own state dir has no
+  record of the BNK namespace). `roksbnkctl logs` and `bnk status` probed a
+  hardcoded `f5-bnk` and reported a healthy deployment as `0 pods` — for **any**
+  workspace that set `bnk.flo_namespace`, collapsed or not. The `bnk down`
+  teardown guard named a namespace the deployment may not use. And the SCC
+  policy breakdown reported all 19 bindings under *both* namespaces when they
+  were equal, disagreeing with its own total.
+
+- **The CWC Multi-Attach guards in the demo tooling** watched `f5-utils`
+  unconditionally. On a one-namespace install that namespace does not exist, so
+  the guard silently never patched and the deadlock it exists to break simply
+  hung `bnk up`. They follow `ROKSBNKCTL_FLO_UTILS_NAMESPACE` now.
+
+- **A warning fired on the read path that belonged to the write path.**
+  `readTFVarsAssignments` is shared between rendering an applied-tfvars snapshot
+  and reading one back, and printed `skipping in applied snapshot` whenever a
+  file was absent — so reading a missing snapshot, the normal state before a
+  first install, warned about a snapshot nobody was writing.
+
 ## v1.51.0 — 2026-08-21
 
 A second adversarial sweep, six issues filed and fixed. The reason this is a
