@@ -233,7 +233,7 @@ Some scenarios where `cluster register` won't get you over the line:
 - **The cluster is a classic-infrastructure ROKS** (not vpc-gen2). Registration refuses; classic clusters aren't supported.
 - **The cluster's worker pool is too small.** BNK trials need at least 2 workers with adequate CPU/memory. The upstream HCL provisions appropriately-sized workers; an existing cluster might not.
 
-For the first three, the cluster simply isn't a candidate. For the last one, the apply may run but `flo` / `cne_instance` will fail to schedule — scale the worker pool first.
+For the first three, the cluster isn't a candidate. For the last one, the apply may run but `flo` / `cne_instance` will fail to schedule — scale the worker pool first.
 
 ## Re-registering and unregistering
 

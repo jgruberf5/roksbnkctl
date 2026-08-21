@@ -141,7 +141,7 @@ What `--insecure` does **not** do:
 - It does not change L4 / DNS behaviour. A name that won't resolve still fails; a host that drops TCP still fails.
 - It is not per-host — there's no `--insecure-only=foo.example.com`. Once set, the run skips verification for everything in `extra_hosts`.
 - It is not persisted. Setting it in one invocation does not affect the next.
-- It is not the same as a config-level `insecure_tls: true` per host. The v1.0 schema doesn't have that knob; the only way to skip cert verification today is the session-wide flag.
+- It is not the same as a config-level `insecure_tls: true` per host. The schema doesn't have that knob; the only way to skip cert verification today is the session-wide flag.
 
 If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different `extra_hosts` lists in two workspaces — that's the workaround until per-host trust lands.
 

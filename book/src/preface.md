@@ -2,11 +2,11 @@
 
 ## Foreword
 
-Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A `terraform init/plan/apply` against an HCL tree somebody handed you. A manual `ibmcloud ks cluster config` to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual `oc adm policy add-scc-to-user privileged` to let iperf3 actually run. SSH plumbing, env-var plumbing, kubeconfig plumbing — each one a small thing, and together a half-day of yak-shaving before BNK was even on the cluster.
+Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A `terraform init/plan/apply` against an HCL tree somebody handed you. A manual `ibmcloud ks cluster config` to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual `oc adm policy add-scc-to-user privileged` to let iperf3 actually run. SSH, environment variables, kubeconfig — each a small thing, and together half a day before BNK was even on the cluster.
 
 `roksbnkctl` collapses that into a single static binary plus four interchangeable execution backends (`local`, `docker`, `k8s`, `ssh:<target>`) plus an opt-in in-cluster ops pod. One command brings a workspace up; one command tears it down; the connectivity, DNS, and throughput tests run from whichever network vantage the question actually requires. The tool exists because the manual path has too many moving parts for somebody who just wants to evaluate BNK or run a customer demo.
 
-This book is the user-facing documentation for `roksbnkctl`. It ships alongside the v1.0 binary.
+This book is the user-facing documentation for `roksbnkctl`, and ships with the binary.
 
 ## Who this book is for
 
@@ -38,7 +38,7 @@ This book assumes:
 
 You do **not** need prior experience with:
 
-- **Terraform** — `roksbnkctl` embeds a vetted HCL tree and drives `terraform` for you. You can ignore the underlying HCL until you want to customise it ([Chapter 13](./13-terraform-variables.md)).
+- **Terraform** — `roksbnkctl` embeds a vetted HCL tree and drives `terraform` for you. You can ignore the underlying HCL until you want to customize it ([Chapter 13](./13-terraform-variables.md)).
 - **OpenShift specifics** — the tool treats ROKS as Kubernetes with a thin SCC + project overlay; the few OpenShift-specific gotchas are called out in [Chapter 22](./22-throughput-testing.md) and [Chapter 26](./26-troubleshooting.md).
 - **F5 BIG-IP Next** — BNK is the thing the book deploys; you don't need to be a Big-IP engineer to evaluate it. [Chapter 1](./01-what-is-bnk.md) is the 5-minute "what is this product" primer.
 
