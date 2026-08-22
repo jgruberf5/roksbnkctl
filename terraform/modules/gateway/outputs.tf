@@ -41,7 +41,10 @@ output "gateway_controller_name" {
 
 output "gateway_bnkgateway_name" {
   description = "Name of the F5BnkGateway (k8s.f5net.com) CR"
-  value       = local.enabled ? var.gateway_bnkgateway_name : ""
+  # `gateway status` treats a non-empty name as "go read this CR", so leaving it
+  # set on 2.4 makes every status call chase an F5BnkGateway that count-0 never
+  # created. Mirrors gateway_settings_name / gateway_infra_name below.
+  value = local.enabled && local.line_pre_24 ? var.gateway_bnkgateway_name : ""
 }
 
 output "gateway_route_name" {

@@ -181,6 +181,26 @@ output "gateway_bnkgateway_name" {
   value       = module.gateway.gateway_bnkgateway_name
 }
 
+# These three are read by `gateway status` (internal/cli/phase_status.go). A
+# module output that is not re-exported here is invisible: ReadStateOutputs
+# reads only the ROOT state's .outputs, so the CLI sees "" and silently takes a
+# fallback path. On 2.4 that meant gateway status looked in the wrong namespace
+# and never rendered the Infra or GatewaySettings blocks at all.
+output "gateway_namespace" {
+  description = "Namespace the Gateway object lives in (FLO namespace on 2.4)"
+  value       = module.gateway.gateway_namespace
+}
+
+output "gateway_settings_name" {
+  description = "Name of the 2.4 GatewaySettings CR, or empty on 2.3"
+  value       = module.gateway.gateway_settings_name
+}
+
+output "gateway_infra_name" {
+  description = "Name of the 2.4 Infra CR, or empty on 2.3"
+  value       = module.gateway.gateway_infra_name
+}
+
 output "gateway_route_name" {
   description = "Name of the HTTPRoute"
   value       = module.gateway.gateway_route_name

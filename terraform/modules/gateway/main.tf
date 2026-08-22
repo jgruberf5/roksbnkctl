@@ -417,7 +417,12 @@ resource "kubectl_manifest" "egress_snatpool" {
 # ── Static routes (per zone, local + remote VSI) ─────────────────────────────
 
 resource "kubectl_manifest" "static_route" {
-  for_each = local.enabled ? local.static_routes : {}
+  # The last of the F5SPK* family to get the 2.4 gate, and the one that hid
+  # longest: it is the only member using for_each, so it did not look like its
+  # `count = ... && local.line_pre_24` siblings. On 2.4 these same routes are
+  # carried by Infra.spec.staticRoutes (see local.infra_static_routes_24), so
+  # emitting them here too would be a second, ignored copy.
+  for_each = local.enabled && local.line_pre_24 ? local.static_routes : {}
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKStaticRoute"

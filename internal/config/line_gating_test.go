@@ -45,6 +45,35 @@ func assertCountGated(t *testing.T, src, resource string) {
 		t.Errorf("%s is created on both lines. BNK 2.4 does not need it, and shipping it there "+
 			"either duplicates what FLO now does or orphans an object the product owns.\n"+
 			"--- resource head ---\n%s", resource, head)
+		return
+	}
+
+	// Presence of the gate says nothing about its DIRECTION. `? 0 : 1` mentions
+	// line_pre_24 just as happily as `? 1 : 0` does, and inverts the resource
+	// onto 2.4 and off 2.3 — which is worse than not gating it at all. An
+	// adversarial review flipped exactly this on the CIS resources and every
+	// assertion here stayed green.
+	//
+	// Both accepted forms are checked positively rather than by rejecting one
+	// spelling, so a third spelling fails loudly instead of passing unseen.
+	countLine := regexp.MustCompile(`(?m)^\s*count\s*=([^\n]*)`).FindStringSubmatch(head)
+	if countLine != nil {
+		expr := strings.TrimSpace(countLine[1])
+		if !strings.HasSuffix(expr, "? 1 : 0") {
+			t.Errorf("%s has a line gate whose polarity is not the expected `? 1 : 0`.\n"+
+				"  got: count = %s\n"+
+				"  A `? 0 : 1` gate creates the resource on 2.4 and skips it on 2.3, which is "+
+				"the opposite of the intent and passes a presence-only check.", resource, expr)
+		}
+	}
+	forEachLine := regexp.MustCompile(`(?m)^\s*for_each\s*=([^\n]*)`).FindStringSubmatch(head)
+	if forEachLine != nil {
+		expr := strings.TrimSpace(forEachLine[1])
+		if !strings.HasSuffix(expr, ": {}") {
+			t.Errorf("%s has a for_each line gate whose false branch is not the empty map.\n"+
+				"  got: for_each = %s\n"+
+				"  The gated-off branch must be `{}` so the resource disappears on 2.4.", resource, expr)
+		}
 	}
 }
 

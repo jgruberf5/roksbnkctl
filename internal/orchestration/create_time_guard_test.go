@@ -284,6 +284,63 @@ func stageBNKInstall(t *testing.T, ws, flo, utils string) {
 	if err := config.WriteAppliedTFVars(ws, bnkPhaseSnapshotLabel, []string{src}); err != nil {
 		t.Fatalf("staging applied tfvars: %v", err)
 	}
+	stageBNKStatePresent(t, ws)
+}
+
+// stageBNKInstallLine records a snapshot whose bnk_line is the line the
+// workspace was installed on, which is what CheckLineChange compares against.
+func stageBNKInstallLine(t *testing.T, ws, line string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "terraform.tfvars")
+	body := fmt.Sprintf("bnk_line = %q\nflo_namespace = \"f5-bnk\"\nflo_utils_namespace = \"f5-utils\"\n", line)
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatalf("staging var-file: %v", err)
+	}
+	if err := config.WriteAppliedTFVars(ws, bnkPhaseSnapshotLabel, []string{src}); err != nil {
+		t.Fatalf("staging applied tfvars: %v", err)
+	}
+	stageBNKStatePresent(t, ws)
+}
+
+// stageBNKStatePresent writes a BNK state file with one managed resource, which
+// is what config.DetectPresence reads. The snapshot alone does NOT mean an
+// install exists: Destroy deliberately leaves the snapshot behind, so a
+// workspace that has been torn down still has one. Tests that mean "installed"
+// have to say so here.
+func stageBNKStatePresent(t *testing.T, ws string) {
+	t.Helper()
+	dir, err := config.WorkspaceStateDir(ws)
+	if err != nil {
+		t.Fatalf("state dir: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	const body = `{"version":4,"resources":[{"mode":"managed","type":"kubectl_manifest","name":"x","instances":[{}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte(body), 0o600); err != nil {
+		t.Fatalf("staging bnk state: %v", err)
+	}
+}
+
+// stageBNKTornDown reproduces what `bnk down` actually leaves: an EMPTY state
+// and the applied-tfvars snapshot still in place. Both live in the same
+// directory, so removing the directory would delete the snapshot too — and then
+// the guard skips because it cannot read the snapshot, which is not the
+// behaviour under test and would make the test pass for the wrong reason.
+func stageBNKTornDown(t *testing.T, ws string) {
+	t.Helper()
+	dir, err := config.WorkspaceStateDir(ws)
+	if err != nil {
+		t.Fatalf("state dir: %v", err)
+	}
+	const empty = `{"version":4,"resources":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte(empty), 0o600); err != nil {
+		t.Fatalf("emptying bnk state: %v", err)
+	}
+	// The snapshot must survive, or the test proves nothing.
+	if _, err := config.ReadAppliedTFVarsReplayAssignments(ws, bnkPhaseSnapshotLabel); err != nil {
+		t.Fatalf("snapshot must still be readable after teardown, else this test is vacuous: %v", err)
+	}
 }
 
 // guardWSWithNamespaces stages a workspace asking for the given namespaces, with
@@ -345,4 +402,34 @@ func TestUnchangedDefaultNamespacesConverge(t *testing.T) {
 	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
 		t.Fatalf("an unchanged default install must converge: %v", err)
 	}
+}
+
+// After `bnk down` the snapshot still describes the install that WAS there, so
+// reading it alone refuses a legitimate reinstall: a workspace is told to move
+// to a new one to change its line, and told that collapsing its namespaces
+// would delete a namespace that no longer exists. Nothing is installed, so
+// there is nothing for either guard to protect.
+func TestAfterTeardownTheCreateTimeGuardsDoNotRefuseAReinstall(t *testing.T) {
+	t.Run("namespace topology", func(t *testing.T) {
+		cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+		stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-utils")
+		stageBNKTornDown(t, cctx.WorkspaceName)
+
+		var buf bytes.Buffer
+		if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+			t.Errorf("collapsing namespaces on a torn-down workspace must be allowed: %v", err)
+		}
+	})
+
+	t.Run("release line", func(t *testing.T) {
+		cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-utils")
+		cctx.Workspace.BNK.ManifestVersion = "2.4.0-EA"
+		stageBNKInstallLine(t, cctx.WorkspaceName, "2.3")
+		stageBNKTornDown(t, cctx.WorkspaceName)
+
+		var buf bytes.Buffer
+		if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+			t.Errorf("moving line on a torn-down workspace must be allowed: %v", err)
+		}
+	})
 }

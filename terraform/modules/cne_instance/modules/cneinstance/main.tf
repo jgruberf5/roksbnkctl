@@ -330,10 +330,29 @@ locals {
     )
   }
 
+  # Every component that has a STATIC attribute in the advanced block below.
+  # This is deliberately NOT keys(adv_env_defaults): three of these seven carry
+  # settings but no env defaults, and subtracting only the four with defaults
+  # sent them through adv_env_extra into a SHALLOW merge, which replaced the
+  # whole object. An override of envDiscovery silently deleted `enabled`,
+  # `stopOnFail` and `runAfterSuccess`; demoMode and maintenanceMode lost their
+  # `enabled`. Adding a component to the block below means adding it here.
+  adv_env_static_components = [
+    "coremon", "envDiscovery", "cneController", "demoMode", "maintenanceMode",
+    "tmm", "pseudoCNI",
+  ]
+
   # Components the product gains between releases: named only in the user map,
-  # with no defaults here. Empty map -> merge() is the identity.
-  adv_env_extra = { for c in setsubtract(keys(var.cneinstance_advanced_env), keys(local.adv_env_defaults)) :
+  # with no static attribute of their own. Empty map -> merge() is the identity.
+  adv_env_extra = { for c in setsubtract(keys(var.cneinstance_advanced_env), toset(local.adv_env_static_components)) :
     c => { env = local.adv_env[c] }
+  }
+
+  # For the three static components with no env defaults, an env list is added
+  # only when the user actually asked for one. Attaching `env = []`
+  # unconditionally would put a new key in the spec that 2.3 never rendered.
+  adv_env_optional = { for c in ["envDiscovery", "demoMode", "maintenanceMode"] :
+    c => contains(keys(var.cneinstance_advanced_env), c) ? { env = local.adv_env[c] } : {}
   }
 
   cneinstance_spec = {
@@ -378,20 +397,20 @@ locals {
         hostPath = true
         env      = local.adv_env["coremon"]
       }
-      envDiscovery = {
+      envDiscovery = merge({
         enabled         = var.cneinstance_env_discovery
         stopOnFail      = var.cneinstance_env_discovery
         runAfterSuccess = var.cneinstance_env_discovery
-      }
+      }, local.adv_env_optional["envDiscovery"])
       cneController = {
         env = local.adv_env["cneController"]
       }
-      demoMode = {
+      demoMode = merge({
         enabled = true
-      }
-      maintenanceMode = {
+      }, local.adv_env_optional["demoMode"])
+      maintenanceMode = merge({
         enabled = false
-      }
+      }, local.adv_env_optional["maintenanceMode"])
       tmm = {
         env = local.adv_env["tmm"]
       }

@@ -36,10 +36,21 @@ const advEnvPrefix = "ROKSBNKCTL_BNK_ADV_"
 
 // advEnvInfix separates the component from the variable name.
 //
-// The split is on the LAST occurrence, not the first: a component name cannot
-// contain "_ENV_", but a variable name certainly can — TMM_ENV_OVERRIDE is a
-// plausible F5 setting, and splitting on the first occurrence would file it
-// under the wrong component with no error.
+// The split is on the FIRST occurrence. A component name cannot contain
+// "_ENV_" — the component set is camelCase words like tmm, cneController,
+// pseudoCNI — but a variable name certainly can, and TMM_ENV_OVERRIDE is a
+// plausible F5 setting.
+//
+// This originally split on the LAST occurrence, with a comment claiming that
+// protected exactly that case. It did the opposite:
+//
+//	ROKSBNKCTL_BNK_ADV_TMM_ENV_TMM_ENV_OVERRIDE
+//	  last-split  -> component "TMM_ENV_TMM", name "OVERRIDE"   (wrong, silent)
+//	  first-split -> component "TMM",         name "TMM_ENV_OVERRIDE"
+//
+// Silent, because an unrecognised component is passed through by design rather
+// than refused, so "TMM_ENV_TMM" lowercases to tmm_env_tmm and is rendered into
+// the CR as a component that does not exist.
 const advEnvInfix = "_ENV_"
 
 // AdvancedEnvOverrideNames reports the computed family for the surface guard.
@@ -69,7 +80,7 @@ func AdvancedEnvOverrideNames() []string {
 // called "" with an empty env var.
 func splitAdvancedEnvName(name string) (component, envName string, ok bool) {
 	rest := strings.TrimPrefix(name, advEnvPrefix)
-	i := strings.LastIndex(rest, advEnvInfix)
+	i := strings.Index(rest, advEnvInfix)
 	if i <= 0 {
 		return "", "", false
 	}
@@ -108,6 +119,16 @@ func OverrideAdvancedEnvFromEnv(ws *Workspace) []string {
 		c := ws.BNK.Advanced[key]
 		if c.Env == nil {
 			c.Env = map[string]string{}
+		}
+		// Two spellings that canonicalise to the same component and name — say
+		// _TMM_ENV_FOO and _Tmm_ENV_FOO — otherwise merge, one value wins by
+		// sort order, and BOTH are reported as applied. Reporting a value that
+		// was silently discarded is worse than the collision itself.
+		if prior, dup := c.Env[envName]; dup && prior != v {
+			fmt.Fprintf(os.Stderr,
+				"  ⚠ %s sets bnk.advanced.%s.env.%s, which another override already set to a different value; keeping %q and ignoring %q. Use one spelling.\n",
+				name, key, envName, prior, v)
+			continue
 		}
 		c.Env[envName] = v
 		ws.BNK.Advanced[key] = c

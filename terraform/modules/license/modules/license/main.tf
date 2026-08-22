@@ -379,7 +379,7 @@ resource "null_resource" "cneinstance_available_24" {
   }
 
   provisioner "local-exec" {
-    command = "${var.roksbnkctl_binary} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${var.flo_namespace}-f5-cne-controller --for condition=Available=True --timeout 15m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${var.flo_namespace}-f5-cne-controller --for condition=Available=True --timeout 15m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }

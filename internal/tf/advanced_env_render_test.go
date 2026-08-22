@@ -35,13 +35,21 @@ import (
 
 func consoleEnvNames(t *testing.T, tfvars, expr string) []string {
 	t.Helper()
+	return consoleStrings(t, []string{"cne_instance", "modules", "cneinstance"}, tfvars, expr)
+}
+
+// consoleJSON evaluates expr against a copy of the named module and returns the
+// JSON terraform produced. Module path is relative to terraform/modules.
+func consoleJSON(t *testing.T, module []string, tfvars, expr string) string {
+	t.Helper()
 
 	tf, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Skip("terraform not on PATH")
 	}
 
-	src, err := filepath.Abs(filepath.Join("..", "..", "terraform", "modules", "cne_instance", "modules", "cneinstance"))
+	parts := append([]string{"..", "..", "terraform", "modules"}, module...)
+	src, err := filepath.Abs(filepath.Join(parts...))
 	if err != nil {
 		t.Fatalf("resolve module: %v", err)
 	}
@@ -96,12 +104,21 @@ func consoleEnvNames(t *testing.T, tfvars, expr string) []string {
 	if err := json.Unmarshal([]byte(line), &encoded); err != nil {
 		t.Fatalf("console output was not a JSON string: %q\nfull output:\n%s", line, out)
 	}
+	return encoded
+}
+
+// consoleStrings is consoleJSON for an expression that evaluates to a list of
+// strings, with an explicit guard against an empty result — an empty list would
+// let every assertion built on it pass without checking anything.
+func consoleStrings(t *testing.T, module []string, tfvars, expr string) []string {
+	t.Helper()
+	encoded := consoleJSON(t, module, tfvars, expr)
 	var names []string
 	if err := json.Unmarshal([]byte(encoded), &names); err != nil {
 		t.Fatalf("decode %q: %v", encoded, err)
 	}
 	if len(names) == 0 {
-		t.Fatalf("evaluated to an empty list, which would let every assertion below pass vacuously\noutput:\n%s", out)
+		t.Fatalf("evaluated to an empty list, which would let every assertion below pass vacuously")
 	}
 	return names
 }

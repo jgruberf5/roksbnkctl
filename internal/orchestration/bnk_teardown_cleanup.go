@@ -10,6 +10,7 @@ import (
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
+	"github.com/jgruberf5/roksbnkctl/internal/tf"
 )
 
 // BNK TEARDOWN LEAVES STATE THAT BREAKS THE *NEXT* INSTALL (#172).
@@ -132,15 +133,21 @@ const GTMNamingChangedBetweenLines = true
 // resolves, or an absent secret are all NORMAL after a destroy; reporting them
 // would turn a clean teardown into a wall of noise about things that are
 // correctly absent.
-func sweepLicenseSecrets(ctx context.Context, cctx *config.Context, w io.Writer) {
+func sweepLicenseSecrets(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, w io.Writer) {
 	if cctx == nil || cctx.Workspace == nil {
 		return
 	}
-	kcPath := k8s.DefaultKubeconfigPath()
-	if kcPath == "" {
+	// THIS WORKSPACE'S cluster, resolved by id from its own state — not the
+	// ambient kubeconfig. The sweep issues unconditional deletes of 34 named
+	// secrets, and ~/.kube/config points wherever its current context was last
+	// pointed, which is not workspace-scoped and may well be a peer's live
+	// cluster. Tearing down workspace A must never delete workspace B's
+	// licence secrets and leave it unable to re-license.
+	body, err := clusterKubeconfigBytes(ctx, cctx, tfws)
+	if err != nil {
 		return
 	}
-	kc, err := k8s.NewFromKubeconfigFile(kcPath)
+	kc, err := k8s.NewFromKubeconfigBytes(body)
 	if err != nil {
 		return
 	}

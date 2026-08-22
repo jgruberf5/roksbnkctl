@@ -34,22 +34,61 @@ func TestAdvancedEnvReachesTheConfig(t *testing.T) {
 	}
 }
 
-// The split is on the LAST "_ENV_", not the first. A component name cannot
-// contain it, but a VARIABLE name certainly can — TMM_ENV_OVERRIDE is a
-// plausible F5 setting, and splitting on the first occurrence files it under the
-// wrong component with no error at all.
-func TestTheComponentSplitTakesTheLastSeparator(t *testing.T) {
-	c, n, ok := splitAdvancedEnvName("ROKSBNKCTL_BNK_ADV_TMM_ENV_TMM_ENV_OVERRIDE")
-	if !ok {
-		t.Fatal("should parse")
+// The split is on the FIRST "_ENV_". A component name cannot contain it — the
+// component set is camelCase words like tmm, cneController, pseudoCNI — but a
+// VARIABLE name certainly can, and TMM_ENV_OVERRIDE is a plausible F5 setting.
+//
+// This test previously asserted the LAST separator and justified it in a
+// comment claiming last-split was what kept TMM_ENV_OVERRIDE working. It was
+// exactly backwards, and the test locked the defect in: last-split files that
+// variable under a component "TMM_ENV_TMM" that does not exist, and because an
+// unrecognised component is passed through by design rather than refused, it
+// reaches the CR with no error anywhere.
+func TestTheComponentSplitTakesTheFirstSeparator(t *testing.T) {
+	for _, tc := range []struct {
+		in, component, name string
+	}{
+		// The case the old comment named. Component is the real one.
+		{"ROKSBNKCTL_BNK_ADV_TMM_ENV_TMM_ENV_OVERRIDE", "TMM", "TMM_ENV_OVERRIDE"},
+		// Any variable whose own name contains the separator.
+		{"ROKSBNKCTL_BNK_ADV_TMM_ENV_MY_ENV_VAR", "TMM", "MY_ENV_VAR"},
+		// The ordinary case must be unaffected.
+		{"ROKSBNKCTL_BNK_ADV_CNECONTROLLER_ENV_USE_GATEWAY_SETTINGS", "CNECONTROLLER", "USE_GATEWAY_SETTINGS"},
+	} {
+		c, n, ok := splitAdvancedEnvName(tc.in)
+		if !ok {
+			t.Fatalf("%s should parse", tc.in)
+		}
+		if c != tc.component || n != tc.name {
+			t.Errorf("%s\n got component=%q name=%q\nwant component=%q name=%q",
+				tc.in, c, n, tc.component, tc.name)
+		}
 	}
-	if c != "TMM_ENV_TMM" || n != "OVERRIDE" {
-		// Documents the actual behaviour: the LAST separator wins, so a variable
-		// containing _ENV_ lands the component name longer rather than the
-		// variable name truncated. Either choice loses information; this one
-		// fails visibly (an unknown component) instead of silently filing a real
-		// setting under the wrong component.
-		t.Errorf("last-separator split expected, got component=%q name=%q", c, n)
+}
+
+// Two spellings that canonicalise to the same component and variable must not
+// silently merge. Before this, the loser was discarded by sort order and BOTH
+// were reported as applied — a log line asserting a value that is not in the
+// config.
+func TestACaseCollisionKeepsOneValueAndSaysSo(t *testing.T) {
+	t.Setenv("ROKSBNKCTL_BNK_ADV_TMM_ENV_FOO", "upper")
+	t.Setenv("ROKSBNKCTL_BNK_ADV_Tmm_ENV_FOO", "mixed")
+
+	ws := &Workspace{}
+	applied := OverrideAdvancedEnvFromEnv(ws)
+
+	if got := len(ws.BNK.Advanced["tmm"].Env); got != 1 {
+		t.Fatalf("both spellings must land on one entry, got %d: %#v", got, ws.BNK.Advanced)
+	}
+	if len(applied) != 1 {
+		t.Errorf("only the surviving value may be reported as applied, got %v", applied)
+	}
+	surviving := ws.BNK.Advanced["tmm"].Env["FOO"]
+	if len(applied) == 1 && !strings.Contains(applied[0], "tmm") {
+		t.Errorf("the applied line must name the component: %v", applied)
+	}
+	if surviving != "upper" && surviving != "mixed" {
+		t.Errorf("unexpected surviving value %q", surviving)
 	}
 }
 

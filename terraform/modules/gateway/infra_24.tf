@@ -3,10 +3,23 @@
 # 2.4 runs the CNEInstance with USE_GATEWAY_SETTINGS=true. Under that flag the
 # CNE controller IGNORES the cloud-network-mapping ConfigMap and the entire
 # F5SPK* family this module creates for 2.3, and reads Infra + GatewaySettings
-# instead. Confirmed on a live 2.4 cluster: no F5SPK* object exists, no ConfigMap
-# exists, and the 2.3-only log line "External or internal VLAN is nil, skipping
-# TMM SelfIP mapping" — which a 2.3 controller emits continuously when those CRs
-# are missing — appears zero times.
+# instead. Confirmed on a live 2.4 cluster: the 2.3-only log line "External or
+# internal VLAN is nil, skipping TMM SelfIP mapping" — which a 2.3 controller
+# emits continuously when those CRs are missing — appears zero times.
+#
+# CORRECTION. An earlier version of this comment said "no F5SPK* object exists,
+# no ConfigMap exists". That describes what the CONTROLLER reads, not what this
+# tree creates. The cloud-network-mapping ConfigMap and the external/internal
+# F5SPKVlan CRs in modules/cne_instance are still created on 2.4 — the teardown
+# of the verified 2.4 cluster found both F5SPKVlans present. The controller
+# ignores them under the flag, so the install is unaffected, but they are
+# objects nothing reads.
+#
+# Whether they should be gated off is an OPEN QUESTION, not an oversight:
+# docs/prd/18-BNK-2-4-SUPPORT.md still lists "does Infra replace F5SPKVlan
+# entirely, or coexist?" unanswered. Removing them is a change to a
+# configuration that has been verified working, so it wants its own run to
+# verify, not a drive-by edit. Until then this comment describes what is true.
 #
 # WHAT THIS IS NOT. Infra/GatewaySettings are a DATA-PATH concern, not an install
 # prerequisite: on the live cluster the License CR went Active, TMM went 3/3

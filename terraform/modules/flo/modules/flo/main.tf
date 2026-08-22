@@ -1000,7 +1000,7 @@ resource "kubectl_manifest" "cis_scc_privileged" {
       name     = "system:openshift:scc:privileged"
     }
     subjects = [{
-      kind      = "ServiceAccount" # unexpected shape
+      kind      = "ServiceAccount"
       name      = each.value.sa
       namespace = var.flo_namespace
     }]

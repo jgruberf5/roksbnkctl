@@ -740,7 +740,7 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// Best-effort and after a SUCCESSFUL destroy only. If the destroy failed the
 	// install is still there and its secrets are still live; deleting them then
 	// would break a running system to tidy up after a failure.
-	sweepLicenseSecrets(ctx, cctx, w)
+	sweepLicenseSecrets(ctx, cctx, tfws, w)
 	return nil
 }
 

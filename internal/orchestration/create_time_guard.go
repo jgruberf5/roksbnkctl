@@ -72,7 +72,22 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 	//
 	// Snapshot unreadable → silent, same reasoning as the record itself: this
 	// exists to catch a contradiction, not to invent a new way for a run to fail.
-	if applied, err := config.ReadAppliedTFVarsReplayAssignments(cctx.WorkspaceName, bnkPhaseSnapshotLabel); err == nil {
+	//
+	// Both are conditioned on a BNK install actually being PRESENT. `Destroy`
+	// deliberately leaves the applied-tfvars snapshot in place, and nothing else
+	// removes it, so after `bnk down` the snapshot still describes an install
+	// that is gone. Reading it alone turned these guards into a refusal to
+	// REINSTALL the same workspace on a different line or namespace topology —
+	// "this workspace installed BNK 2.3 … use a NEW workspace" with nothing
+	// installed, and "collapsing them would DELETE the f5-utils namespace" with
+	// no namespace to delete. Both guards' own comments say they exist to catch
+	// a contradiction, not to invent a new way for a run to fail; with the
+	// install gone there is no contradiction left to catch.
+	bnkPresent := false
+	if pres, perr := config.DetectPresence(cctx.WorkspaceName); perr == nil {
+		bnkPresent = pres.BNK
+	}
+	if applied, err := config.ReadAppliedTFVarsReplayAssignments(cctx.WorkspaceName, bnkPhaseSnapshotLabel); err == nil && bnkPresent {
 		if err := config.CheckNamespaceTopology(cctx.Workspace, applied); err != nil {
 			return err
 		}
