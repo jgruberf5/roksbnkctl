@@ -6,6 +6,41 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **BNK 2.4 now conforms to F5's reference CNEInstance.** Comparing our rendered
+  spec against F5's own live 2.4 capture found four keys we never emitted at all:
+  `tmmReplicas`, `watchNamespaces`, `placement` and `externalBigip`.
+
+  `placement` is the important one. 2.4 removed the node-labeler and pod
+  placement is the mechanism that replaced it — but nothing added the
+  replacement, so 2.4 shipped with **neither**. TMM landing one-per-node and
+  spread across zones was the scheduler's discretion rather than a requirement;
+  verification passed because the scheduler happened to spread them.
+
+  Also now emitted on 2.4: the three TMM settings F5 sets and we did not
+  (`TMM_IGNORE_GATEWAYS`, `DISABLE_HT` to keep hyperthread siblings off TMM's
+  pinned cores, `ENABLE_K8S_ROUTES`), the TMM rolling-update policy
+  (`maxSurge 0 / maxUnavailable 1` — the same shape as the cwc Multi-Attach
+  deadlock), and `GATEWAY_API_VERSION`, which was set **nowhere** so the
+  controller ran on the operator default of v1.4.1 against F5's 1.5.0.
+
+  Every setting is a `config.yaml` field, a `ROKSBNKCTL_*` override, and a row in
+  the generated configuration reference with its line and default. The placement
+  topology keys are IBM ROKS node labels and are **settings, not constants** —
+  hard-coding them is the assumption the node-labeler baked in.
+
+  Defaults are F5's reference values, not invented ones, and a committed copy of
+  their reference spec is now a test fixture: drift from it fails.
+
+- **`bnk.demo_mode`.** Demo mode was being enabled on every install, on both
+  lines. It now defaults to **false on 2.4**, matching the reference. It stays
+  true on 2.3 — that is what has shipped and been exercised there, and changing a
+  working line without a run to back it would be a guess.
+
+  2.3 rendering is asserted byte-identical to the previous release, verified by
+  rendering the pre-change module from git and diffing.
+
 ### Fixed
 
 - **A BNK namespace the 2.4 teardown strands is now freed.** On 2.4 the

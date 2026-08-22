@@ -1,0 +1,195 @@
+{
+  "advanced": {
+    "cneController": {
+      "env": [
+        {
+          "name": "TMM_DEFAULT_MTU",
+          "value": "9000"
+        },
+        {
+          "name": "CLOUD_ENV",
+          "value": "true"
+        },
+        {
+          "name": "CLOUD_PROVIDER",
+          "value": "ibm"
+        },
+        {
+          "name": "CLOUD_TRUSTED_PROFILE",
+          "value": "Profile-9d4dd47e-e573-4d41-8d08-1fae4615d6bb"
+        },
+        {
+          "name": "GSLB_DATACENTER_NAME",
+          "value": "datacenter-staging-small"
+        },
+        {
+          "name": "USE_GATEWAY_SETTINGS",
+          "value": "true"
+        },
+        {
+          "name": "GATEWAY_API_VERSION",
+          "value": "1.5.0"
+        }
+      ]
+    },
+    "coremon": {
+      "env": [
+        {
+          "name": "COREMOND_OVERRIDE_CORE_PATTERN",
+          "value": "true"
+        }
+      ],
+      "hostPath": true
+    },
+    "demoMode": {
+      "enabled": false
+    },
+    "envDiscovery": {
+      "enabled": false,
+      "runAfterSuccess": false,
+      "stopOnFail": false
+    },
+    "externalBigip": {
+      "env": [
+        {
+          "name": "ENABLE_EXT_BIGIP_DATASERVER_MONITOR",
+          "value": "true"
+        },
+        {
+          "name": "ENABLE_EXT_BIGIP_POOL_MONITOR",
+          "value": "true"
+        },
+        {
+          "name": "EXTERNAL_BIGIP_LOGIN_SECRET",
+          "value": "f5-bigip-ctlr-login"
+        },
+        {
+          "name": "CLUSTER_IDENTIFIER",
+          "value": "staging-small-cluster"
+        }
+      ]
+    },
+    "maintenanceMode": {
+      "enabled": false
+    },
+    "pseudoCNI": {
+      "env": [
+        {
+          "name": "DISABLE_CHECKSUM_OFFLOAD",
+          "value": "true"
+        }
+      ]
+    },
+    "tmm": {
+      "env": [
+        {
+          "name": "TMM_CALICO_ROUTER",
+          "value": "default"
+        },
+        {
+          "name": "TMM_DEFAULT_MTU",
+          "value": "9000"
+        },
+        {
+          "name": "TMM_IGNORE_GATEWAYS",
+          "value": "true"
+        },
+        {
+          "name": "DISABLE_HT",
+          "value": "true"
+        },
+        {
+          "name": "TMM_MAPRES_ADDL_VETHS_ON_DP",
+          "value": "TRUE"
+        },
+        {
+          "name": "ENABLE_K8S_ROUTES",
+          "value": "true"
+        }
+      ],
+      "rollingUpdate": {
+        "maxSurge": 0,
+        "maxUnavailable": 1
+      }
+    }
+  },
+  "certificate": {
+    "clusterIssuer": "ext-ca-cluster-issuer"
+  },
+  "coreCollection": {
+    "enabled": true
+  },
+  "deploymentSize": "Tiny",
+  "dynamicRouting": {
+    "enabled": false
+  },
+  "externalBigip": {
+    "enabled": true
+  },
+  "firewallACL": {
+    "enabled": true
+  },
+  "manifestVersion": "2.4.0-EA",
+  "networkAttachments": [
+    "ens3-ipvlan-l2"
+  ],
+  "placement": {
+    "dataPlane": {
+      "affinity": {
+        "podAntiAffinity": {
+          "requiredDuringSchedulingIgnoredDuringExecution": [
+            {
+              "labelSelector": {
+                "matchLabels": {
+                  "app": "f5-tmm"
+                }
+              },
+              "topologyKey": "kubernetes.io/hostname"
+            }
+          ]
+        }
+      },
+      "topologySpreadConstraints": [
+        {
+          "labelSelector": {
+            "matchLabels": {
+              "app": "f5-tmm"
+            }
+          },
+          "maxSkew": 1,
+          "topologyKey": "topology.kubernetes.io/zone",
+          "whenUnsatisfiable": "DoNotSchedule"
+        }
+      ]
+    }
+  },
+  "product": {
+    "gatewayAPI": true,
+    "type": "BNK"
+  },
+  "pseudoCNI": {
+    "enabled": true
+  },
+  "registry": {
+    "imagePullPolicy": "Always",
+    "imagePullSecrets": [
+      {
+        "name": "non-ga-far-secret-prod"
+      }
+    ],
+    "uri": "repo.f5.com"
+  },
+  "telemetry": {
+    "loggingSubsystem": {
+      "enabled": true
+    },
+    "metricSubsystem": {
+      "enabled": true
+    }
+  },
+  "tmmReplicas": 3,
+  "watchNamespaces": [
+    "All"
+  ],
+  "wholeCluster": false
+}

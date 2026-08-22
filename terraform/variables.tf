@@ -1095,3 +1095,137 @@ variable "cneinstance_advanced_env" {
   type        = map(map(string))
   default     = {}
 }
+
+# ── BNK 2.4 conformance with F5's reference CNEInstance ──────────────────────
+#
+# Everything below is emitted on 2.4 ONLY. The 2.3 spec is asserted
+# byte-identical to the previous release, so none of these may appear there.
+#
+# The defaults are F5's reference values, taken from the live 2.4 cluster
+# capture in /mnt/d/roksbnkctl-gap-2-3-to-2-4 — not invented. A field whose
+# default differs from the reference is a field that needs a reason.
+
+variable "cneinstance_tmm_replicas" {
+  description = "Number of f5-tmm data-plane replicas (2.4). Reference: 3."
+  type        = number
+  default     = 3
+}
+
+variable "cneinstance_watch_namespaces" {
+  description = "Namespaces the CNE controller watches (2.4). Reference: [\"All\"]."
+  type        = list(string)
+  default     = ["All"]
+}
+
+variable "cneinstance_tmm_anti_affinity" {
+  description = <<-EOT
+    Require f5-tmm pods onto DIFFERENT NODES (2.4).
+
+    On 2.4 this replaces the node-labeler: 2.4 removed the labeler (#171) and
+    `placement` is the mechanism that took over. Without it nothing stops two
+    TMMs landing on one node — which happened to work in verification only
+    because the scheduler spread them, not because anything required it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_tmm_zone_spread" {
+  description = "Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on."
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_tmm_rolling_update" {
+  description = <<-EOT
+    Pin TMM's rolling update to maxSurge 0 / maxUnavailable 1 (2.4).
+
+    Same shape as the cwc Multi-Attach deadlock: an unconstrained rolling update
+    on a workload holding a single-attach resource can wedge. Reference sets it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_external_bigip" {
+  description = "Enable the external BIG-IP controller (2.4). Reference: true."
+  type        = bool
+  default     = false
+}
+
+variable "cneinstance_external_bigip_login_secret" {
+  description = "Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login."
+  type        = string
+  default     = "f5-bigip-ctlr-login"
+}
+
+variable "cneinstance_cluster_identifier" {
+  description = "CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gateway_api_version" {
+  description = <<-EOT
+    GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0.
+
+    roksbnkctl previously set this nowhere, so the controller ran on whatever
+    the operator defaulted to — v1.4.1 on the verified cluster. The 2.4 EA guide
+    requires the 1.5 bundle for mTLS.
+  EOT
+  type        = string
+  default     = "1.5.0"
+}
+
+variable "cneinstance_demo_mode" {
+  description = <<-EOT
+    advanced.demoMode.enabled.
+
+    Empty string means "the line default": true on 2.3 (what has always
+    shipped) and FALSE on 2.4, matching F5's reference. Demo mode was being set
+    true on every install, which is not something a customer deployment should
+    carry. Set "true"/"false" to pin it explicitly.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_tmm_pod_label" {
+  description = "Value of the `app` label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm."
+  type        = string
+  default     = "f5-tmm"
+}
+
+variable "cneinstance_tmm_anti_affinity_topology_key" {
+  description = <<-EOT
+    Node label the TMM anti-affinity rule spreads across (2.4).
+
+    The IBM ROKS per-node label. Surfaced rather than hard-coded so a cluster
+    that labels its topology differently is still configurable — the assumption
+    the node-labeler used to bake in.
+  EOT
+  type        = string
+  default     = "kubernetes.io/hostname"
+}
+
+variable "cneinstance_tmm_zone_topology_key" {
+  description = "Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone."
+  type        = string
+  default     = "topology.kubernetes.io/zone"
+}
+
+variable "cneinstance_tmm_zone_max_skew" {
+  description = "maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1."
+  type        = number
+  default     = 1
+}
+
+variable "cneinstance_tmm_zone_when_unsatisfiable" {
+  description = "whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule."
+  type        = string
+  default     = "DoNotSchedule"
+  validation {
+    condition     = contains(["DoNotSchedule", "ScheduleAnyway"], var.cneinstance_tmm_zone_when_unsatisfiable)
+    error_message = "cneinstance_tmm_zone_when_unsatisfiable must be DoNotSchedule or ScheduleAnyway."
+  }
+}

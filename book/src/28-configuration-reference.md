@@ -99,6 +99,21 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `flo_namespace` | `string` | 2.3 + 2.4 | `f5-bnk` | no | FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle Operator and its utility components install into (rendered as flo_namespace / flo_utils_namespace). |
 | `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no |  |
 | `gateway_api_mtls` | `bool` | 2.4 | — | no | GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS (#170). |
+| `tmm_replicas` | `int` | 2.4 | `3` | no | TMMReplicas is the number of f5-tmm data-plane replicas. |
+| `watch_namespaces` | `[]string` | 2.4 | `All` | no | WatchNamespaces are the namespaces the CNE controller watches. |
+| `tmm_anti_affinity` | `*bool` | 2.4 | `true` | no | TMMAntiAffinity requires f5-tmm pods onto different nodes. |
+| `tmm_anti_affinity_topology_key` | `string` | 2.4 | `kubernetes.io/hostname` | no | TMMAntiAffinityTopologyKey is the node label the anti-affinity rule spreads across — the IBM ROKS per-node label. |
+| `tmm_zone_spread` | `*bool` | 2.4 | `true` | no | TMMZoneSpread spreads f5-tmm pods across zones. |
+| `tmm_zone_topology_key` | `string` | 2.4 | `topology.kubernetes.io/zone` | no | TMMZoneTopologyKey is the IBM ROKS zone label the spread constraint uses. |
+| `tmm_zone_max_skew` | `int` | 2.4 | `1` | no | TMMZoneMaxSkew is maxSkew for the zone topology-spread constraint. |
+| `tmm_zone_when_unsatisfiable` | `string` | 2.4 | `DoNotSchedule` | no | TMMZoneWhenUnsatisfiable is DoNotSchedule or ScheduleAnyway. |
+| `tmm_pod_label` | `string` | 2.4 | `f5-tmm` | no | TMMPodLabel is the `app` label value the placement rules select TMM by. |
+| `tmm_rolling_update` | `*bool` | 2.4 | `true` | no | TMMRollingUpdate pins TMM's rolling update to maxSurge 0 / maxUnavailable 1 — the same shape as the cwc Multi-Attach deadlock, where an unconstrained rolling update on a single-attach resource wedges. |
+| `external_bigip` | `*bool` | 2.4 | `false` | no | ExternalBigIP enables the external BIG-IP controller. |
+| `external_bigip_login_secret` | `string` | 2.4 | `f5-bigip-ctlr-login` | no | ExternalBigIPLoginSecret holds the external BIG-IP credentials. |
+| `cluster_identifier` | `string` | 2.4 | — | no | ClusterIdentifier is passed to the external BIG-IP controller. |
+| `gateway_api_version` | `string` | 2.4 | `1.5.0` | no | GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. |
+| `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
 | `gtm` | `*BNKGTMCfg` | 2.3 + 2.4 | — | no | GTM is the BIG-IP DNS the datacenter above registers with (#51). |

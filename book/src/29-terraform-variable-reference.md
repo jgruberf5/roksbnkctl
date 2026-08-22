@@ -139,6 +139,21 @@ Source: `terraform/variables.tf`
 | `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable). | no |
 | `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source. | no |
 | `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component environment passthrough for the BNK 2.4 CNEInstance's advanced.`<component>`.env[] lists (#175). | no |
+| `cneinstance_tmm_replicas` | `number` | `3` | Number of f5-tmm data-plane replicas (2.4). Reference: 3. | no |
+| `cneinstance_watch_namespaces` | `list(string)` | `["All"]` | Namespaces the CNE controller watches (2.4). Reference: [\"All\"]. | no |
+| `cneinstance_tmm_anti_affinity` | `bool` | `true` | Require f5-tmm pods onto DIFFERENT NODES (2.4). | no |
+| `cneinstance_tmm_zone_spread` | `bool` | `true` | Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on. | no |
+| `cneinstance_tmm_rolling_update` | `bool` | `true` | Pin TMM's rolling update to maxSurge 0 / maxUnavailable 1 (2.4). | no |
+| `cneinstance_external_bigip` | `bool` | `false` | Enable the external BIG-IP controller (2.4). Reference: true. | no |
+| `cneinstance_external_bigip_login_secret` | `string` | `"f5-bigip-ctlr-login"` | Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login. | no |
+| `cneinstance_cluster_identifier` | `string` | `""` | CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name. | no |
+| `cneinstance_gateway_api_version` | `string` | `"1.5.0"` | GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0. | no |
+| `cneinstance_demo_mode` | `string` | `""` | advanced.demoMode.enabled. | no |
+| `cneinstance_tmm_pod_label` | `string` | `"f5-tmm"` | Value of the `app` label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm. | no |
+| `cneinstance_tmm_anti_affinity_topology_key` | `string` | `"kubernetes.io/hostname"` | Node label the TMM anti-affinity rule spreads across (2.4). | no |
+| `cneinstance_tmm_zone_topology_key` | `string` | `"topology.kubernetes.io/zone"` | Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone. | no |
+| `cneinstance_tmm_zone_max_skew` | `number` | `1` | maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1. | no |
+| `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
 
 ## Module: `cert_manager`
 
@@ -202,6 +217,21 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 | `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component advanced.`<component>`.env passthrough (#175). See the root variable of the same name. | no |
+| `cneinstance_tmm_replicas` | `number` | `3` | Number of f5-tmm data-plane replicas (2.4). Reference: 3. | no |
+| `cneinstance_watch_namespaces` | `list(string)` | `["All"]` | Namespaces the CNE controller watches (2.4). Reference: [\"All\"]. | no |
+| `cneinstance_tmm_anti_affinity` | `bool` | `true` | Require f5-tmm pods onto DIFFERENT NODES (2.4). | no |
+| `cneinstance_tmm_zone_spread` | `bool` | `true` | Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on. | no |
+| `cneinstance_tmm_rolling_update` | `bool` | `true` | Pin TMM's rolling update to maxSurge 0 / maxUnavailable 1 (2.4). | no |
+| `cneinstance_external_bigip` | `bool` | `false` | Enable the external BIG-IP controller (2.4). Reference: true. | no |
+| `cneinstance_external_bigip_login_secret` | `string` | `"f5-bigip-ctlr-login"` | Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login. | no |
+| `cneinstance_cluster_identifier` | `string` | `""` | CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name. | no |
+| `cneinstance_gateway_api_version` | `string` | `"1.5.0"` | GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0. | no |
+| `cneinstance_demo_mode` | `string` | `""` | advanced.demoMode.enabled. | no |
+| `cneinstance_tmm_pod_label` | `string` | `"f5-tmm"` | Value of the `app` label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm. | no |
+| `cneinstance_tmm_anti_affinity_topology_key` | `string` | `"kubernetes.io/hostname"` | Node label the TMM anti-affinity rule spreads across (2.4). | no |
+| `cneinstance_tmm_zone_topology_key` | `string` | `"topology.kubernetes.io/zone"` | Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone. | no |
+| `cneinstance_tmm_zone_max_skew` | `number` | `1` | maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1. | no |
+| `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
 
 ## Module: `flo`
 

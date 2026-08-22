@@ -466,6 +466,72 @@ type BNKCfg struct {
 	// force the CRDs and is blocked without it.
 	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty" line:"2.4"`
 
+	// ── BNK 2.4 conformance with F5's reference CNEInstance ──────────────────
+	//
+	// Defaults are F5's reference values from the live 2.4 capture, not
+	// invented. All of these are emitted on 2.4 only; 2.3 renders exactly as it
+	// did before.
+
+	// TMMReplicas is the number of f5-tmm data-plane replicas. Zero means the
+	// reference default (3).
+	TMMReplicas int `yaml:"tmm_replicas,omitempty" line:"2.4" default:"3"`
+
+	// WatchNamespaces are the namespaces the CNE controller watches. Empty means
+	// the reference default (["All"]).
+	WatchNamespaces []string `yaml:"watch_namespaces,omitempty" line:"2.4" default:"All"`
+
+	// TMMAntiAffinity requires f5-tmm pods onto different nodes. This is what
+	// REPLACED the node-labeler on 2.4: the labeler was removed as unnecessary,
+	// and placement is the mechanism that took over.
+	TMMAntiAffinity *bool `yaml:"tmm_anti_affinity,omitempty" line:"2.4" default:"true"`
+
+	// TMMAntiAffinityTopologyKey is the node label the anti-affinity rule spreads
+	// across — the IBM ROKS per-node label. Surfaced rather than hard-coded so a
+	// cluster labelling its topology differently stays configurable.
+	TMMAntiAffinityTopologyKey string `yaml:"tmm_anti_affinity_topology_key,omitempty" line:"2.4" default:"kubernetes.io/hostname"`
+
+	// TMMZoneSpread spreads f5-tmm pods across zones.
+	TMMZoneSpread *bool `yaml:"tmm_zone_spread,omitempty" line:"2.4" default:"true"`
+
+	// TMMZoneTopologyKey is the IBM ROKS zone label the spread constraint uses.
+	TMMZoneTopologyKey string `yaml:"tmm_zone_topology_key,omitempty" line:"2.4" default:"topology.kubernetes.io/zone"`
+
+	// TMMZoneMaxSkew is maxSkew for the zone topology-spread constraint.
+	TMMZoneMaxSkew int `yaml:"tmm_zone_max_skew,omitempty" line:"2.4" default:"1"`
+
+	// TMMZoneWhenUnsatisfiable is DoNotSchedule or ScheduleAnyway.
+	TMMZoneWhenUnsatisfiable string `yaml:"tmm_zone_when_unsatisfiable,omitempty" line:"2.4" default:"DoNotSchedule"`
+
+	// TMMPodLabel is the `app` label value the placement rules select TMM by.
+	TMMPodLabel string `yaml:"tmm_pod_label,omitempty" line:"2.4" default:"f5-tmm"`
+
+	// TMMRollingUpdate pins TMM's rolling update to maxSurge 0 / maxUnavailable 1
+	// — the same shape as the cwc Multi-Attach deadlock, where an unconstrained
+	// rolling update on a single-attach resource wedges.
+	TMMRollingUpdate *bool `yaml:"tmm_rolling_update,omitempty" line:"2.4" default:"true"`
+
+	// ExternalBigIP enables the external BIG-IP controller.
+	ExternalBigIP *bool `yaml:"external_bigip,omitempty" line:"2.4" default:"false"`
+
+	// ExternalBigIPLoginSecret holds the external BIG-IP credentials.
+	ExternalBigIPLoginSecret string `yaml:"external_bigip_login_secret,omitempty" line:"2.4" default:"f5-bigip-ctlr-login"`
+
+	// ClusterIdentifier is passed to the external BIG-IP controller. Empty derives
+	// from the cluster name.
+	ClusterIdentifier string `yaml:"cluster_identifier,omitempty" line:"2.4" default:""`
+
+	// GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. roksbnkctl
+	// previously set this nowhere, so the controller ran on whatever the operator
+	// defaulted to (v1.4.1 on the verified cluster) while F5's reference pins
+	// 1.5.0 — which the 2.4 EA guide requires for mTLS.
+	GatewayAPIVersion string `yaml:"gateway_api_version,omitempty" line:"2.4" default:"1.5.0"`
+
+	// DemoMode sets advanced.demoMode.enabled. Nil means the LINE default: true
+	// on 2.3, which is what has always shipped, and false on 2.4, matching the
+	// reference. Demo mode was being enabled on every install, which is not
+	// something a customer deployment should carry.
+	DemoMode *bool `yaml:"demo_mode,omitempty" default:"false on 2.4, true on 2.3"`
+
 	// Advanced carries per-component environment passthrough for the 2.4
 	// CNEInstance's advanced.<component>.env[] lists (#175).
 	//
