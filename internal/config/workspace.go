@@ -532,6 +532,22 @@ type BNKCfg struct {
 	// something a customer deployment should carry.
 	DemoMode *bool `yaml:"demo_mode,omitempty" default:"false on 2.4, true on 2.3"`
 
+	// TCPSettings overrides fields on the data-plane F5BigTcpSetting CR.
+	//
+	// A flat map rather than 54 config fields: the CR has 54 fields across bool,
+	// int and string, and enumerating them would be 54 rows nobody reads while
+	// still going stale the moment F5 adds one. Values are text because a config
+	// file and an environment variable can only carry text; they are coerced to
+	// the CR's types on render.
+	//
+	// Empty writes NO CR. The product manages its own default TCP profile, and
+	// emitting an empty one would fight it.
+	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
+
+	// TCPSettingsName is the F5BigTcpSetting to write. F5's reference cluster
+	// carries a hand-applied `sys-default-tcp`.
+	TCPSettingsName string `yaml:"tcp_settings_name,omitempty" default:"sys-default-tcp"`
+
 	// Advanced carries per-component environment passthrough for the 2.4
 	// CNEInstance's advanced.<component>.env[] lists (#175).
 	//

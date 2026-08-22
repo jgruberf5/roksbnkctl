@@ -1229,3 +1229,28 @@ variable "cneinstance_tmm_zone_when_unsatisfiable" {
     error_message = "cneinstance_tmm_zone_when_unsatisfiable must be DoNotSchedule or ScheduleAnyway."
   }
 }
+
+variable "cneinstance_tcp_settings" {
+  description = <<-EOT
+    F5BigTcpSetting field overrides, as a flat map of field name to value.
+
+    The CR has 54 fields across bool, int and string. Surfacing each as its own
+    config field would be 54 fields nobody reads; a map keeps the whole surface
+    reachable and lets F5 add fields between releases without a code change here.
+
+    Values are strings and coerced on the way out: "1500" renders as a number,
+    "true" as a bool, anything else as a string. That is because a config file
+    and an environment variable can only carry text, while the CR is typed.
+
+    Empty renders NO CR at all. That is deliberate — the product creates its own
+    default TCP profile, and emitting an empty one would fight it.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "cneinstance_tcp_settings_name" {
+  description = "Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp."
+  type        = string
+  default     = "sys-default-tcp"
+}

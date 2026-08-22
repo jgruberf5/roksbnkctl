@@ -483,6 +483,7 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	renderBNKLine(w, ws)
 	renderBNKAdvancedEnv(w, ws)
+	renderBNKTCPSettings(w, ws)
 	renderBNKNamespaces(w, ws)
 	renderBNKTrustedProfile(w, ws)
 	if err := renderBNKGTM(w, ws); err != nil {
@@ -1028,4 +1029,34 @@ func renderBNK24Conformance(w io.Writer, ws *config.Workspace) {
 	if b.DemoMode != nil {
 		fmt.Fprintf(w, "cneinstance_demo_mode = %q\n", strconv.FormatBool(*b.DemoMode))
 	}
+}
+
+// renderBNKTCPSettings emits the F5BigTcpSetting overrides.
+//
+// Nothing renders when unset, so a workspace that does not touch TCP tuning
+// plans exactly as it did before — and terraform writes no CR, leaving the
+// product's own default profile alone.
+func renderBNKTCPSettings(w io.Writer, ws *config.Workspace) {
+	if ws == nil {
+		return
+	}
+	if n := ws.BNK.TCPSettingsName; n != "" {
+		fmt.Fprintf(w, "cneinstance_tcp_settings_name = %q\n", n)
+	}
+	if len(ws.BNK.TCPSettings) == 0 {
+		return
+	}
+	names := make([]string, 0, len(ws.BNK.TCPSettings))
+	for k := range ws.BNK.TCPSettings {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString("cneinstance_tcp_settings = {\n")
+	for _, k := range names {
+		fmt.Fprintf(&b, "  %q = %q\n", k, ws.BNK.TCPSettings[k])
+	}
+	b.WriteString("}\n")
+	fmt.Fprint(w, b.String())
 }

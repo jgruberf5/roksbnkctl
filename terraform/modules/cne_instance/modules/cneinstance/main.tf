@@ -850,3 +850,46 @@ resource "kubectl_manifest" "cneinstance_scc_policies" {
   depends_on = [var.flo_deployment_dependency]
 }
 
+
+# ── F5BigTcpSetting ──────────────────────────────────────────────────────────
+#
+# The data-plane TCP profile. F5's approved reference cluster carries a
+# hand-applied `sys-default-tcp` in the BNK namespace — despite the "sys-default"
+# name it was applied by engineering, not created by the product, which is why it
+# is ours to surface.
+#
+# Only written when the operator sets something. The product manages its own
+# default otherwise, and an empty CR would be this tree fighting it.
+#
+# Values arrive as strings because config.yaml and environment variables carry
+# text; the CR is typed, so each value is coerced here — a number if it parses as
+# one, a bool for "true"/"false", a string otherwise.
+resource "kubectl_manifest" "tcp_settings" {
+  count             = local.use_kubectl && length(var.cneinstance_tcp_settings) > 0 ? 1 : 0
+  server_side_apply = true
+  force_conflicts   = true
+
+  # Written as YAML text rather than yamlencode(map) because a terraform map has
+  # ONE value type: a `for` producing mixed bool/number/string unifies them all
+  # to string, and the CR would get "300" where it wants 300. Emitting the
+  # document directly lets YAML's own scalar rules do the typing — an unquoted
+  # 300 is an int, true is a bool — and anything else is JSON-quoted so a value
+  # containing a colon or a leading special character stays a valid string.
+  yaml_body = <<-YAML
+    apiVersion: k8s.f5net.com/v1
+    kind: F5BigTcpSetting
+    metadata:
+      name: ${var.cneinstance_tcp_settings_name}
+      namespace: ${var.flo_namespace}
+    spec:
+    ${indent(2, join("\n", [
+  for k in sort(keys(var.cneinstance_tcp_settings)) :
+  "${k}: ${(
+    can(tonumber(var.cneinstance_tcp_settings[k])) ||
+    contains(["true", "false"], lower(var.cneinstance_tcp_settings[k]))
+  ) ? lower(var.cneinstance_tcp_settings[k]) : jsonencode(var.cneinstance_tcp_settings[k])}"
+]))}
+  YAML
+
+depends_on = [kubectl_manifest.cneinstance]
+}

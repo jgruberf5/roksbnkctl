@@ -388,6 +388,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
 	// Per-component env passthrough for the 2.4 CNEInstance (#175).
 	applied = append(applied, OverrideAdvancedEnvFromEnv(ws)...)
+	applied = append(applied, OverrideTCPSettingsFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {

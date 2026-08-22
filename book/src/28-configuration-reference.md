@@ -114,6 +114,8 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `cluster_identifier` | `string` | 2.4 | — | no | ClusterIdentifier is passed to the external BIG-IP controller. |
 | `gateway_api_version` | `string` | 2.4 | `1.5.0` | no | GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. |
 | `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
+| `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides fields on the data-plane F5BigTcpSetting CR. |
+| `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
 | `gtm` | `*BNKGTMCfg` | 2.3 + 2.4 | — | no | GTM is the BIG-IP DNS the datacenter above registers with (#51). |

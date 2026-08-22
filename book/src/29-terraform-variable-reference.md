@@ -154,6 +154,8 @@ Source: `terraform/variables.tf`
 | `cneinstance_tmm_zone_topology_key` | `string` | `"topology.kubernetes.io/zone"` | Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone. | no |
 | `cneinstance_tmm_zone_max_skew` | `number` | `1` | maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1. | no |
 | `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
+| `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
+| `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
 
 ## Module: `cert_manager`
 
@@ -232,6 +234,8 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_tmm_zone_topology_key` | `string` | `"topology.kubernetes.io/zone"` | Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone. | no |
 | `cneinstance_tmm_zone_max_skew` | `number` | `1` | maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1. | no |
 | `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
+| `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
+| `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
 
 ## Module: `flo`
 
