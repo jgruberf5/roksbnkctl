@@ -4,6 +4,39 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Fixed
+
+- **A BNK namespace the 2.4 teardown strands is now freed.** On 2.4 the
+  CNEInstance deletion times out, its operator is removed anyway, and nothing is
+  left that could clear the finalizer — so the namespace sits in `Terminating`
+  forever and every later `bnk up` fails with *"unable to create new content in
+  namespace f5-bnk because it is being terminated"*. The cluster is permanently
+  unusable for a reinstall. `bnk down` now clears F5's finalizers after a
+  successful destroy, scoped to this workspace's own cluster, to namespaces
+  already terminating, to F5's own kinds — and it says what it did, because a
+  silent repair teaches nobody the bug is there. Seen twice on live 2.4
+  clusters.
+
+- **The lifecycle demos no longer report success over a failed phase.** They are
+  `set -uo pipefail` with no `-e`; `run` returned each command's status and no
+  call site looked at it. A `bnk up` that failed on every object was followed by
+  `✓ BNK removed and reinstalled` and `DEMO COMPLETE`, exit 0. A new `must`
+  helper dies on failure and is used for the commands that change the world;
+  informational commands keep plain `run`, where a non-zero is often just "not
+  there yet".
+
+- **The demos no longer execute their own comments.** Their `config.yaml`
+  heredocs are unquoted so `${REGION}` expands — which also made backticked
+  command names in the comments run. `` `init` `` is a real binary on some
+  hosts and it ran; the words vanished from the generated file, replaced by the
+  commands' empty output.
+
+- **Five stale runner-image pins**, up to twenty releases behind, including one
+  in a `.env.example` that overrides the script default the guard did check. The
+  guard now discovers every demo that pins a runner instead of naming one.
+
 ## v1.52.0 — 2026-08-21
 
 Groundwork for driving **BNK 2.4** from the same build that drives 2.3, plus the
