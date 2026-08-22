@@ -319,24 +319,90 @@ func readTFVarsAssignments(path string) (map[string]string, bool, error) {
 	}
 
 	out := make(map[string]string)
-	for _, raw := range strings.Split(string(b), "\n") {
-		line := strings.TrimSpace(raw)
+	lines := strings.Split(string(b), "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
 		m := tfvarsAssignmentRE.FindStringSubmatch(line)
 		if m == nil {
-			// Line doesn't match the supported "name = value" shape
-			// (HCL heredoc, multi-line list, etc.). Skip silently — the
-			// snapshot is best-effort and roksbnkctl never emits these
-			// shapes itself.
+			// Line doesn't match the supported "name = value" shape (an HCL
+			// heredoc, or a continuation line of a block already consumed
+			// below). Skip silently — the snapshot is best-effort.
 			continue
 		}
 		name := m[1]
 		value := tfvarsCommentRE.ReplaceAllString(m[2], "")
+
+		// A value that OPENS a block or list and does not close it on this line
+		// continues onto the following ones. Recording just the opening brace
+		// used to be harmless because nothing emitted that shape; it is not
+		// harmless now. The snapshot is re-rendered from this map and handed
+		// back to terraform as a -var-file on plan, apply AND down, so a
+		// truncated `name = {` is a var-file terraform refuses to parse — which
+		// would strand a workspace that cannot be torn down.
+		if trailer, ok := unclosedBlockTrailer(value); ok {
+			var block strings.Builder
+			block.WriteString(value)
+			for depth, j := trailer, i+1; j < len(lines); j++ {
+				block.WriteString("\n")
+				block.WriteString(strings.TrimRight(lines[j], "\r"))
+				depth += blockDepthDelta(lines[j])
+				if depth <= 0 {
+					i = j
+					break
+				}
+				// Unterminated at EOF: keep the single-line value rather than a
+				// half-block, which at least round-trips as something parseable.
+				if j == len(lines)-1 {
+					block.Reset()
+					block.WriteString(value)
+					i = j
+				}
+			}
+			value = block.String()
+		}
 		out[name] = value
 	}
 	return out, false, nil
+}
+
+// unclosedBlockTrailer reports whether v opens more braces/brackets than it
+// closes, and by how many. Quoted sections are skipped so a brace inside a
+// string does not count.
+func unclosedBlockTrailer(v string) (int, bool) {
+	d := blockDepthDelta(v)
+	return d, d > 0
+}
+
+func blockDepthDelta(v string) int {
+	depth := 0
+	inStr := false
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if inStr {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '#':
+			return depth
+		case '{', '[', '(':
+			depth++
+		case '}', ']', ')':
+			depth--
+		}
+	}
+	return depth
 }
 
 // sourceLabel maps a var-file path to a human-friendly label used in
