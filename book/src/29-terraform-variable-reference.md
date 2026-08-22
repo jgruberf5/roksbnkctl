@@ -21,7 +21,7 @@ Source: `terraform/variables.tf`
 | `deploy_cert_manager` | `bool` | `true` | When true, the cert_manager module's helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to \"direct-apply\"). | no |
 | `roks_cluster_vpc_name` | `string` | `"tf-cluster-vpc"` | Name of the cluster VPC | no |
 | `openshift_cluster_name` | `string` | `"tf-openshift-cluster"` | Name of the OpenShift cluster | no |
-| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available. | no |
+| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty uses the latest available. | no |
 | `roks_workers_per_zone` | `number` | `1` | Number of worker nodes per availability zone | no |
 | `roks_min_worker_vcpu_count` | `number` | `16` | Minimum vCPU count when auto-selecting the worker node flavor | no |
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
@@ -48,8 +48,9 @@ Source: `terraform/variables.tf`
 | `use_cos_bucket` | `bool` | `true` | Download the FAR auth tarball + subscription JWT from the orchestration COS. false = use the injected far_service_account_b64 / f5_cne_subscription_jwt content instead (local files). | no |
 | `far_service_account_b64` | `string` | `""` | FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path. | **yes** |
 | `f5_cne_subscription_jwt` | `string` | `""` | Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead). | **yes** |
+| `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating (2.3 or 2.4). Derived by roksbnkctl from bnk.manifest_version — set it by hand only for a standalone terraform run. | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Kubernetes namespace for the F5 Lifecycle Operator | no |
-| `flo_utils_namespace` | `string` | `"f5-utils"` | Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license | no |
+| `flo_utils_namespace` | `string` | `"f5-utils"` | Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license. Set equal to flo_namespace to install into ONE namespace. | no |
 | `bigip_username` | `string` | `"admin"` | BIG-IP username for the CIS controller | no |
 | `bigip_password` | `string` | `"admin"` | BIG-IP password for the CIS controller | **yes** |
 | `bigip_url` | `string` | `"192.168.1.245"` | BIG-IP URL for the CIS controller | no |
@@ -133,6 +134,11 @@ Source: `terraform/variables.tf`
 | `flp_vsi_vpc_name` | `string` | `""` | Name for the VPC created when flp_vsi_create_vpc = true. | no |
 | `flp_vsi_subnet_cidr` | `string` | `"10.250.0.0/24"` | Address prefix for the VPC created when flp_vsi_create_vpc = true. | no |
 | `cluster_network_mode` | `string` | `"single-nic"` | How the cluster's worker nodes are attached: single-nic (default) or multi-nic. | no |
+| `testing_jumphost_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open; access is key-only). Narrow to the operator's public /32 on a shared account. | no |
+| `testing_client_vpc_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound to the testing client VPC's default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway). | no |
+| `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable). | no |
+| `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source. | no |
+| `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component environment passthrough for the BNK 2.4 CNEInstance's advanced.`<component>`.env[] lists (#175). | no |
 
 ## Module: `cert_manager`
 
@@ -161,6 +167,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 
 | Variable | Type | Default | Description | Sensitive |
 |---|---|---|---|---|
+| `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating ("2.3" or "2.4"). | no |
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API Key | **yes** |
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region where the cluster resides | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud Resource Group name (leave empty to use account default) | no |
@@ -194,6 +201,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously. | **yes** |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
+| `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component advanced.`<component>`.env passthrough (#175). See the root variable of the same name. | no |
 
 ## Module: `flo`
 
@@ -201,6 +209,7 @@ Source: `terraform/modules/flo/variables.tf`
 
 | Variable | Type | Default | Description | Sensitive |
 |---|---|---|---|---|
+| `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating ("2.3" or "2.4"). | no |
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API Key | **yes** |
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region where the cluster resides | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud Resource Group name (leave empty to use account default) | no |
@@ -326,6 +335,7 @@ Source: `terraform/modules/gateway/variables.tf`
 
 | Variable | Type | Default | Description | Sensitive |
 |---|---|---|---|---|
+| `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating ("2.3" or "2.4"). | no |
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API key | **yes** |
 | `ibmcloud_cluster_region` | `string` | _required_ | IBM Cloud region the cluster runs in (zone names derive as `<region>`-1/2/3) | no |
 | `ibmcloud_resource_group` | `string` | `""` | IBM Cloud resource group | no |
@@ -360,6 +370,11 @@ Source: `terraform/modules/gateway/variables.tf`
 | `gateway_client_subnet_local` | `list(string)` | `[]` | Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one F5SPKStaticRoute per entry × zone). Empty = no local client routes. | no |
 | `gateway_client_subnet_remote` | `list(string)` | `[]` | Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one F5SPKStaticRoute per entry × zone). Empty = no remote client routes. | no |
 | `gateway_static_route_gw_host` | `number` | `1` | Host number in ext_vlan_cidr used as each zone's static-route gateway | no |
+| `gateway_infra_name` | `string` | `"cloud-infra"` | Name of the BNK 2.4 Infra CR (gateway.k8s.f5.com/v1alpha1) in the FLO namespace. | no |
+| `gateway_settings_name` | `string` | `"gw-settings-common"` | Name of the BNK 2.4 GatewaySettings CR in the FLO namespace. | no |
+| `gateway_nad_name` | `string` | `"ens3-ipvlan-l2"` | NetworkAttachmentDefinition the 2.4 Infra CR's external VLAN attaches to. | no |
+| `gateway_egress_vxlan_port` | `number` | `6789` | egressDefaults.port on the 2.4 Infra CR. The CRD default is 4789; the install guide's worked example uses 6789, which is what this defaults to so a stock install matches the vendor's own manifest. | no |
+| `gateway_egress_vxlan_subnet` | `string` | `""` | egressDefaults.subnet on the 2.4 Infra CR. Empty leaves the controller's default of 10.0.0.0/16. | no |
 
 ## Module: `license`
 
@@ -367,6 +382,8 @@ Source: `terraform/modules/license/variables.tf`
 
 | Variable | Type | Default | Description | Sensitive |
 |---|---|---|---|---|
+| `flo_namespace` | `string` | `"f5-bnk"` | Namespace the CNEInstance lives in, for the 2.4 post-licensing health check (#167). | no |
+| `bnk_line` | `string` | `"2.3"` | BNK release line ('2.3' or '2.4') for per-release gating. See PRD 18 §4. | no |
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API Key | **yes** |
 | `ibmcloud_cluster_region` | `string` | `"ca-tor"` | IBM Cloud region where the cluster resides | no |
 | `ibmcloud_resource_group` | `string` | `"default"` | IBM Cloud Resource Group name (leave empty to use account default) | no |
@@ -405,7 +422,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `create_roks_registry_cos_instance` | `bool` | `true` | Create Cloud Object Storage instance for the OpenShift image registry | no |
 | `roks_cluster_vpc_name` | `string` | `"tf-cluster-vpc"` | Name of the cluster VPC | no |
 | `openshift_cluster_name` | `string` | `"tf-openshift-cluster"` | Name of the OpenShift cluster | no |
-| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version (e.g. 4.20) | no |
+| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty uses the latest available. | no |
 | `roks_workers_per_zone` | `number` | `1` | Number of worker nodes per availability zone | no |
 | `roks_min_worker_vcpu_count` | `number` | `16` | Minimum vCPU count when auto-selecting the worker node flavor | no |
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
@@ -419,6 +436,8 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `cluster_vpc_cidr` | `string` | `""` | CIDR block the cluster VPC's per-zone address prefixes are carved from (e.g. "10.241.0.0/16" → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). | no |
 | `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
 | `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
+| `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0. | no |
+| `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0. | no |
 
 ## Module: `testing`
 
@@ -446,6 +465,8 @@ Source: `terraform/modules/testing/variables.tf`
 | `create_roks_cluster` | `bool` | `false` | Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster | no |
 | `cluster_vpc_id` | `string` | `""` | ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists, so cluster data-source lookups are skipped (count=0). | no |
+| `testing_jumphost_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open — the jumphosts carry a public floating IP and are reached from wherever the operator happens to be; access is key-only). Narrow this to the operator's public /32 on a shared account. | no |
+| `testing_client_vpc_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound to the testing client VPC's DEFAULT security group. Empty → the RFC-1918 private ranges, which is where in-fabric test traffic arrives from (the cluster reaches the client VPC over the Transit Gateway). Set explicitly only if a test needs a public source. | no |
 
 ## Module: `tgw_connection`
 

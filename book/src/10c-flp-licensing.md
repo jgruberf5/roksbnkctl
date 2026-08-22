@@ -1,5 +1,10 @@
 # Licensing BNK with the F5 License Proxy (FLP)
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 By default `roksbnkctl` licenses BIG-IP Next for Kubernetes (BNK) with a
 **subscription JWT** — the `subscription.jwt` (or your production token) staged in the
 orchestration COS bucket. In that mode the cluster's controller reaches F5's

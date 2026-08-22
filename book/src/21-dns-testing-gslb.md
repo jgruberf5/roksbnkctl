@@ -1,5 +1,10 @@
 # DNS testing for GSLB
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 `roksbnkctl test dns` is the diagnostic surface for DNS-driven traffic management — the kind of behaviour an F5 BIG-IP Next GSLB deployment depends on, where the *answer* a name returns isn't a single global truth but a function of *who's asking from where*.
 
 This is the longest chapter in the testing section because the question it answers is the most subtle. Connectivity testing tells you "the URL works"; throughput testing tells you "the path is fast". Both assume the name resolved. When the GSLB is the thing under test, "the name resolved" is *itself* the question — and the answer changes depending on the network vantage of whoever's asking.

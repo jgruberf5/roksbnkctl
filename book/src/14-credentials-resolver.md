@@ -1,5 +1,10 @@
 # Credentials and the resolver chain
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 `roksbnkctl` handles four kinds of secrets: an IBM Cloud API key, a kubeconfig, an SSH private key, and the Terraform state file. Each has a different threat model, a different lookup chain, and a different rule for "what's safe to commit to a workspace".
 
 This chapter is the user-facing distillation of [PRD 04 — credential propagation](https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md). PRD 04 is the design surface for developers extending the credential system; this chapter is the operational surface for users who need to know "where does my key live, and how does the tool find it".

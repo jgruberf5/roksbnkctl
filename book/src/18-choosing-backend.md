@@ -1,5 +1,10 @@
 # Choosing a backend per tool
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 [Chapter 17](./17-execution-backends.md) covered the **mechanics** of each backend. This chapter is the **decision tree**: given a tool and a scenario, which of `local` / `docker` / `k8s` / `ssh` is the right call.
 
 If you're searching for "which backend should I use", you've landed on the right page.

@@ -1,5 +1,8 @@
 # Terraform variables (terraform.tfvars)
 
+> **Variable specs live in [Chapter 29 — Terraform variable reference](./29-terraform-variable-reference.md).**
+> That chapter is generated from `terraform/variables.tf` and checked by a test.
+
 `roksbnkctl` is a thin orchestration layer over a Terraform HCL bundle. The HCL has its own variables — well over 60 of them — declared in `terraform/variables.tf`. The workspace's `config.yaml` covers the common knobs; for the rest, you reach into `terraform.tfvars` directly.
 
 This chapter is the surface for that lower layer: where the example file lives, how `roksbnkctl tfvars` bootstraps a starter, what `--var-file` does, the layering rule between `config.yaml`-derived tfvars and your overrides, and the one variable that **never** goes on disk (`ibmcloud_api_key`).

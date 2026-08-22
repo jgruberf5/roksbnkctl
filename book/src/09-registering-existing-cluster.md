@@ -1,5 +1,10 @@
 # Registering an existing cluster
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 `roksbnkctl cluster register <name>` wires `roksbnkctl` up to a ROKS cluster that already exists in your IBM Cloud account — one you didn't provision via [`cluster up`](./08-cluster-phase.md). After a successful register, the workspace behaves exactly as if you'd done `cluster up`: `roksbnkctl up` deploys BNK trials onto the registered cluster, `roksbnkctl down` tears those trials down, `roksbnkctl status` reports the cluster's identity, and so on.
 
 This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the `cluster-outputs.json` write, and a worked example.

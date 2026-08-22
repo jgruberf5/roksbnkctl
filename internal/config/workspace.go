@@ -136,7 +136,7 @@ type BNKTrustedProfileCfg struct {
 	// ["Viewer", "Editor"]. Editor is what lets the controller manage TMM's
 	// network attachments; narrowing it fails at attachment time on a running
 	// cluster rather than at apply, so change it only against a tested policy.
-	Roles []string `yaml:"roles,omitempty"`
+	Roles []string `yaml:"roles,omitempty" default:"[Viewer, Editor]"`
 }
 
 // AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is
@@ -178,7 +178,7 @@ type TargetCfg struct {
 
 type IBMCloudCfg struct {
 	Region        string `yaml:"region"`
-	ResourceGroup string `yaml:"resource_group"`
+	ResourceGroup string `yaml:"resource_group" default:"default"`
 	APIKeySource  string `yaml:"api_key_source,omitempty"` // env | keychain | config | prompt — see secrets.go
 
 	// APIKeyB64 stores the API key base64-encoded inline in the workspace
@@ -198,7 +198,7 @@ type ClusterCfg struct {
 	Create           bool   `yaml:"create"`
 	Name             string `yaml:"name"`
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
-	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
+	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty" default:"1"`
 
 	// PublicGateway controls whether the cluster subnets attach a public gateway
 	// for worker Internet egress. nil → the terraform default (true, current
@@ -206,7 +206,7 @@ type ClusterCfg struct {
 	// operator must supply private connectivity (VPEs / private service endpoints)
 	// for image pulls and IBM Cloud services. A pointer so "unset" is distinct from
 	// an explicit false. Rendered as cluster_public_gateway.
-	PublicGateway *bool `yaml:"public_gateway,omitempty"`
+	PublicGateway *bool `yaml:"public_gateway,omitempty" default:"true"`
 
 	// VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved
 	// from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18.
@@ -232,7 +232,7 @@ type ClusterCfg struct {
 	// is refused rather than planned.
 	//
 	// Empty means single-nic, so every existing config.yaml is unaffected.
-	NetworkMode string `yaml:"network_mode,omitempty"`
+	NetworkMode string `yaml:"network_mode,omitempty" default:"single-nic"`
 
 	// ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per
 	// zone in zone order, instead of creating them (#61).
@@ -252,8 +252,8 @@ type ClusterCfg struct {
 	// (the cluster module picks the smallest bx2 profile meeting both minimums).
 	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
 	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
-	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty"`
-	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty"`
+	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty" default:"16"`
+	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
 }
 
 // ResourcesCfg holds the per-resource create toggles for a prefix-driven
@@ -445,8 +445,8 @@ type BNKCfg struct {
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
 	// these for multi-tenant clusters or to avoid namespace collisions.
-	FLONamespace      string `yaml:"flo_namespace,omitempty"`
-	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
+	FLONamespace      string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
+	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
 	// (#170).
@@ -464,7 +464,7 @@ type BNKCfg struct {
 	//
 	// Ignored on 2.3, where the sweep always runs: there the crd-installer does
 	// force the CRDs and is blocked without it.
-	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty"`
+	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty" line:"2.4"`
 
 	// Advanced carries per-component environment passthrough for the 2.4
 	// CNEInstance's advanced.<component>.env[] lists (#175).
@@ -508,7 +508,7 @@ type BNKCfg struct {
 	// the `flp` phase to be up (roksbnkctl flp up) so the BNK install can point at
 	// the in-cluster F5 License Proxy. Empty → terraform default ("connected") →
 	// the JWT/connected path is unchanged. Rendered as license_mode.
-	LicenseMode string `yaml:"license_mode,omitempty"`
+	LicenseMode string `yaml:"license_mode,omitempty" default:"connected"`
 
 	// FLP holds settings for the optional F5 License Proxy phase. nil → FLP is not
 	// deployed (and license_mode must not be f5licenseproxy). The proxy's root CA
@@ -989,10 +989,10 @@ type DNSCfg struct {
 }
 
 type ThroughputCfg struct {
-	Image       string `yaml:"image,omitempty"`        // default: networkstatic/iperf3:latest
-	Duration    int    `yaml:"duration,omitempty"`     // seconds; default 30
-	Streams     int    `yaml:"streams,omitempty"`      // parallel; default 8
-	DefaultMode string `yaml:"default_mode,omitempty"` // north-south | east-west
+	Image       string `yaml:"image,omitempty" default:"networkstatic/iperf3:latest"` // default: networkstatic/iperf3:latest
+	Duration    int    `yaml:"duration,omitempty" default:"30"`                       // seconds; default 30
+	Streams     int    `yaml:"streams,omitempty" default:"8"`                         // parallel; default 8
+	DefaultMode string `yaml:"default_mode,omitempty" default:"north-south"`          // north-south | east-west
 }
 
 type ConnectivityCfg struct {
