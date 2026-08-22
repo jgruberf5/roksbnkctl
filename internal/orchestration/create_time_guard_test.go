@@ -2,6 +2,9 @@ package orchestration
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -265,4 +268,168 @@ func TestUnsetModeDefersToTheRecord(t *testing.T) {
 	if err := guardCreateTimeSettings(cctx, &bytes.Buffer{}); err == nil {
 		t.Error("an explicit single-nic against a multi-nic cluster must still be refused")
 	}
+}
+
+// stageBNKInstall records a BNK phase applied-tfvars snapshot for ws, the way a
+// real apply would: by handing WriteAppliedTFVars a var-file to render from.
+// Round-tripping through the real writer is the point — a hand-written snapshot
+// would pass even if the writer stopped recording the namespaces.
+func stageBNKInstall(t *testing.T, ws, flo, utils string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "terraform.tfvars")
+	body := fmt.Sprintf("flo_namespace = %q\nflo_utils_namespace = %q\n", flo, utils)
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatalf("staging var-file: %v", err)
+	}
+	if err := config.WriteAppliedTFVars(ws, bnkPhaseSnapshotLabel, []string{src}); err != nil {
+		t.Fatalf("staging applied tfvars: %v", err)
+	}
+	stageBNKStatePresent(t, ws)
+}
+
+// stageBNKInstallLine records a snapshot whose bnk_line is the line the
+// workspace was installed on, which is what CheckLineChange compares against.
+func stageBNKInstallLine(t *testing.T, ws, line string) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "terraform.tfvars")
+	body := fmt.Sprintf("bnk_line = %q\nflo_namespace = \"f5-bnk\"\nflo_utils_namespace = \"f5-utils\"\n", line)
+	if err := os.WriteFile(src, []byte(body), 0o600); err != nil {
+		t.Fatalf("staging var-file: %v", err)
+	}
+	if err := config.WriteAppliedTFVars(ws, bnkPhaseSnapshotLabel, []string{src}); err != nil {
+		t.Fatalf("staging applied tfvars: %v", err)
+	}
+	stageBNKStatePresent(t, ws)
+}
+
+// stageBNKStatePresent writes a BNK state file with one managed resource, which
+// is what config.DetectPresence reads. The snapshot alone does NOT mean an
+// install exists: Destroy deliberately leaves the snapshot behind, so a
+// workspace that has been torn down still has one. Tests that mean "installed"
+// have to say so here.
+func stageBNKStatePresent(t *testing.T, ws string) {
+	t.Helper()
+	dir, err := config.WorkspaceStateDir(ws)
+	if err != nil {
+		t.Fatalf("state dir: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	const body = `{"version":4,"resources":[{"mode":"managed","type":"kubectl_manifest","name":"x","instances":[{}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte(body), 0o600); err != nil {
+		t.Fatalf("staging bnk state: %v", err)
+	}
+}
+
+// stageBNKTornDown reproduces what `bnk down` actually leaves: an EMPTY state
+// and the applied-tfvars snapshot still in place. Both live in the same
+// directory, so removing the directory would delete the snapshot too — and then
+// the guard skips because it cannot read the snapshot, which is not the
+// behaviour under test and would make the test pass for the wrong reason.
+func stageBNKTornDown(t *testing.T, ws string) {
+	t.Helper()
+	dir, err := config.WorkspaceStateDir(ws)
+	if err != nil {
+		t.Fatalf("state dir: %v", err)
+	}
+	const empty = `{"version":4,"resources":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte(empty), 0o600); err != nil {
+		t.Fatalf("emptying bnk state: %v", err)
+	}
+	// The snapshot must survive, or the test proves nothing.
+	if _, err := config.ReadAppliedTFVarsReplayAssignments(ws, bnkPhaseSnapshotLabel); err != nil {
+		t.Fatalf("snapshot must still be readable after teardown, else this test is vacuous: %v", err)
+	}
+}
+
+// guardWSWithNamespaces stages a workspace asking for the given namespaces, with
+// a cluster already recorded so nothing else in the guard short-circuits.
+func guardWSWithNamespaces(t *testing.T, flo, utils string) *config.Context {
+	t.Helper()
+	cctx := stageGuardWS(t, "", &config.ClusterOutputs{ClusterName: "c", ClusterID: "c1"})
+	cctx.Workspace.BNK.FLONamespace = flo
+	cctx.Workspace.BNK.FLOUtilsNamespace = utils
+	return cctx
+}
+
+// The destructive case, end to end through the guard the BNK phase actually
+// calls: collapsing a two-namespace install deletes the utils namespace and
+// every shared component in it.
+func TestCollapsingNamespacesOnAnInstalledWorkspaceIsRefused(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-utils")
+
+	var buf bytes.Buffer
+	err := guardCreateTimeSettings(cctx, &buf)
+	if err == nil {
+		t.Fatal("collapsing the namespaces on an installed workspace must be refused")
+	}
+	if !strings.Contains(err.Error(), "f5-utils") {
+		t.Errorf("refusal must name the namespace that would be deleted: %v", err)
+	}
+}
+
+// One namespace on a workspace that has never applied is the supported way to
+// get one namespace. The guard must not stand in front of it.
+func TestCollapsedNamespacesOnAFreshWorkspacePass(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("a first install may choose one namespace: %v", err)
+	}
+}
+
+// Steady state for a single-namespace customer: installed collapsed, re-running
+// unchanged. Refusing here would make the feature unusable after day one.
+func TestUnchangedCollapsedNamespacesConverge(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+	stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-bnk")
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("re-applying an unchanged single-namespace install must converge: %v", err)
+	}
+}
+
+// The default two-namespace install, re-run with the fields left unset. This is
+// the overwhelmingly common path and it must stay silent.
+func TestUnchangedDefaultNamespacesConverge(t *testing.T) {
+	cctx := guardWSWithNamespaces(t, "", "")
+	stageBNKInstall(t, cctx.WorkspaceName, config.DefaultFLONamespace, config.DefaultFLOUtilsNamespace)
+
+	var buf bytes.Buffer
+	if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+		t.Fatalf("an unchanged default install must converge: %v", err)
+	}
+}
+
+// After `bnk down` the snapshot still describes the install that WAS there, so
+// reading it alone refuses a legitimate reinstall: a workspace is told to move
+// to a new one to change its line, and told that collapsing its namespaces
+// would delete a namespace that no longer exists. Nothing is installed, so
+// there is nothing for either guard to protect.
+func TestAfterTeardownTheCreateTimeGuardsDoNotRefuseAReinstall(t *testing.T) {
+	t.Run("namespace topology", func(t *testing.T) {
+		cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-bnk")
+		stageBNKInstall(t, cctx.WorkspaceName, "f5-bnk", "f5-utils")
+		stageBNKTornDown(t, cctx.WorkspaceName)
+
+		var buf bytes.Buffer
+		if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+			t.Errorf("collapsing namespaces on a torn-down workspace must be allowed: %v", err)
+		}
+	})
+
+	t.Run("release line", func(t *testing.T) {
+		cctx := guardWSWithNamespaces(t, "f5-bnk", "f5-utils")
+		cctx.Workspace.BNK.ManifestVersion = "2.4.0-EA"
+		stageBNKInstallLine(t, cctx.WorkspaceName, "2.3")
+		stageBNKTornDown(t, cctx.WorkspaceName)
+
+		var buf bytes.Buffer
+		if err := guardCreateTimeSettings(cctx, &buf); err != nil {
+			t.Errorf("moving line on a torn-down workspace must be allowed: %v", err)
+		}
+	})
 }

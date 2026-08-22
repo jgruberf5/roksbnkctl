@@ -35,7 +35,56 @@ locals {
   # dropped all nine FLO-side bindings while the utils half stayed. The install
   # then failed in the cluster, at pod start, naming service accounts rather than
   # the setting that caused it (#65).
-  scc_policy_assignments = concat(
+  # BNK 2.4 collapses the SCC surface (#171). FLO grants its own components what
+  # they need, so the guide asks for ONE binding for the install — privileged on
+  # the FLO service account — plus one per application namespace. We create
+  # roughly nineteen for 2.3.
+  #
+  # `!= "2.4"` rather than `== "2.3"`: an unrecognised line keeps the 2.3 set,
+  # which is over-broad but working, where treating it as 2.4 would strip
+  # privileges a future release may still require and fail at pod admission on a
+  # running cluster.
+  line_pre_24 = var.bnk_line != "2.4"
+
+  # See the note on the readiness gate below. 2.3 cannot wait on the aggregate
+  # without deadlocking against its own licensing step; 2.4 must, because
+  # CNEControllerAvailable is True on an install where TMM is 0/3 and nothing
+  # passes traffic.
+  # The GATE is CNEControllerAvailable on BOTH lines, and that is not the same
+  # question as "is this install healthy".
+  #
+  # It flips when the CNE controller is up, which is what licensing needs — and
+  # the License CR is gated on this id. Waiting on the aggregate Available here
+  # DEADLOCKS on either line: Available cannot go True until TMM is licensed, TMM
+  # cannot be licensed until the License CR applies, and the License CR waits on
+  # this gate. Observed on a live 2.4 install (#167): 16 conditions True,
+  # F5TmmAvailable=False (Pending), no License CR, and the 15-minute wait timed
+  # out having blocked the very step that would have cleared it.
+  #
+  # The aggregate is checked AFTER licensing instead — see
+  # null_resource.cneinstance_available_24 below.
+  cneinstance_ready_condition = "CNEControllerAvailable"
+
+  # The 2.4 set: the one binding the install needs.
+  #
+  # The guide also asks for one per APPLICATION namespace (`-n f5-app -z default`).
+  # Those are not created here: this module knows the FLO and utils namespaces and
+  # nothing about where a user will run workloads, and inventing a list would
+  # either be empty or wrong. It stays an operator step until an app-namespace
+  # input exists, and #175 is where that surface gets designed.
+  # The name the resource and the outputs already use, now line-selected. Keeping
+  # it means the SCC report in outputs.tf describes what was actually applied
+  # rather than the 2.3 set regardless of line.
+  scc_policy_assignments = local.line_pre_24 ? local.scc_policy_assignments_23 : local.scc_policy_assignments_24
+
+  scc_policy_assignments_24 = [
+    {
+      namespace       = var.flo_namespace
+      service_account = "flo-f5-lifecycle-operator"
+    },
+  ]
+
+  scc_policy_assignments_23 = concat(
     # FLO-namespace service accounts.
     [
       {
@@ -145,6 +194,167 @@ locals {
     { name = "GTM_PASSWORD", value = var.cneinstance_gtm_password },
   ]
 
+  # ── advanced.<component>.env ────────────────────────────────────────────────
+  #
+  # The defaults this module has always emitted, hoisted so that
+  # `cneinstance_advanced_env` (#175) can actually reach them. That variable was
+  # declared, rendered as a tfvar and documented, but nothing in terraform read
+  # it — the override was a no-op end to end.
+  #
+  # A user entry REPLACES a default of the same name rather than appending a
+  # second copy: the CNEInstance spec is read by the lifecycle operator, not by
+  # kubelet, so "last duplicate wins" is not a rule we get to rely on.
+  #
+  # With no overrides set, the filter removes nothing and the appended list is
+  # empty, so every component renders exactly the bytes it rendered before.
+  adv_env_defaults = {
+    coremon = [
+      {
+        name  = "COREMOND_OVERRIDE_CORE_PATTERN"
+        value = "true"
+      }
+    ]
+    cneController = concat([
+      {
+        name  = "TMM_DEFAULT_MTU"
+        value = "9000"
+      },
+      {
+        name  = "CLOUD_ENV"
+        value = tostring(var.cneinstance_cloud_env)
+      },
+      {
+        name  = "CLOUD_PROVIDER"
+        value = var.cneinstance_cloud_provider
+      },
+      {
+        name  = "CLOUD_NETWORK_CONFIGMAP"
+        value = "cloud-network-mapping"
+      },
+      {
+        name  = "VPC_NAME"
+        value = var.cneinstance_vpc_name
+      },
+      {
+        name  = "CLOUD_REGION"
+        value = var.cneinstance_cloud_region
+      },
+      {
+        name  = "IBM_TRUSTED_PROFILE_ID"
+        value = var.cneinstance_ibm_trusted_profile_id
+      },
+      {
+        name  = "GSLB_DATACENTER_NAME"
+        value = var.cneinstance_gslb_datacenter_name
+      },
+      {
+        name  = "CLOUD_VPC"
+        value = var.cneinstance_vpc_name
+      },
+      {
+        name  = "CLOUD_TRUSTED_PROFILE"
+        value = var.cneinstance_ibm_trusted_profile_id
+      }
+    ], local.cnecontroller_gtm_env)
+    tmm = [
+      {
+        name  = "TMM_CALICO_ROUTER"
+        value = "default"
+      },
+      {
+        name  = "TMM_DEFAULT_MTU"
+        value = "9000"
+      },
+      {
+        name  = "PAL_CPU_SET"
+        value = "0,2"
+      },
+      {
+        name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
+        value = "TRUE"
+      },
+      # Pod CIDR TMM routes to (install-guide value = ROKS default pod
+      # subnet). Was missing — without it TMM can't route to application
+      # pods.
+      {
+        name  = "TMM_K8S_ROUTES"
+        value = var.cneinstance_tmm_k8s_routes
+      }
+    ]
+    pseudoCNI = [
+      {
+        name  = "DISABLE_CHECKSUM_OFFLOAD"
+        value = "true"
+      }
+    ]
+  }
+
+  # 2.4 runs the controller off Infra + GatewaySettings instead of the
+  # cloud-network-mapping ConfigMap, and the flag that selects that model is
+  # this one. Without it the controller never reconciles the CRs `gateway up`
+  # applies: they sit at Accepted=Unknown / "Waiting for controller" forever,
+  # with an epoch-zero transition time showing nothing ever touched them.
+  # Verified against a live 2.4 cluster, which is how this was found.
+  #
+  # It is a default, not an opt-in, because on 2.4 there is no working
+  # configuration without it. It stays overridable like any other entry.
+  adv_env_line = local.line_pre_24 ? {} : {
+    cneController = [
+      {
+        name  = "USE_GATEWAY_SETTINGS"
+        value = "true"
+      },
+    ]
+  }
+
+  # `lookup(m, k, [])` is not usable here: adv_env_defaults is an OBJECT (its
+  # keys hold lists of different lengths), and lookup() requires the default to
+  # match the collection's element type. `terraform validate` accepts it and it
+  # fails at evaluation, so this is written as an explicit key test instead.
+  # The user map is part of the key set, not just the value set: a component
+  # that exists only there still has to get an entry in adv_env, or the
+  # adv_env_extra lookup below indexes a key that was never built.
+  adv_env_base = { for c in distinct(concat(keys(local.adv_env_defaults), keys(local.adv_env_line), keys(var.cneinstance_advanced_env))) :
+    c => concat(
+      contains(keys(local.adv_env_defaults), c) ? local.adv_env_defaults[c] : [],
+      contains(keys(local.adv_env_line), c) ? local.adv_env_line[c] : [],
+    )
+  }
+
+  adv_env = { for c, d in local.adv_env_base :
+    c => concat(
+      [for e in d : e if !contains(keys(lookup(var.cneinstance_advanced_env, c, {})), e.name)],
+      [for k in sort(keys(lookup(var.cneinstance_advanced_env, c, {}))) :
+        { name = k, value = var.cneinstance_advanced_env[c][k] }
+      ],
+    )
+  }
+
+  # Every component that has a STATIC attribute in the advanced block below.
+  # This is deliberately NOT keys(adv_env_defaults): three of these seven carry
+  # settings but no env defaults, and subtracting only the four with defaults
+  # sent them through adv_env_extra into a SHALLOW merge, which replaced the
+  # whole object. An override of envDiscovery silently deleted `enabled`,
+  # `stopOnFail` and `runAfterSuccess`; demoMode and maintenanceMode lost their
+  # `enabled`. Adding a component to the block below means adding it here.
+  adv_env_static_components = [
+    "coremon", "envDiscovery", "cneController", "demoMode", "maintenanceMode",
+    "tmm", "pseudoCNI",
+  ]
+
+  # Components the product gains between releases: named only in the user map,
+  # with no static attribute of their own. Empty map -> merge() is the identity.
+  adv_env_extra = { for c in setsubtract(keys(var.cneinstance_advanced_env), toset(local.adv_env_static_components)) :
+    c => { env = local.adv_env[c] }
+  }
+
+  # For the three static components with no env defaults, an env list is added
+  # only when the user actually asked for one. Attaching `env = []`
+  # unconditionally would put a new key in the spec that 2.3 never rendered.
+  adv_env_optional = { for c in ["envDiscovery", "demoMode", "maintenanceMode"] :
+    c => contains(keys(var.cneinstance_advanced_env), c) ? { env = local.adv_env[c] } : {}
+  }
+
   cneinstance_spec = {
     product = {
       gatewayAPI = var.cneinstance_gateway_api
@@ -182,107 +392,32 @@ locals {
     coreCollection = {
       enabled = true
     }
-    advanced = {
+    advanced = merge({
       coremon = {
         hostPath = true
-        env = [
-          {
-            name  = "COREMOND_OVERRIDE_CORE_PATTERN"
-            value = "true"
-          }
-        ]
+        env      = local.adv_env["coremon"]
       }
-      envDiscovery = {
+      envDiscovery = merge({
         enabled         = var.cneinstance_env_discovery
         stopOnFail      = var.cneinstance_env_discovery
         runAfterSuccess = var.cneinstance_env_discovery
-      }
+      }, local.adv_env_optional["envDiscovery"])
       cneController = {
-        env = concat([
-          {
-            name  = "TMM_DEFAULT_MTU"
-            value = "9000"
-          },
-          {
-            name  = "CLOUD_ENV"
-            value = tostring(var.cneinstance_cloud_env)
-          },
-          {
-            name  = "CLOUD_PROVIDER"
-            value = var.cneinstance_cloud_provider
-          },
-          {
-            name  = "CLOUD_NETWORK_CONFIGMAP"
-            value = "cloud-network-mapping"
-          },
-          {
-            name  = "VPC_NAME"
-            value = var.cneinstance_vpc_name
-          },
-          {
-            name  = "CLOUD_REGION"
-            value = var.cneinstance_cloud_region
-          },
-          {
-            name  = "IBM_TRUSTED_PROFILE_ID"
-            value = var.cneinstance_ibm_trusted_profile_id
-          },
-          {
-            name  = "GSLB_DATACENTER_NAME"
-            value = var.cneinstance_gslb_datacenter_name
-          },
-          {
-            name  = "CLOUD_VPC"
-            value = var.cneinstance_vpc_name
-          },
-          {
-            name  = "CLOUD_TRUSTED_PROFILE"
-            value = var.cneinstance_ibm_trusted_profile_id
-          }
-        ], local.cnecontroller_gtm_env)
+        env = local.adv_env["cneController"]
       }
-      demoMode = {
+      demoMode = merge({
         enabled = true
-      }
-      maintenanceMode = {
+      }, local.adv_env_optional["demoMode"])
+      maintenanceMode = merge({
         enabled = false
-      }
+      }, local.adv_env_optional["maintenanceMode"])
       tmm = {
-        env = [
-          {
-            name  = "TMM_CALICO_ROUTER"
-            value = "default"
-          },
-          {
-            name  = "TMM_DEFAULT_MTU"
-            value = "9000"
-          },
-          {
-            name  = "PAL_CPU_SET"
-            value = "0,2"
-          },
-          {
-            name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
-            value = "TRUE"
-          },
-          # Pod CIDR TMM routes to (install-guide value = ROKS default pod
-          # subnet). Was missing — without it TMM can't route to application
-          # pods.
-          {
-            name  = "TMM_K8S_ROUTES"
-            value = var.cneinstance_tmm_k8s_routes
-          }
-        ]
+        env = local.adv_env["tmm"]
       }
       pseudoCNI = {
-        env = [
-          {
-            name  = "DISABLE_CHECKSUM_OFFLOAD"
-            value = "true"
-          }
-        ]
+        env = local.adv_env["pseudoCNI"]
       }
-    }
+    }, local.adv_env_extra)
   }
 }
 
@@ -453,8 +588,27 @@ resource "null_resource" "cnecontroller_ready" {
   # tfx wait (watch-first, event-driven) replaces the curl+grep+tr poll: block until
   # the CNEInstance reports condition CNEControllerAvailable=True. No interpreter =>
   # cmd.exe execs roksbnkctl.exe on Windows; token via KUBE_TOKEN env.
+  # WHICH CONDITION, and why it differs by line (#167).
+  #
+  # 2.3 waits on CNEControllerAvailable. That is correct there and deliberate: it
+  # flips when the CNE controller is up, BEFORE TMM needs its license, so the
+  # License CR — which is gated on this id — can proceed and TMM reaches Available
+  # afterwards. Waiting on the aggregate on 2.3 would deadlock: TMM cannot become
+  # Available until it is licensed, and licensing waits on this gate.
+  #
+  # 2.4 must wait on the aggregate Available. On a live 2.4 cluster, while
+  # unlicensed:
+  #
+  #     CNEControllerAvailable=True      <- what a 2.3-style wait sees
+  #     Available=False                  <- the truth
+  #     F5TmmAvailable=False
+  #
+  # TMM was 0/3 Ready and nothing could pass traffic, and a 2.3-style wait would
+  # have declared that install successful. A false green is worse than a timeout:
+  # it sends the operator looking at their own configuration for a fault that is
+  # not there.
   provisioner "local-exec" {
-    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=CNEControllerAvailable=True --timeout 15m"
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr k8s.f5.com/v1/cneinstances --ns ${var.flo_namespace} --name ${local.cneinstance_name} --for condition=${local.cneinstance_ready_condition}=True --timeout 15m"
     environment = {
       KUBE_TOKEN = var.kube_token
     }

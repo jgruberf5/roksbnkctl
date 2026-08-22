@@ -25,9 +25,19 @@ spec:
     parameters:
       - name: bnkforge
         value: "true"
-      # The cwc guard works around an F5 packaging defect (a single-replica RWO
-      # Deployment shipped with RollingUpdate, so the replacement pod cannot attach the
-      # volume). Set false once F5 ships `strategy: Recreate`.
+      # The cwc guard works around an F5 packaging defect on BNK 2.3: a single-replica
+      # RWO Deployment shipped with RollingUpdate, so the replacement pod cannot attach
+      # the volume and licensing never activates.
+      #
+      # FIXED IN 2.4 (#169) — the 2.4 Deployment ships `strategy: Recreate` itself,
+      # observed on a live 2.4.0-EA cluster at revision 1 with no patch annotations.
+      # SET THIS FALSE when running a 2.4.* manifest; leave it true for 2.3.*, which
+      # still ships RollingUpdate and is still the default manifest version.
+      #
+      # Deliberately a parameter rather than derived from the manifest here: an Argo
+      # parameter default cannot branch on another parameter, and a wrong-but-silent
+      # default is worse than an explicit one. The shell demos derive it — see
+      # bnk_line_of in scripts/demos/lib/bnk-line.sh.
       - name: cwc-guard
         value: "true"
   volumes:
@@ -181,7 +191,12 @@ spec:
           args:
             - |
               [ "${CWC_GUARD_ENABLED:-true}" = "true" ] || { echo "cwc guard disabled"; exit 0; }
-              NS="${CWC_NAMESPACE:-f5-utils}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
+              # CWC lives in the SHARED-components namespace, which is f5-utils by default
+              # but equals the BNK namespace on a ONE-namespace install (#66). Follow
+              # ROKSBNKCTL_FLO_UTILS_NAMESPACE when it is set, or this guard watches a
+              # namespace that does not exist and silently never patches — and the
+              # Multi-Attach deadlock it exists to break just hangs bnk up instead.
+              NS="${CWC_NAMESPACE:-${ROKSBNKCTL_FLO_UTILS_NAMESPACE:-f5-utils}}"; DEP="${CWC_DEPLOYMENT:-f5-spk-cwc}"
               K="roksbnkctl -w bnkconn kubectl"
               patched=0
               # ~27 min, comfortably covering bnk up's 15m license gate.

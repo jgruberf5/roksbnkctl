@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +120,11 @@ func fullyPopulatedWorkspace(t *testing.T) *config.Workspace {
 	ws.BNK.FLOUtilsNamespace = "f5-utils-x"
 	ws.BNK.GSLBDatacenterName = "dc1"
 	ws.BNK.CNEInstanceSize = "small"
-	ws.BNK.ManifestVersion = "v2.3.0"
+	// A REAL manifest version, not "v2.3.0". The published strings carry no "v"
+	// (2.3.0-3.2598.3-0.0.170, 2.4.0-EA), and the line regex is anchored to a
+	// leading digit — so the synthetic value parsed to no line at all and this
+	// fixture silently exercised none of the per-line rendering.
+	ws.BNK.ManifestVersion = config.DefaultManifestVersion
 	ws.BNK.FARRepoURL = "repo.f5.com"
 	ws.BNK.FarAuthFile = "far-auth.tgz"
 	ws.BNK.SubscriptionJWTFile = "subscription.jwt"
@@ -224,4 +229,68 @@ func writeTempFile(t *testing.T, name, content string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// ONE NAMESPACE (#66). A customer requirement, supported since v1.44.0, and
+// until now pinned by nothing: the goldens above set flo_namespace and
+// flo_utils_namespace to two DIFFERENT values, so a renderer change that broke
+// the collapsed case would pass every test in this package.
+//
+// This is deliberately a render-level pin rather than a plan-level one. The
+// terraform side already guards the collapse with `count = ... && utils != flo`;
+// what was unguarded is the step before it — that the tool still emits both
+// names, identically, when they are equal. Emitting one, or silently dropping
+// the utils name because it "matches the default", would take the count guard
+// out of the picture entirely and recreate the AlreadyExists failure #66 fixed.
+func TestOneNamespaceRendersBothNamesIdentically(t *testing.T) {
+	const shared = "f5-bnk"
+	for name, render := range map[string]func(io.Writer, *config.Workspace, *config.RegistryMirror) error{
+		"full":   renderFullBody,
+		"sparse": renderSparseBody,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ws := fullyPopulatedWorkspace(t)
+			ws.BNK.FLONamespace = shared
+			ws.BNK.FLOUtilsNamespace = shared
+			if name == "sparse" {
+				ws.Prefix = ""
+			}
+
+			var buf bytes.Buffer
+			if err := render(&buf, ws, nil); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+
+			for _, want := range []string{
+				`flo_namespace = "` + shared + `"`,
+				`flo_utils_namespace = "` + shared + `"`,
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("collapsed namespaces must still render %s\ngot:\n%s", want, out)
+				}
+			}
+		})
+	}
+}
+
+// The other half of the same guarantee: an unset namespace pair renders NEITHER
+// name, so terraform's defaults apply and the two-namespace install is
+// unchanged. Rendering a name here would be equally wrong — it would pin a
+// default the tool has no business owning.
+func TestUnsetNamespacesRenderNeitherName(t *testing.T) {
+	ws := fullyPopulatedWorkspace(t)
+	ws.BNK.FLONamespace = ""
+	ws.BNK.FLOUtilsNamespace = ""
+
+	var buf bytes.Buffer
+	if err := renderFullBody(&buf, ws, nil); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, forbidden := range []string{"flo_namespace", "flo_utils_namespace"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("%s rendered for a workspace that never set it", forbidden)
+		}
+	}
 }

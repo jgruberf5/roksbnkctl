@@ -147,12 +147,17 @@ func runBnkDown(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	// The Gateway phase's CRs (F5BnkGateway, Egress, SnatPool, StaticRoutes)
-	// live in the BNK namespace (f5-bnk). Destroying BNK deletes that namespace,
-	// and those CRs' finalizers — which only the (now-removed) CNE controller
-	// can clear — block the deletion and hang the destroy. Tear the Gateway
-	// phase down first. Mirrors the symmetric guard on `cluster down`.
+	// live in the BNK namespace. Destroying BNK deletes that namespace, and
+	// those CRs' finalizers — which only the (now-removed) CNE controller can
+	// clear — block the deletion and hang the destroy. Tear the Gateway phase
+	// down first. Mirrors the symmetric guard on `cluster down`.
+	//
+	// The namespace is named from config rather than the literal f5-bnk: this
+	// message tells someone where to look, and pointing them at a namespace
+	// their deployment does not use is worse than not naming one.
 	if pres, perr := config.DetectPresence(cctx.WorkspaceName); perr == nil && pres.Gateway {
-		return errors.New("the Gateway phase has resources, and its CRs live in the BNK namespace (f5-bnk) — destroying BNK now would hang on their finalizers. Run `roksbnkctl gateway down` first, then `roksbnkctl bnk down`")
+		floNS, _ := cctx.Workspace.BNKNamespaces()
+		return fmt.Errorf("the Gateway phase has resources, and its CRs live in the BNK namespace (%s) — destroying BNK now would hang on their finalizers. Run `roksbnkctl gateway down` first, then `roksbnkctl bnk down`", floNS)
 	}
 	if err := runTrialDown(cmd, nil); err != nil {
 		return err

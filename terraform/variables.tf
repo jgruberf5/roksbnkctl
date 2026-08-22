@@ -101,9 +101,24 @@ variable "openshift_cluster_name" {
 }
 
 variable "openshift_cluster_version" {
-  description = "OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available."
+  description = <<-EOT
+    OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty
+    uses the latest available.
+
+    Do NOT include the "_openshift" suffix — this module appends it. A value that
+    carries it matches nothing, and an unmatched value used to build the newest
+    OCP silently (#178).
+  EOT
   type        = string
   default     = "4.20"
+
+  validation {
+    # The suffix is appended by modules/roks_cluster/modules/cluster; supplying
+    # it is always wrong, and catching it here costs a second where the
+    # alternative was a 45-minute install failure on an unintended OCP version.
+    condition     = !can(regex("_openshift", var.openshift_cluster_version))
+    error_message = "openshift_cluster_version must be a bare version like \"4.20\" — the \"_openshift\" suffix is appended automatically."
+  }
 }
 
 variable "roks_workers_per_zone" {
@@ -304,16 +319,56 @@ variable "f5_cne_subscription_jwt" {
   sensitive   = true
 }
 
+# The BNK release line the rest of this tree gates on.
+#
+# WHY A VARIABLE AND NOT AN OVERLAY. Per-line HCL could live in terraform/lines/
+# (see lines/README.md), but 2.4's differences are overwhelmingly ADDITIVE — new
+# CR kinds alongside the old ones — and `count` expresses that without forking a
+# file. An overlay is a copy, and two copies of a file drift.
+#
+# DERIVED, NOT CONFIGURED. roksbnkctl renders this from bnk.manifest_version, so
+# it cannot disagree with the release actually being installed. It is declared
+# with a default so a hand-run `terraform apply` still plans something coherent,
+# and validated so a typo fails at plan time rather than by quietly building the
+# wrong line.
+variable "bnk_line" {
+  description = "BNK release line driving per-release resource gating (2.3 or 2.4). Derived by roksbnkctl from bnk.manifest_version — set it by hand only for a standalone terraform run."
+  type        = string
+  default     = "2.3"
+
+  validation {
+    condition     = contains(["2.3", "2.4"], var.bnk_line)
+    error_message = "bnk_line must be 2.3 or 2.4."
+  }
+}
+
+# SET BOTH TO THE SAME VALUE FOR ONE NAMESPACE (#66). Supported and verified —
+# the utils-side namespace and its duplicate secrets are then not created.
+#
+# Validated as RFC 1123 labels because the reference documentation has claimed
+# they were for some time and nothing enforced it. An invalid namespace name is
+# not caught until the apply, where it surfaces as a Kubernetes admission error
+# partway through creating things.
 variable "flo_namespace" {
   description = "Kubernetes namespace for the F5 Lifecycle Operator"
   type        = string
   default     = "f5-bnk"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.flo_namespace)) && length(var.flo_namespace) <= 63
+    error_message = "flo_namespace must be a valid RFC 1123 label: lowercase alphanumerics and '-', starting and ending alphanumeric, at most 63 characters."
+  }
 }
 
 variable "flo_utils_namespace" {
-  description = "Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license"
+  description = "Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license. Set equal to flo_namespace to install into ONE namespace."
   type        = string
   default     = "f5-utils"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.flo_utils_namespace)) && length(var.flo_utils_namespace) <= 63
+    error_message = "flo_utils_namespace must be a valid RFC 1123 label: lowercase alphanumerics and '-', starting and ending alphanumeric, at most 63 characters."
+  }
 }
 
 variable "bigip_username" {
@@ -1017,4 +1072,26 @@ variable "cluster_vpc_default_sg_inbound_cidrs" {
     condition     = alltrue([for c in var.cluster_vpc_default_sg_inbound_cidrs : can(cidrhost(c, 0))])
     error_message = "cluster_vpc_default_sg_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
   }
+}
+
+variable "cneinstance_advanced_env" {
+  description = <<-EOT
+    Per-component environment passthrough for the BNK 2.4 CNEInstance's
+    advanced.<component>.env[] lists (#175).
+
+    A map of component name to a map of env name/value, e.g.
+
+      cneinstance_advanced_env = {
+        tmm           = { TMM_DEFAULT_MTU = "9000" }
+        cneController = { USE_GATEWAY_SETTINGS = "true" }
+      }
+
+    Empty renders no advanced block at all, so a workspace that sets none of
+    these plans exactly as it did before. A map rather than a typed object
+    because the component set belongs to the product — F5 adds components between
+    releases, and a typed schema would make each addition a code change here
+    before anyone could use it.
+  EOT
+  type        = map(map(string))
+  default     = {}
 }

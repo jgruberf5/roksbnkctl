@@ -33,13 +33,21 @@ output "cneinstance_scc_policies_applied" {
     # distinct(), because that is what for_each actually consumes — counting the
     # raw list over-reports by one whenever the namespaces are collapsed.
     total_policies = length(distinct(local.scc_policy_assignments))
+    # distinct() here too, and for a second reason beyond de-duplication: when
+    # the namespaces are COLLAPSED both filters match every assignment, so the
+    # two breakdowns each reported all 19 while total_policies reported the real
+    # count. A status output that disagrees with itself is worse than one that is
+    # merely coarse — it invites the reader to trust the wrong half.
     flo_namespace_policies = [
-      for assignment in local.scc_policy_assignments
+      for assignment in distinct(local.scc_policy_assignments)
       : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == var.flo_namespace
     ]
+    # Empty when the namespaces are collapsed, which is the honest answer: there
+    # is no separate utils namespace to have applied anything to.
     f5_utils_policies = [
-      for assignment in local.scc_policy_assignments
-      : "${assignment.namespace}/${assignment.service_account}" if assignment.namespace == var.utils_namespace
+      for assignment in distinct(local.scc_policy_assignments)
+      : "${assignment.namespace}/${assignment.service_account}"
+      if assignment.namespace == var.utils_namespace && var.utils_namespace != var.flo_namespace
     ]
     policy_names = [
       for key, km in kubectl_manifest.cneinstance_scc_policies : km.name

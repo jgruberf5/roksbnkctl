@@ -92,6 +92,18 @@ func RunGatewayUp(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// The release line is a create-time setting, and this phase can reach a
+	// cluster without going through prepareBNKUp — which is where the other
+	// create-time guards live (#177). The gateway phase is not incidental to a
+	// line flip: 2.3 points the Gateway at k8s.f5net.com/F5BnkGateway and 2.4 at
+	// gateway.k8s.f5.com/GatewaySettings, so `gateway up` after a manifest bump
+	// would rewrite the data-plane surface against an install built for the other
+	// line.
+	if applied, aerr := config.ReadAppliedTFVarsReplayAssignments(cctx.WorkspaceName, bnkPhaseSnapshotLabel); aerr == nil {
+		if err := config.CheckLineChange(cctx.Workspace, applied); err != nil {
+			return err
+		}
+	}
 	// PRD 12: fill empty gateway client subnets from the deployed Testing
 	// phase's jumphost private IPs before tfvars render. Best-effort —
 	// config/user values always win, and a missing test rig just warns.

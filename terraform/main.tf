@@ -96,6 +96,9 @@ module "cert_manager" {
 # ============================================================
 
 module "flo" {
+  # The release line, so the module can gate per-release resources with `count`
+  # rather than a forked copy of the tree (PRD 18 §4).
+  bnk_line       = var.bnk_line
   source         = "./modules/flo"
   cluster_absent = var.cluster_absent
 
@@ -166,8 +169,13 @@ locals {
 # ============================================================
 
 module "cne_instance" {
+  # The release line, so the module can gate per-release resources with `count`
+  # rather than a forked copy of the tree (PRD 18 §4).
+  bnk_line       = var.bnk_line
   source         = "./modules/cne_instance"
   cluster_absent = var.cluster_absent
+
+  cneinstance_advanced_env = var.cneinstance_advanced_env
 
   ibmcloud_api_key                    = var.ibmcloud_api_key
   ibmcloud_cluster_region             = var.ibmcloud_cluster_region
@@ -209,6 +217,8 @@ module "cne_instance" {
 # ============================================================
 
 module "license" {
+  # For the post-licensing health check on the 2.4 line (#167).
+  bnk_line       = var.bnk_line
   source         = "./modules/license"
   cluster_absent = var.cluster_absent
   providers      = { http = http }
@@ -275,7 +285,10 @@ module "testing" {
 # standalone `roksbnkctl gateway up/down` against an already-healthy BNK.
 
 module "gateway" {
-  source = "./modules/gateway"
+  # The release line, so the module can gate per-release resources with `count`
+  # rather than a forked copy of the tree (PRD 18 §4).
+  bnk_line = var.bnk_line
+  source   = "./modules/gateway"
 
   ibmcloud_api_key           = var.ibmcloud_api_key
   ibmcloud_cluster_region    = var.ibmcloud_cluster_region

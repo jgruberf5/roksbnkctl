@@ -1,3 +1,16 @@
+variable "bnk_line" {
+  description = <<-EOT
+    BNK release line driving per-release resource gating ("2.3" or "2.4").
+
+    Derived by roksbnkctl from bnk.manifest_version and rendered as a tfvar; the
+    modules gate with `count` on it rather than the tree being forked per line,
+    because the 2.4 changes are additive resources and two copies of a file
+    drift (PRD 18 §4).
+  EOT
+  type        = string
+  default     = "2.3"
+}
+
 # ── Cluster wiring (mirrors the cne_instance / testing modules) ──────────────
 variable "ibmcloud_api_key" {
   description = "IBM Cloud API key"
@@ -276,4 +289,54 @@ variable "gateway_static_route_gw_host" {
   description = "Host number in ext_vlan_cidr used as each zone's static-route gateway"
   type        = number
   default     = 1
+}
+
+# ── BNK 2.4 network model (#168) ─────────────────────────────────────────────
+
+variable "gateway_infra_name" {
+  description = "Name of the BNK 2.4 Infra CR (gateway.k8s.f5.com/v1alpha1) in the FLO namespace."
+  type        = string
+  default     = "cloud-infra"
+}
+
+variable "gateway_settings_name" {
+  description = "Name of the BNK 2.4 GatewaySettings CR in the FLO namespace."
+  type        = string
+  default     = "gw-settings-common"
+}
+
+variable "gateway_nad_name" {
+  description = <<-EOT
+    NetworkAttachmentDefinition the 2.4 Infra CR's external VLAN attaches to.
+
+    The guide's NAD list is ens3-ipvlan-l2 only. `macvlan-internal` is RESERVED by
+    the controller for the internal NAD it creates itself on dummy0, owned by the
+    F5Tmm CR — do not point this at that name.
+  EOT
+  type        = string
+  default     = "ens3-ipvlan-l2"
+}
+
+variable "gateway_egress_vxlan_port" {
+  description = <<-EOT
+    egressDefaults.port on the 2.4 Infra CR. The CRD default is 4789; the install
+    guide's worked example uses 6789, which is what this defaults to so a stock
+    install matches the vendor's own manifest.
+  EOT
+  type        = number
+  default     = 6789
+}
+
+variable "gateway_egress_vxlan_subnet" {
+  description = <<-EOT
+    egressDefaults.subnet on the 2.4 Infra CR. Empty leaves the controller's
+    default of 10.0.0.0/16.
+
+    That default MUST NOT overlap any IPAM pool. Set this when a pool would
+    collide — the vendor's example uses 50.0.0.0/16 for exactly that reason.
+    Left empty rather than defaulting to 50.0.0.0/16, because silently claiming a
+    /16 nobody asked for is its own surprise.
+  EOT
+  type        = string
+  default     = ""
 }

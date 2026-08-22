@@ -17,6 +17,12 @@ locals {
   # only turns an accidental phase combination into a clean no-op, not a crash.
   enabled = var.deploy_gateway && !var.create_roks_cluster
 
+  # The 2.3 network surface. A 2.4 controller runs with USE_GATEWAY_SETTINGS=true
+  # and ignores the F5SPK* family and the F5BnkGateway entirely, reading Infra +
+  # GatewaySettings instead (#168) — so creating them there leaves objects nothing
+  # reads. `!= "2.4"` keeps the 2.3 behaviour for an unrecognised line.
+  line_pre_24 = var.bnk_line != "2.4"
+
   zone_names = [for i in range(length(var.cneinstance_network_zones)) : "${var.ibmcloud_cluster_region}-${i + 1}"]
 
   # The GatewayClass controllerName is not a free-form label — it is the string
@@ -164,7 +170,7 @@ resource "kubectl_manifest" "gateway_class" {
 }
 
 resource "kubectl_manifest" "bnk_gateway" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5BnkGateway"
@@ -180,10 +186,48 @@ resource "kubectl_manifest" "bnk_gateway" {
   force_conflicts   = true
 }
 
+# ONE NAMESPACE, CONTINUED (#66).
+#
+# The BNK phase learned to collapse flo_namespace and flo_utils_namespace into
+# one name. A customer who wants ONE namespace means all of it, so they set
+# gateway.app_namespace to the same value too — and this resource had no guard.
+#
+# It would not merely be redundant, it would FAIL. The gateway phase runs against
+# its own state dir with deploy_bnk = false, so kubernetes_namespace_v1.flo is
+# count 0 in this root and terraform has no idea the namespace already exists. It
+# plans a create, and the apply dies on `namespaces "f5-bnk" already exists`.
+#
+# Guarded in the same direction as the BNK phase's pair: the namespace that
+# something else owns is the conditional one. When the names are equal the BNK
+# phase owns it, exactly as flo owns it there.
 resource "kubernetes_namespace_v1" "app" {
-  count = local.enabled ? 1 : 0
+  count = local.enabled && var.app_namespace != var.flo_namespace ? 1 : 0
   metadata {
     name = var.app_namespace
+  }
+}
+
+# The Gateway itself is line-conditional in two ways (#173):
+#
+#   parametersRef — 2.3 points at k8s.f5net.com/F5BnkGateway; 2.4 points at
+#   gateway.k8s.f5.com/GatewaySettings, the CR emitted in config_24.tf.
+#
+#   namespace — the 2.4 guide is explicit that "GatewaySettings and Gateways
+#   [are] to be applied in Same Namespace", and puts GatewaySettings, Gateway and
+#   EgressGateway all in the FLO namespace. On 2.3 the Gateway lives in the
+#   application namespace. The HTTPRoute stays in the app namespace on both lines
+#   and reaches across via parentRefs.namespace.
+locals {
+  gateway_ns_effective = local.line_pre_24 ? var.app_namespace : var.flo_namespace
+
+  gateway_parameters_ref = local.line_pre_24 ? {
+    group = "k8s.f5net.com"
+    kind  = "F5BnkGateway"
+    name  = var.gateway_bnkgateway_name
+    } : {
+    group = "gateway.k8s.f5.com"
+    kind  = "GatewaySettings"
+    name  = var.gateway_settings_name
   }
 }
 
@@ -192,14 +236,10 @@ resource "kubectl_manifest" "gateway" {
   yaml_body = yamlencode({
     apiVersion = "gateway.networking.k8s.io/v1"
     kind       = "Gateway"
-    metadata   = { name = var.gateway_name, namespace = var.app_namespace }
+    metadata   = { name = var.gateway_name, namespace = local.gateway_ns_effective }
     spec = {
       infrastructure = {
-        parametersRef = {
-          group = "k8s.f5net.com"
-          kind  = "F5BnkGateway"
-          name  = var.gateway_bnkgateway_name
-        }
+        parametersRef = local.gateway_parameters_ref
       }
       gatewayClassName = var.gateway_class_name
       listeners        = local.gateway_listeners
@@ -208,7 +248,14 @@ resource "kubectl_manifest" "gateway" {
   server_side_apply = true
   field_manager     = "roksbnkctl"
   force_conflicts   = true
-  depends_on        = [kubectl_manifest.bnk_gateway, kubernetes_namespace_v1.app]
+  # bnk_gateway is 2.3-only and count-gated; kubectl_manifest handles an empty
+  # list, so one depends_on serves both lines. gateway_settings_24 is likewise
+  # empty on 2.3.
+  depends_on = [
+    kubectl_manifest.bnk_gateway,
+    kubectl_manifest.gateway_settings_24,
+    kubernetes_namespace_v1.app,
+  ]
 }
 
 resource "kubectl_manifest" "http_route" {
@@ -218,9 +265,12 @@ resource "kubectl_manifest" "http_route" {
     kind       = "HTTPRoute"
     metadata   = { name = var.gateway_route_name, namespace = var.app_namespace }
     spec = {
+      # The route stays in the APPLICATION namespace on both lines; only the
+      # Gateway moves. On 2.4 that makes this a genuine cross-namespace parentRef
+      # (#173), which is what the guide's own example does.
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "http"
       }]
       rules = [{
@@ -254,9 +304,12 @@ resource "kubectl_manifest" "grpc_route_example" {
     kind       = "GRPCRoute"
     metadata   = { name = "${var.gateway_route_name}-grpc", namespace = var.app_namespace }
     spec = {
+      # The route stays in the APPLICATION namespace on both lines; only the
+      # Gateway moves. On 2.4 that makes this a genuine cross-namespace parentRef
+      # (#173), which is what the guide's own example does.
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "http"
       }]
       rules = [{
@@ -284,9 +337,11 @@ resource "kubectl_manifest" "l4_route_example" {
     kind       = "L4Route"
     metadata   = { name = "${var.gateway_route_name}-l4", namespace = var.app_namespace }
     spec = {
+      # As above: the route stays in the app namespace, the parentRef follows the
+      # Gateway to whichever namespace the line puts it in (#173).
       parentRefs = [{
         name        = var.gateway_name
-        namespace   = var.app_namespace
+        namespace   = local.gateway_ns_effective
         sectionName = "tcp"
       }]
       protocol = "TCP"
@@ -307,7 +362,7 @@ resource "kubectl_manifest" "l4_route_example" {
 # ── Egress: SnatPool + Egress CRs ────────────────────────────────────────────
 
 resource "kubectl_manifest" "snatpool" {
-  count = local.enabled && local.do_snatpool ? 1 : 0
+  count = local.enabled && local.do_snatpool && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKSnatpool"
@@ -324,7 +379,7 @@ resource "kubectl_manifest" "snatpool" {
 }
 
 resource "kubectl_manifest" "egress_automap" {
-  count = local.enabled && local.do_automap ? 1 : 0
+  count = local.enabled && local.do_automap && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v3"
     kind       = "F5SPKEgress"
@@ -341,7 +396,7 @@ resource "kubectl_manifest" "egress_automap" {
 }
 
 resource "kubectl_manifest" "egress_snatpool" {
-  count = local.enabled && local.do_snatpool ? 1 : 0
+  count = local.enabled && local.do_snatpool && local.line_pre_24 ? 1 : 0
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v3"
     kind       = "F5SPKEgress"
@@ -362,7 +417,12 @@ resource "kubectl_manifest" "egress_snatpool" {
 # ── Static routes (per zone, local + remote VSI) ─────────────────────────────
 
 resource "kubectl_manifest" "static_route" {
-  for_each = local.enabled ? local.static_routes : {}
+  # The last of the F5SPK* family to get the 2.4 gate, and the one that hid
+  # longest: it is the only member using for_each, so it did not look like its
+  # `count = ... && local.line_pre_24` siblings. On 2.4 these same routes are
+  # carried by Infra.spec.staticRoutes (see local.infra_static_routes_24), so
+  # emitting them here too would be a second, ignored copy.
+  for_each = local.enabled && local.line_pre_24 ? local.static_routes : {}
   yaml_body = yamlencode({
     apiVersion = "k8s.f5net.com/v1"
     kind       = "F5SPKStaticRoute"
@@ -383,6 +443,12 @@ resource "kubectl_manifest" "static_route" {
 # The egress VXLAN needs the UDP port open inbound on the cluster SG
 # (kube-<clusterid>). Resolve the cluster id → SG → add the rule.
 
+# NOTE: this trio — the cluster lookup, the SG lookup that indexes it, and the
+# rule itself — must carry the SAME count expression. VXLAN is the dataplane on
+# BOTH lines (2.4 configures it through GatewaySettings' egress-vxlan-* pools
+# rather than F5SPKEgress, but the UDP ingress still has to be permitted), so
+# the gate here is `local.enabled` and nothing else. Gating only the lookup
+# leaves `cluster[0]` indexing an empty tuple, which fails at plan time.
 data "ibm_container_vpc_cluster" "cluster" {
   count = local.enabled ? 1 : 0
   name  = var.roks_cluster_name_or_id

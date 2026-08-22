@@ -207,3 +207,8 @@ source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/prefli
 # BNK Forge gates exactly one phase of the lifecycle demos; forge_mode decides
 # whether that phase runs rather than letting its absence kill the whole demo.
 source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/forge-mode.sh"
+
+# ── bnk line (#169) ─────────────────────────────────────────────────────────
+# Per-release gating for the demo tooling, e.g. the cwc Multi-Attach guard that
+# 2.4 makes unnecessary.
+source "$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)/bnk-line.sh"

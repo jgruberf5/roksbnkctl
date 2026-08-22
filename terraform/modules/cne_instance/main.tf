@@ -35,7 +35,8 @@ terraform {
 # ============================================================
 
 module "cneinstance" {
-  source = "./modules/cneinstance"
+  bnk_line = var.bnk_line
+  source   = "./modules/cneinstance"
 
   # Defense-in-depth: no-op while the cluster is being created (provider +
   # cluster-config are count=0 then; see providers.tf). Correct phases already
@@ -70,6 +71,7 @@ module "cneinstance" {
   cneinstance_firewall_acl         = true
   cneinstance_pseudocni            = true
   cneinstance_env_discovery        = false
+  cneinstance_advanced_env         = var.cneinstance_advanced_env
   cneinstance_cloud_env            = true
   cneinstance_cloud_provider       = "ibm"
   cneinstance_vpc_name             = try(data.ibm_is_vpc.cluster_vpc[0].name, "")

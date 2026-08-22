@@ -28,6 +28,13 @@ import (
 // existing contract — so it WARNS, loudly, and refuses in a later release. The
 // warning is the deprecation; the refusal follows it, not the other way round.
 
+// bnkPhaseSnapshotLabel is the phase name the BNK phase's applied-tfvars
+// snapshot is written under. It is "trial" rather than "bnk" because
+// Workspace.phaseLabel classifies by state directory and the BNK phase uses the
+// workspace's default one — the label predates the phase split. Named here so
+// the read side cannot drift from the write side by guessing.
+const bnkPhaseSnapshotLabel = "trial"
+
 // guardCreateTimeSettings compares create-time-only settings against what the
 // cluster was actually built with. Returns an error only for the settings that
 // are safe to enforce; the rest warn on w.
@@ -55,6 +62,45 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 	if err := config.CheckNetworkMode(cctx.Workspace, out); err != nil {
 		return err
 	}
+
+	// ── enforced: the BNK namespaces ─────────────────────────────────────────
+	// Checked against the applied-tfvars snapshot, not the cluster record, and
+	// therefore BEFORE the cluster-record early return below: the record
+	// describes the CLUSTER, these describe the BNK install running on it, and a
+	// cluster outlives its installs. A workspace whose record is missing or
+	// unreadable can still hold a BNK install worth protecting.
+	//
+	// Snapshot unreadable → silent, same reasoning as the record itself: this
+	// exists to catch a contradiction, not to invent a new way for a run to fail.
+	//
+	// Both are conditioned on a BNK install actually being PRESENT. `Destroy`
+	// deliberately leaves the applied-tfvars snapshot in place, and nothing else
+	// removes it, so after `bnk down` the snapshot still describes an install
+	// that is gone. Reading it alone turned these guards into a refusal to
+	// REINSTALL the same workspace on a different line or namespace topology —
+	// "this workspace installed BNK 2.3 … use a NEW workspace" with nothing
+	// installed, and "collapsing them would DELETE the f5-utils namespace" with
+	// no namespace to delete. Both guards' own comments say they exist to catch
+	// a contradiction, not to invent a new way for a run to fail; with the
+	// install gone there is no contradiction left to catch.
+	bnkPresent := false
+	if pres, perr := config.DetectPresence(cctx.WorkspaceName); perr == nil {
+		bnkPresent = pres.BNK
+	}
+	if applied, err := config.ReadAppliedTFVarsReplayAssignments(cctx.WorkspaceName, bnkPhaseSnapshotLabel); err == nil && bnkPresent {
+		if err := config.CheckNamespaceTopology(cctx.Workspace, applied); err != nil {
+			return err
+		}
+		// ── enforced: the BNK release line (#177) ────────────────────────────
+		// Same snapshot, same reasoning: the line describes the BNK install, not
+		// the cluster, and a cluster outlives its installs. A 2.3 -> 2.4 flip
+		// leaves GTM objects on an external BIG-IP that nothing here can reach,
+		// and abandons the whole F5SPK* network surface in place.
+		if err := config.CheckLineChange(cctx.Workspace, applied); err != nil {
+			return err
+		}
+	}
+
 	if out == nil || out.ClusterID == "" {
 		return nil // nothing recorded to compare the rest against
 	}

@@ -1,3 +1,9 @@
+variable "bnk_line" {
+  description = "BNK release line ('2.3' or '2.4') for per-release `count` gating. See PRD 18 §4."
+  type        = string
+  default     = "2.3"
+}
+
 # CNEInstance Module Variables
 
 variable "enabled" {
@@ -302,4 +308,10 @@ variable "roksbnkctl_binary" {
   description = "Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
   type        = string
   default     = ""
+}
+
+variable "cneinstance_advanced_env" {
+  description = "Per-component advanced.<component>.env passthrough (#175). See the root variable of the same name."
+  type        = map(map(string))
+  default     = {}
 }

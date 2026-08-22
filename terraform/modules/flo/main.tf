@@ -51,7 +51,8 @@ terraform {
 # ============================================================
 
 module "flo" {
-  source = "./modules/flo"
+  bnk_line = var.bnk_line
+  source   = "./modules/flo"
 
   depends_on = [data.ibm_container_cluster_config.runtime_config, null_resource.cert_manager_gate]
 
@@ -102,6 +103,7 @@ module "flo" {
 
   openshift_cluster_name = try(data.ibm_container_vpc_cluster.cluster[0].name, "")
   openshift_cluster_crn  = try(data.ibm_container_vpc_cluster.cluster[0].crn, "")
+  openshift_cluster_id   = try(data.ibm_container_vpc_cluster.cluster[0].id, "")
   cluster_vpc_id         = try(data.ibm_is_vpc.cluster_vpc[0].id, "")
 
   # NAD Configuration

@@ -1,3 +1,9 @@
+variable "bnk_line" {
+  description = "BNK release line ('2.3' or '2.4') for per-release `count` gating. See PRD 18 §4."
+  type        = string
+  default     = "2.3"
+}
+
 variable "enabled" {
   description = "Enable or disable the BNK orchestrator module deployment"
   type        = bool
@@ -259,6 +265,20 @@ variable "openshift_cluster_name" {
 
 variable "openshift_cluster_crn" {
   description = "CRN of the OpenShift cluster (used to link trusted profile to ROKS service account)"
+  type        = string
+  default     = ""
+}
+
+variable "openshift_cluster_id" {
+  description = <<-EOT
+    The ROKS cluster's IBM Cloud id, used to scope the CNE controller's Trusted
+    Profile Kubernetes-Service policy to this cluster alone (#166).
+
+    Distinct from the CRN above: IAM's containers-kubernetes resource attribute is
+    the bare cluster id, not the CRN. Empty is tolerated — the policy is created
+    with the other trusted-profile resources, which are themselves gated on the
+    cluster existing.
+  EOT
   type        = string
   default     = ""
 }

@@ -171,7 +171,14 @@ func clusterProbe(ctx context.Context, _ map[string]config.StateOutput) map[stri
 
 // bnkProbe reports ready/total for each known BNK component (reuses the
 // inspect.go bnkComponents selector map).
-func bnkProbe(ctx context.Context, _ map[string]config.StateOutput) map[string]string {
+//
+// The outputs carry flo_namespace — bnkStatusCmd selects it — and this used to
+// discard them and probe a hardcoded f5-bnk. Any workspace that set
+// bnk.flo_namespace, including every ONE-namespace install (#66), then had a
+// healthy deployment reported as "0 pods". The state outputs are the right
+// source here rather than config.yaml: they say where things were actually
+// applied, not where the next apply intends to put them.
+func bnkProbe(ctx context.Context, outs map[string]config.StateOutput) map[string]string {
 	kcPath := k8s.DefaultKubeconfigPath()
 	if kcPath == "" {
 		return map[string]string{"cluster": "(no kubeconfig)"}
@@ -182,8 +189,9 @@ func bnkProbe(ctx context.Context, _ map[string]config.StateOutput) map[string]s
 	}
 	tctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	res := make(map[string]string, len(bnkComponents))
-	for _, c := range bnkComponents {
+	comps := bnkComponentsIn(outString(outs, "flo_namespace"))
+	res := make(map[string]string, len(comps))
+	for _, c := range comps {
 		pods, err := kc.Clientset().CoreV1().Pods(c.Ns).List(tctx, metav1.ListOptions{LabelSelector: c.Selector})
 		if err != nil {
 			res[c.Name] = fmt.Sprintf("(error: %v)", err)
@@ -201,7 +209,83 @@ func bnkProbe(ctx context.Context, _ map[string]config.StateOutput) map[string]s
 		}
 		res[c.Name] = fmt.Sprintf("%d/%d ready", ready, len(pods.Items))
 	}
+
+	// The CNEInstance's own conditions (#167). Pod counts say what is running;
+	// the conditions say what the product thinks of itself, and on 2.4 those can
+	// disagree in the direction that matters: CNEControllerAvailable=True with
+	// Available=False and F5TmmAvailable=False, TMM 0/3, nothing passing traffic.
+	//
+	// Reported as the aggregate plus any component condition that is NOT True, so
+	// a failure names the component instead of leaving the operator with a
+	// timeout. All-True prints only the aggregate rather than eighteen lines
+	// nobody reads.
+	if ns := outString(outs, "flo_namespace"); ns != "" {
+		if agg, bad := cneInstanceConditions(tctx, kcPath, ns); agg != "" {
+			res["cneinstance"] = agg
+			if len(bad) > 0 {
+				sort.Strings(bad)
+				res["cneinstance_not_ready"] = strings.Join(bad, ", ")
+			}
+		}
+	}
 	return res
+}
+
+// cneInstanceConditions returns the CNEInstance's aggregate Available condition
+// and the names of any component conditions that are not True.
+//
+// Best-effort: a cluster without the CRD, or without an instance, returns empty
+// and the caller simply omits the lines. This is a status report, not a gate —
+// inventing an error here would make `bnk status` fail on a cluster that is
+// merely mid-install.
+func cneInstanceConditions(ctx context.Context, kubeconfig, ns string) (string, []string) {
+	dyn, err := k8s.BuildDynamicClient(kubeconfig)
+	if err != nil {
+		return "", nil
+	}
+	mapper, err := k8s.BuildRESTMapper(kubeconfig)
+	if err != nil {
+		return "", nil
+	}
+	mapping, err := mapper.RESTMapping(schema.GroupKind{Group: "k8s.f5.com", Kind: "CNEInstance"})
+	if err != nil {
+		return "", nil // CRD absent: not a 2.x BNK cluster, or not installed yet
+	}
+	list, err := dyn.Resource(mapping.Resource).Namespace(ns).List(ctx, metav1.ListOptions{})
+	if err != nil || list == nil || len(list.Items) == 0 {
+		return "", nil
+	}
+	u := &list.Items[0]
+	conds, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if !found {
+		return "present (no conditions yet)", nil
+	}
+	var agg string
+	var bad []string
+	for _, c := range conds {
+		m, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		st, _ := m["status"].(string)
+		if t == "Available" {
+			reason, _ := m["reason"].(string)
+			if reason != "" {
+				agg = fmt.Sprintf("Available=%s (%s)", st, reason)
+			} else {
+				agg = fmt.Sprintf("Available=%s", st)
+			}
+			continue
+		}
+		if st != "True" {
+			bad = append(bad, fmt.Sprintf("%s=%s", t, st))
+		}
+	}
+	if agg == "" {
+		agg = "present (no Available condition)"
+	}
+	return agg, bad
 }
 
 // testingProbe TCP-dials port 22 on each jumphost IP from the outputs.
@@ -280,7 +364,16 @@ func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[s
 		}
 	}
 
-	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", outString(outs, "gateway_app_namespace"), gwName)
+	// The Gateway does not always live in the application namespace: 2.4 puts it
+	// beside GatewaySettings in the FLO namespace, because the guide requires
+	// them to share one (#173). The module reports where it actually put it;
+	// falling back to the app namespace keeps older workspaces — whose outputs
+	// predate gateway_namespace — reading correctly.
+	gwNS := outString(outs, "gateway_namespace")
+	if gwNS == "" {
+		gwNS = outString(outs, "gateway_app_namespace")
+	}
+	gw, err := getCR(tctx, dyn, mapper, "gateway.networking.k8s.io", "Gateway", gwNS, gwName)
 	if err != nil {
 		res["gateway"] = fmt.Sprintf("(error: %v)", err)
 	} else {
@@ -288,6 +381,27 @@ func gatewayProbe(ctx context.Context, outs map[string]config.StateOutput) map[s
 			res["gateway_address"] = addr
 		}
 		res["gateway"] = crConditionSummary(gw, "Programmed")
+	}
+
+	// 2.4: the CR carrying the ingress/egress configuration is GatewaySettings,
+	// and Infra carries the addressing. Reporting them is the 2.4 analogue of the
+	// F5BnkGateway line below — without it, `gateway status` on 2.4 shows a
+	// Gateway with no visible source of truth behind it.
+	if gsName := outString(outs, "gateway_settings_name"); gsName != "" {
+		gs, err := getCR(tctx, dyn, mapper, "gateway.k8s.f5.com", "GatewaySettings", outString(outs, "gateway_flo_namespace"), gsName)
+		if err != nil {
+			res["gatewaysettings"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["gatewaysettings"] = crBestEffortState(gs)
+		}
+	}
+	if infraName := outString(outs, "gateway_infra_name"); infraName != "" {
+		in, err := getCR(tctx, dyn, mapper, "gateway.k8s.f5.com", "Infra", outString(outs, "gateway_flo_namespace"), infraName)
+		if err != nil {
+			res["infra"] = fmt.Sprintf("(error: %v)", err)
+		} else {
+			res["infra"] = crBestEffortState(in)
+		}
 	}
 
 	if bnkGwName := outString(outs, "gateway_bnkgateway_name"); bnkGwName != "" {

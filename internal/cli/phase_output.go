@@ -69,6 +69,9 @@ var phaseOutputOwnership = map[string][]string{
 		// — so the only cheap check is reading back what was applied.
 		"gateway_controller_name",
 		"gateway_bnkgateway_name",
+		"gateway_namespace",
+		"gateway_settings_name",
+		"gateway_infra_name",
 		"gateway_route_name",
 		"gateway_backend",
 		"gateway_listener_networks",

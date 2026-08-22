@@ -34,6 +34,12 @@ import (
 //	ROKSBNKCTL_RESOURCE_GROUP       → ibmcloud.resource_group
 //	ROKSBNKCTL_CLUSTER_NAME         → cluster.name
 //	ROKSBNKCTL_CLUSTER_CREATE       → cluster.create (bool: true/false/1/0)
+//	ROKSBNKCTL_CNEINSTANCE_SIZE     → bnk.cneinstance_size (Tiny/Small/Medium/…;
+//	                                  the legal set is a property of the manifest,
+//	                                  so it is deliberately not validated here)
+//	ROKSBNKCTL_GATEWAY_API_MTLS     → bnk.gateway_api_mtls (bool) — install the
+//	                                  Gateway API bundle 2.4 needs for mTLS; off by
+//	                                  default, ignored on 2.3
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
@@ -126,6 +132,15 @@ func OverrideFromEnv(ws *Workspace) []string {
 		if b, err := strconv.ParseBool(v); err == nil {
 			ws.Cluster.Create = b
 			applied = append(applied, "cluster.create (ROKSBNKCTL_CLUSTER_CREATE)")
+		}
+	}
+	// Opt into the Gateway API bundle BNK 2.4 needs for mTLS (#170). Off by
+	// default: installing it means deleting a platform admission policy, which is
+	// not something to do on a cluster that does not need the newer bundle.
+	if v := envValue("ROKSBNKCTL_GATEWAY_API_MTLS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			ws.BNK.GatewayAPIMTLS = b
+			applied = append(applied, "bnk.gateway_api_mtls (ROKSBNKCTL_GATEWAY_API_MTLS)")
 		}
 	}
 	if v := envValue("ROKSBNKCTL_WORKERS_PER_ZONE"); v != "" {
@@ -283,6 +298,8 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// self-IPs). Fixed indexed env vars ROKSBNKCTL_ZONE<n>_* for up to maxZones;
 	// a zone is emitted only when all six of its fields are set.
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
+	// Per-component env passthrough for the 2.4 CNEInstance (#175).
+	applied = append(applied, OverrideAdvancedEnvFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
@@ -660,6 +677,11 @@ var stringOverrides = []stringOverride{
 	// collapses the two namespaces into one — verified working against BNK 2.3,
 	// where FLO tolerates sharedComponentNamespace equalling its own namespace
 	// (#66).
+	// The CNEInstance scalars (#175). Uniform string setters, so they belong in
+	// this table rather than in bespoke blocks. Each is reachable from YAML
+	// already; without a matching override it cannot reach a blueprint, because
+	// `init --non-interactive` builds config.yaml from the environment alone.
+	{"ROKSBNKCTL_CNEINSTANCE_SIZE", "bnk.cneinstance_size", func(ws *Workspace, v string) { ws.BNK.CNEInstanceSize = v }},
 	{"ROKSBNKCTL_FLO_NAMESPACE", "bnk.flo_namespace", func(ws *Workspace, v string) { ws.BNK.FLONamespace = v }},
 	{"ROKSBNKCTL_FLO_UTILS_NAMESPACE", "bnk.flo_utils_namespace", func(ws *Workspace, v string) { ws.BNK.FLOUtilsNamespace = v }},
 	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
@@ -753,6 +775,7 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_EXISTING_SUBNET_IDS",
 	"ROKSBNKCTL_FAR_AUTH_FILE",
 	"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE",
+	"ROKSBNKCTL_GATEWAY_API_MTLS",
 	"ROKSBNKCTL_FLP_MODE",
 	"ROKSBNKCTL_FLP_NAMESPACE",
 	"ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB",
@@ -810,6 +833,10 @@ func SupportedOverrideNames() []string {
 	}
 	out = append(out, bespokeOverrideNames...)
 	out = append(out, zoneOverrideNames()...)
+	// The advanced.* family is reported from the ENVIRONMENT rather than
+	// enumerated, because the component set belongs to the product (#175). An
+	// unset environment contributes nothing, so this changes no existing report.
+	out = append(out, AdvancedEnvOverrideNames()...)
 	sort.Strings(out)
 	return out
 }
