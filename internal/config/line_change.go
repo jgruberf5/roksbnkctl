@@ -61,6 +61,7 @@ func CheckLineChange(w *Workspace, applied map[string]string) error {
 	if current == "" || current == prior {
 		return nil
 	}
+	//lint:ignore ST1005 multi-line actionable operator message; trailing period is intentional and matches the internal sentences
 	return fmt.Errorf(`this workspace installed BNK %[1]s and the config now selects BNK %[2]s.
 
   The release line is fixed at install time; moving between lines in place is not
