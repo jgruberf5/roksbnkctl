@@ -181,7 +181,7 @@ bnkforge:
 YAML
 fi
 show_file "$WORK/config.yaml"
-run "${RUN[@]}" init --config-file /work/config.yaml --override-from-env
+must "${RUN[@]}" init --config-file /work/config.yaml --override-from-env
 ok "workspace '$WS' seeded on the /work volume — it outlives every container"
 endphase P2
 
@@ -230,9 +230,9 @@ begin_long
 must "${RUN[@]}" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
-  run "${RUN[@]}" test hosts add "$h"
+  must "${RUN[@]}" test hosts add "$h"
 done
-run "${RUN[@]}" test
+must "${RUN[@]}" test
 ok "probes ran against: $TEST_HOSTS"
 endphase P6
 

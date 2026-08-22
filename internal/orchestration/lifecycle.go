@@ -729,7 +729,26 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	varFiles := append(append(append([]string{}, appliedVF...), in.VarFiles...), extraVF...)
 	fmt.Fprintln(w, "→ terraform destroy")
 	if err := destroyWithRetry(ctx, tfws, varFiles); err != nil {
-		return err
+		// A BNK namespace stuck Terminating is the thing that makes this destroy
+		// fail: both namespaces are terraform-managed and the kubernetes provider
+		// blocks on namespace deletion, so the delete times out and never
+		// finishes. Nothing in the cluster can clear those finalizers any more —
+		// their operator is already gone — so retrying alone loops forever.
+		//
+		// Free them, then retry ONCE. The repair reports whether it actually
+		// drained anything; if it did not, the original error stands, because a
+		// retry that changes nothing is just a slower failure.
+		//
+		// This is why the repair cannot live on the success path, where a first
+		// version of it sat: on that path the failure it repairs has already
+		// returned.
+		if !freeStuckBNKNamespace(ctx, cctx, tfws, w) {
+			return err
+		}
+		fmt.Fprintln(w, "→ terraform destroy (retry, after freeing the stuck namespace)")
+		if rerr := destroyWithRetry(ctx, tfws, varFiles); rerr != nil {
+			return rerr
+		}
 	}
 	// The CWC licence secrets survive the destroy — terraform never created them,
 	// so it has nothing to remove (#172). They break the NEXT install rather than
@@ -742,9 +761,10 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// would break a running system to tidy up after a failure.
 	sweepLicenseSecrets(ctx, cctx, tfws, w)
 
-	// A namespace the destroy left stuck Terminating cannot be reinstalled into,
-	// so this runs after the sweep and for the same reason: what it repairs breaks
-	// the NEXT install, not this teardown.
+	// Also on the success path: a destroy can succeed while leaving a namespace
+	// draining behind it, and that still breaks the NEXT install rather than
+	// this teardown. Cheap when there is nothing to do — it returns immediately
+	// unless a namespace is actually Terminating.
 	freeStuckBNKNamespace(ctx, cctx, tfws, w)
 	return nil
 }

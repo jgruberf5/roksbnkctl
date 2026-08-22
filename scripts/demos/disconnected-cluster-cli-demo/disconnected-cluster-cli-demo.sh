@@ -461,8 +461,8 @@ onvsi_run "roksbnkctl -w ${FLP_WS} init --config-file /home/ubuntu/${FLP_WS}.yam
 begin_long
 onvsi_run "roksbnkctl -w ${FLP_WS} flp up --auto"
 end_long
-# The FLP listener starts accepting connections a little AFTER \`flp up\` returns, so the
-# very first \`flp status\` probes can print transient "unable to connect" lines before it
+# The FLP listener starts accepting connections a little AFTER `flp up` returns, so the
+# very first `flp status` probes can print transient "unable to connect" lines before it
 # goes green. Poll silently until the listener is serving, so the SHOWN status is clean.
 say "letting the FLP listener finish coming up (so the status below reads clean)…"
 [[ "$DRY_RUN" == "1" ]] || for _ in $(seq 1 30); do
@@ -538,7 +538,7 @@ say "bnk up gates the F5SPKVlan applies on a dry-run admission probe, so the CRs
 # volume and stalls licensing. This launches a background guard on the VSI that forces the
 # cwc to Recreate and clears the deadlock, so the license activates within this bnk up.
 #
-# FIXED IN 2.4 (#169): the 2.4 Deployment ships \`strategy: Recreate\` itself — observed on
+# FIXED IN 2.4 (#169): the 2.4 Deployment ships `strategy: Recreate` itself — observed on
 # a live 2.4.0-EA cluster, at revision 1 with no patch annotations, so it is the product's
 # own and not something a guard applied. Recreate makes the deadlock structurally
 # impossible: the old pod is terminated before the new one is created, so the RWO volume is

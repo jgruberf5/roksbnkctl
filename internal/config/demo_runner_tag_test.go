@@ -33,7 +33,14 @@ func demoRunnerPins(t *testing.T, root string) map[string][]string {
 	t.Helper()
 	pat := regexp.MustCompile(`(?:RUNNER_TAG:-|roksbnkctl-tools-runner:|RUNNER_TAG=)(v\d+\.\d+\.\d+)`)
 	out := map[string][]string{}
-	for _, glob := range []string{"scripts/demos/*/*.sh", "scripts/demos/*/.env.example"} {
+	// .yaml, .md and .html are in here because the pin that shipped stale was in
+	// an Argo workflow the .sh/.env.example globs never looked at — and the
+	// README documents submitting that workflow directly, with no override, so
+	// the stale pin was what a reader would actually run.
+	for _, glob := range []string{
+		"scripts/demos/*/*.sh", "scripts/demos/*/.env.example",
+		"scripts/demos/*/*.yaml", "scripts/demos/*/*.md", "scripts/demos/*/*.html",
+	} {
 		files, err := filepath.Glob(filepath.Join(root, glob))
 		if err != nil {
 			t.Fatalf("glob %s: %v", glob, err)
@@ -70,10 +77,13 @@ func TestDemoRunnerTagMatchesTheCurrentRelease(t *testing.T) {
 	latest := currentReleaseFromChangelog(t, root)
 
 	pins := demoRunnerPins(t, root)
-	if len(pins) < 5 {
-		t.Fatalf("found runner pins in only %d files (%v). This test discovers its subjects, so "+
-			"finding too few means the discovery broke — which is worse than the drift it looks for.",
-			len(pins), pins)
+	// The floor is the real count, not a token minimum. A loose floor let a
+	// broken regex still match six files and pass with a stale pin in place.
+	const wantFiles = 13
+	if len(pins) < wantFiles {
+		t.Fatalf("found runner pins in %d files, expected at least %d.\n"+
+			"This test discovers its subjects, so finding fewer means the discovery broke — "+
+			"which is worse than the drift it looks for.\nfound: %v", len(pins), wantFiles, pins)
 	}
 
 	for file, found := range pins {

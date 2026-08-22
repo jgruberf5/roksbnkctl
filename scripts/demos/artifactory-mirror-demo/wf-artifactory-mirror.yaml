@@ -34,7 +34,7 @@ spec:
   arguments:
     parameters:
       - name: runner-image
-        value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.50.0
+        value: ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.52.0
       - name: bnk-version
         value: 2.3.0-3.2598.3-0.0.170
       # No default for the bucket: it is account-specific (bnk-artifacts-<hex>).

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -118,4 +119,100 @@ func TestDemoConfigHeredocsDoNotRunTheirOwnComments(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The behavioural test above samples three phrases from one generated file.
+// That is not enough: an adversarial review added a comment containing an
+// unescaped `true` to a config heredoc, the demo executed it, the word vanished
+// from the generated config — and the test passed, because the leak detectors
+// only match "command not found" and "Explicit --user argument required".
+// Any backticked word naming a real, QUIET binary (true, date, env, id, cat)
+// reintroduces the bug invisibly.
+//
+// So this checks the structure instead: every unquoted heredoc body in every
+// demo script, for an unescaped backtick or $(. It is a source scan, but of
+// PARSED structure rather than sampled text — it tracks heredoc open/close and
+// knows which delimiters are quoted, which is exactly the distinction that
+// decides whether substitution happens.
+func TestNoDemoHeredocSubstitutesUnescapedCommands(t *testing.T) {
+	root := repoRootForDemoTest(t)
+
+	scripts, err := filepath.Glob(filepath.Join(root, "scripts/demos/**/*.sh"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	more, _ := filepath.Glob(filepath.Join(root, "scripts/demos/*/*.sh"))
+	scripts = append(scripts, more...)
+	libs, _ := filepath.Glob(filepath.Join(root, "scripts/demos/lib/*.sh"))
+	scripts = append(scripts, libs...)
+
+	seen := map[string]bool{}
+	checked := 0
+	// `<<DELIM` or `<<-DELIM` with an UNQUOTED delimiter substitutes; `<<"D"`
+	// and `<<'D'` do not.
+	open := regexp.MustCompile(`<<-?\s*([A-Za-z_][A-Za-z0-9_]*)\s*$`)
+	risky := regexp.MustCompile("(^|[^\\\\])(`|\\$\\()")
+
+	for _, f := range scripts {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		b, rerr := os.ReadFile(f)
+		if rerr != nil {
+			continue
+		}
+		lines := strings.Split(string(b), "\n")
+		rel, _ := filepath.Rel(root, f)
+		for i := 0; i < len(lines); i++ {
+			m := open.FindStringSubmatch(lines[i])
+			if m == nil {
+				continue
+			}
+			checked++
+			delim := m[1]
+			// The close line is not always bare. These demos open heredocs INSIDE a
+			// quoted argument — `onvsi "cat > f <<YAML` — so the terminator is
+			// `YAML"`. Requiring an exact match made the parser run past the real
+			// close and report the rest of the file as heredoc body, which is how
+			// three plain shell comments got flagged (and, earlier, escaped for a
+			// substitution that could never have happened there).
+			closeRe := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(delim) + `["'` + "`" + `)]*\s*$`)
+			for j := i + 1; j < len(lines) && !closeRe.MatchString(lines[j]); j++ {
+				line := lines[j]
+				// Only COMMENT and prose lines are the hazard. Live code inside a
+				// heredoc — a script being written out — needs its substitutions,
+				// and flagging those would make this test unusable.
+				if !strings.HasPrefix(strings.TrimSpace(line), "#") && !isProse(line) {
+					continue
+				}
+				if risky.MatchString(line) {
+					t.Errorf("%s:%d is inside an UNQUOTED heredoc (<<%s), so the shell substitutes it:\n"+
+						"  %s\n"+
+						"The backticked word is EXECUTED on the host running the demo and replaced by its "+
+						"output, so the text silently disappears from the generated file. Escape it as \\`, "+
+						"or quote the delimiter if the body needs no expansion.",
+						rel, j+1, delim, strings.TrimSpace(line))
+				}
+				i = j
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no heredocs at all in the demo scripts; the parser broke and this test checked nothing")
+	}
+}
+
+// isProse reports whether a heredoc line is human text rather than shell — the
+// banner/say blocks the demos embed. Anything with an assignment, a pipe or a
+// leading command word is treated as code and left alone.
+func isProse(line string) bool {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return false
+	}
+	if strings.ContainsAny(t, "|;&") || strings.Contains(t, "=") {
+		return false
+	}
+	return strings.Contains(t, " ") && !strings.HasPrefix(t, "$")
 }

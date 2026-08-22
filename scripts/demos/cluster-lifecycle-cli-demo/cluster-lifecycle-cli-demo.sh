@@ -154,7 +154,7 @@ bnk:
   far_repo_url: ${FAR_REPO_URL}
 YAML
 show_file "$SEED"
-run "$ROKSBNKCTL_BIN" -w "$WS" init --config-file "$SEED" --override-from-env
+must "$ROKSBNKCTL_BIN" -w "$WS" init --config-file "$SEED" --override-from-env
 ok "workspace '$WS' seeded — nothing provisioned yet"
 endphase P1
 
@@ -204,9 +204,9 @@ begin_long
 must "$ROKSBNKCTL_BIN" -w "$WS" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
-  run "$ROKSBNKCTL_BIN" -w "$WS" test hosts add "$h"
+  must "$ROKSBNKCTL_BIN" -w "$WS" test hosts add "$h"
 done
-run "$ROKSBNKCTL_BIN" -w "$WS" test
+must "$ROKSBNKCTL_BIN" -w "$WS" test
 ok "probes ran against: $TEST_HOSTS"
 endphase P5
 
