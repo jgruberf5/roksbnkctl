@@ -190,7 +190,7 @@ pause; phase P3 "PHASE 3/7  —  cluster up: build the ROKS cluster"   # LONG
 say "A full hands-off build would just be 'roksbnkctl up'. Here the pipeline drives each phase as"
 say "its own job — starting with the cluster: VPC, subnets, gateways and the ROKS workers."
 begin_long
-run "${RUN[@]}" cluster up --auto
+must "${RUN[@]}" cluster up --auto
 end_long
 run "${RUN[@]}" cluster config
 ok "ROKS cluster '$WS' is up"
@@ -215,7 +215,7 @@ pause; phase P5 "PHASE 5/7  —  bnk up: install BIG-IP Next for Kubernetes"   #
 say "The BNK phase installs BIG-IP Next for Kubernetes ${BNK_VERSION} and its licence onto the"
 say "cluster from phase 3 — and it runs the Kubernetes verbs in-process, so the image needs no kubectl."
 begin_long
-run "${RUN[@]}" bnk up --auto
+must "${RUN[@]}" bnk up --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 run "${RUN[@]}" k get licenses.k8s.f5net.com -A
@@ -227,7 +227,7 @@ pause; phase P6 "PHASE 6/7  —  testing up + test: the probe framework"   # LON
 say "The testing phase stands up the jump host(s) the connectivity / DNS / throughput probes run"
 say "from. In CI this is the gate — 'test' is what a pipeline asserts on."
 begin_long
-run "${RUN[@]}" testing up --auto
+must "${RUN[@]}" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
   run "${RUN[@]}" test hosts add "$h"
@@ -241,7 +241,7 @@ pause; phase P7 "PHASE 7/7  —  bnk down then bnk up: swap BNK, keep the cluste
 say "Down JUST the BNK phase. The cluster and the testing framework keep running — a pipeline can"
 say "redeploy BNK on every commit without ever re-provisioning a cluster."
 begin_long
-run "${RUN[@]}" bnk down --auto
+must "${RUN[@]}" bnk down --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 if [[ "$BNK_VERSION_REBUILD" != "$BNK_VERSION" ]]; then
@@ -253,7 +253,7 @@ else
   say "bump bnk.manifest_version first — set BNK_VERSION_REBUILD to see that here."
 fi
 begin_long
-run "${RUN[@]}" bnk up --auto
+must "${RUN[@]}" bnk up --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 ok "BNK removed and reinstalled — no re-provisioning, the cluster never moved"

@@ -142,6 +142,35 @@ run(){
   outmark "$@"
   return "$rc"
 }
+# must <cmd…> — run a command on camera and DIE if it fails.
+#
+# `run` returns the status faithfully, but nothing checked it, and the demos are
+# `set -uo pipefail` with no `-e`. So a phase whose command failed outright still
+# printed its ✓ and the demo still exited 0.
+#
+# Observed on BNK 2.4: the swap phase's `bnk up` failed on every object with
+# "namespace f5-bnk is being terminated", and the very next line was
+# "✓ BNK removed and reinstalled — no re-provisioning, the cluster never moved",
+# followed by DEMO COMPLETE and rc=0. A demo that reports success no matter what
+# happened cannot be used to verify anything, which is the one job it has when
+# it runs unattended.
+#
+# Use `must` for anything that CHANGES the world — cluster up, bnk up/down,
+# testing up. Keep plain `run` for informational commands (version, status,
+# `k get pods`), where a non-zero is often just "not there yet" and killing the
+# demo over it would be its own kind of false signal.
+must(){
+  run "$@"
+  local rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    printf '\n' >&2
+    die "command failed (exit $rc): $*
+  The demo stops here rather than printing a ✓ over a failure. Everything is left
+  in place so the failure can be inspected."
+  fi
+  return 0
+}
+
 # runmask <cmd…> — like run, but the command's OUTPUT is masked too. Use for any
 # command that may echo a credential; prefer plain run elsewhere so roksbnkctl and
 # terraform keep their TTY colours.

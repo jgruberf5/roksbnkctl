@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -133,6 +136,110 @@ const GTMNamingChangedBetweenLines = true
 // resolves, or an absent secret are all NORMAL after a destroy; reporting them
 // would turn a clean teardown into a wall of noise about things that are
 // correctly absent.
+// freeStuckBNKNamespace clears F5 finalizers left on a BNK namespace that is
+// stuck Terminating after a destroy.
+//
+// The 2.4 teardown can leave the namespace unfinalizable. The CNEInstance
+// deletion times out ("context deadline exceeded"), the operator that owns the
+// finalizer is removed anyway, and from then on nothing exists that could ever
+// clear it. The namespace sits in Terminating forever, and the NEXT `bnk up`
+// fails on every object with
+//
+//	forbidden: unable to create new content in namespace f5-bnk because it is
+//	being terminated
+//
+// which is exactly what the lifecycle demos' "swap BNK, keep the cluster" phase
+// does. Observed on a live 2.4 cluster, twice.
+//
+// This is deliberately a REPAIR and not a workaround for an ordering bug we
+// should also fix: the right prevention is for the CNEInstance to finish
+// finalizing before its operator goes. But an operator that is already gone
+// cannot be brought back, so something has to clear what it left, or the
+// cluster is permanently unusable for a reinstall.
+//
+// Tightly scoped on purpose:
+//   - only after a SUCCESSFUL destroy, so a failed teardown is never "tidied"
+//   - only this workspace's cluster, resolved by id from its own state
+//   - only namespaces already in Terminating — never a live one
+//   - only finalizers in F5's own API groups, left on F5's own kinds
+//   - it SAYS what it did; a silent repair teaches nobody that the bug exists
+func freeStuckBNKNamespace(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, w io.Writer) {
+	if cctx == nil || cctx.Workspace == nil {
+		return
+	}
+	body, err := clusterKubeconfigBytes(ctx, cctx, tfws)
+	if err != nil {
+		return
+	}
+	kc, err := k8s.NewFromKubeconfigBytes(body)
+	if err != nil {
+		return
+	}
+	flo, utils := cctx.Workspace.BNKNamespaces()
+
+	tctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
+	for _, ns := range []string{flo, utils} {
+		if ns == "" {
+			continue
+		}
+		n, err := kc.Clientset().CoreV1().Namespaces().Get(tctx, ns, metav1.GetOptions{})
+		if err != nil || n.Status.Phase != corev1.NamespaceTerminating {
+			continue
+		}
+		cleared := freeF5Finalizers(tctx, body, ns)
+		if cleared == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "  ⚠ namespace %q was stuck Terminating; cleared F5 finalizers on %d object(s).\n", ns, cleared)
+		fmt.Fprintf(w, "    Their operator was removed before they finished finalizing, so nothing was left that could\n")
+		fmt.Fprintf(w, "    clear them. Without this the next `bnk up` fails on every object with \"namespace is being\n")
+		fmt.Fprintf(w, "    terminated\".\n")
+	}
+}
+
+// freeF5Finalizers removes finalizers from the F5-owned kinds known to hold a
+// BNK namespace open, and reports how many objects it touched. Errors are
+// swallowed per object: a kind whose CRD is already gone is the normal case
+// after a destroy, not a problem to report.
+func freeF5Finalizers(ctx context.Context, kubeconfig []byte, ns string) int {
+	dc, err := k8s.DynamicFromKubeconfigBytes(kubeconfig)
+	if err != nil {
+		return 0
+	}
+	cleared := 0
+	for _, gvr := range stuckNamespaceGVRs {
+		list, lerr := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
+		if lerr != nil || list == nil {
+			continue
+		}
+		for i := range list.Items {
+			item := list.Items[i]
+			if len(item.GetFinalizers()) == 0 {
+				continue
+			}
+			patch := []byte(`{"metadata":{"finalizers":null}}`)
+			if _, perr := dc.Resource(gvr).Namespace(ns).Patch(
+				ctx, item.GetName(), types.MergePatchType, patch, metav1.PatchOptions{},
+			); perr == nil {
+				cleared++
+			}
+		}
+	}
+	return cleared
+}
+
+// The kinds observed holding a 2.4 BNK namespace open. Each was seen with a
+// real finalizer on a live cluster: CNEInstanceFinalizer on the CNEInstance,
+// k8s.f5net.com/uninstall on the dssm, and handletmmconfig_inconsistency on the
+// F5SPKVlans (which 2.4 still creates even though its controller ignores them).
+var stuckNamespaceGVRs = []schema.GroupVersionResource{
+	{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"},
+	{Group: "k8s.f5.com", Version: "v1", Resource: "dssms"},
+	{Group: "k8s.f5net.com", Version: "v1", Resource: "f5-spk-vlans"},
+}
+
 func sweepLicenseSecrets(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, w io.Writer) {
 	if cctx == nil || cctx.Workspace == nil {
 		return

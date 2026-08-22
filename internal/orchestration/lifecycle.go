@@ -741,6 +741,11 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// install is still there and its secrets are still live; deleting them then
 	// would break a running system to tidy up after a failure.
 	sweepLicenseSecrets(ctx, cctx, tfws, w)
+
+	// A namespace the destroy left stuck Terminating cannot be reinstalled into,
+	// so this runs after the sweep and for the same reason: what it repairs breaks
+	// the NEXT install, not this teardown.
+	freeStuckBNKNamespace(ctx, cctx, tfws, w)
 	return nil
 }
 

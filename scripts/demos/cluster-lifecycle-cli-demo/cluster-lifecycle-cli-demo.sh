@@ -163,7 +163,7 @@ pause; phase P2 "PHASE 2/6  —  cluster up: build the ROKS cluster"   # LONG
 say "A full hands-off build would just be 'roksbnkctl up'. Here we drive each phase on its own,"
 say "starting with the cluster: VPC, subnets, gateways, and ${WORKERS_PER_ZONE} worker(s) per zone across 3 AZs."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" cluster up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" cluster up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" cluster config
 ok "ROKS cluster '$CLUSTER_NAME' is up"
@@ -189,7 +189,7 @@ pause; phase P4 "PHASE 4/6  —  bnk up: install BIG-IP Next for Kubernetes"   #
 say "The BNK phase installs BIG-IP Next for Kubernetes ${BNK_VERSION} and its licence onto the"
 say "cluster from phase 2 — cert-manager, the operators, the CNEInstance and the dataplane."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 run "$ROKSBNKCTL_BIN" -w "$WS" k get licenses.k8s.f5net.com -A
@@ -201,7 +201,7 @@ pause; phase P5 "PHASE 5/6  —  testing up + test: the probe framework"   # LON
 say "The testing phase stands up the jump host(s) the connectivity / DNS / throughput probes run"
 say "from. It is its own phase, so it builds and tears down independently of BNK."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" testing up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
   run "$ROKSBNKCTL_BIN" -w "$WS" test hosts add "$h"
@@ -215,7 +215,7 @@ pause; phase P6 "PHASE 6/6  —  bnk down then bnk up: swap BNK, keep the cluste
 say "Down JUST the BNK phase. The cluster and the testing framework keep running — this phase"
 say "independence is the whole point of the demo."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk down --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk down --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 WS_CONFIG="${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS/config.yaml"
@@ -229,7 +229,7 @@ else
   say "bnk.manifest_version in the workspace config first — set BNK_VERSION_REBUILD to see that here."
 fi
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 ok "BNK removed and reinstalled — no re-provisioning, the cluster never moved"
