@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,9 +180,9 @@
                     <main>
                         <h1 id="preface"><a class="header" href="#preface">Preface</a></h1>
 <h2 id="foreword"><a class="header" href="#foreword">Foreword</a></h2>
-<p>Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A <code>terraform init/plan/apply</code> against an HCL tree somebody handed you. A manual <code>ibmcloud ks cluster config</code> to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual <code>oc adm policy add-scc-to-user privileged</code> to let iperf3 actually run. SSH plumbing, env-var plumbing, kubeconfig plumbing — each one a small thing, and together a half-day of yak-shaving before BNK was even on the cluster.</p>
+<p>Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A <code>terraform init/plan/apply</code> against an HCL tree somebody handed you. A manual <code>ibmcloud ks cluster config</code> to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual <code>oc adm policy add-scc-to-user privileged</code> to let iperf3 actually run. SSH, environment variables, kubeconfig — each a small thing, and together half a day before BNK was even on the cluster.</p>
 <p><code>roksbnkctl</code> collapses that into a single static binary plus four interchangeable execution backends (<code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code>) plus an opt-in in-cluster ops pod. One command brings a workspace up; one command tears it down; the connectivity, DNS, and throughput tests run from whichever network vantage the question actually requires. The tool exists because the manual path has too many moving parts for somebody who just wants to evaluate BNK or run a customer demo.</p>
-<p>This book is the user-facing documentation for <code>roksbnkctl</code>. It ships alongside the v1.0 binary.</p>
+<p>This book is the user-facing documentation for <code>roksbnkctl</code>, and ships with the binary.</p>
 <h2 id="who-this-book-is-for"><a class="header" href="#who-this-book-is-for">Who this book is for</a></h2>
 <p>Four audiences:</p>
 <ul>
@@ -208,7 +208,7 @@
 </ul>
 <p>You do <strong>not</strong> need prior experience with:</p>
 <ul>
-<li><strong>Terraform</strong> — <code>roksbnkctl</code> embeds a vetted HCL tree and drives <code>terraform</code> for you. You can ignore the underlying HCL until you want to customise it (<a href="#terraform-variables-terraformtfvars">Chapter 13</a>).</li>
+<li><strong>Terraform</strong> — <code>roksbnkctl</code> embeds a vetted HCL tree and drives <code>terraform</code> for you. You can ignore the underlying HCL until you want to customize it (<a href="#terraform-variables-terraformtfvars">Chapter 13</a>).</li>
 <li><strong>OpenShift specifics</strong> — the tool treats ROKS as Kubernetes with a thin SCC + project overlay; the few OpenShift-specific gotchas are called out in <a href="#throughput-testing">Chapter 22</a> and <a href="#troubleshooting-1">Chapter 26</a>.</li>
 <li><strong>F5 BIG-IP Next</strong> — BNK is the thing the book deploys; you don’t need to be a Big-IP engineer to evaluate it. <a href="#what-is-big-ip-next-for-kubernetes-bnk">Chapter 1</a> is the 5-minute “what is this product” primer.</li>
 </ul>
@@ -684,7 +684,7 @@ Docs: https://jgruberf5.github.io/roksbnkctl/book/
 <p>“First-class” means the v1.0 acceptance criteria are validated on those platforms; “compile-only” means the binary builds and runs but interactive features (notably TTY-bound SSH) have known limitations and are not part of the v1.0 release gate.</p>
 <p>The Windows limitations are tracked in PRD 01 (the SSH client design) and largely come down to <code>golang.org/x/crypto/ssh</code>’s incomplete PTY handling on Windows and the absence of an SSH agent named-pipe protocol. File-based SSH keys work; full PTY and ssh-agent integration on Windows are on the v1.x roadmap (see <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/PLAN.md"><code>docs/PLAN.md</code></a> §“What’s deliberately deferred to post-v1.0”).</p>
 <h2 id="required-prerequisites--terraform-and-helm-at-v10"><a class="header" href="#required-prerequisites--terraform-and-helm-at-v10">Required prerequisites — <code>terraform</code> and <code>helm</code> at v1.0</a></h2>
-<p>The v1.0 cluster lifecycle needs two binaries on <code>PATH</code>:</p>
+<p>The cluster lifecycle needs two binaries on <code>PATH</code>:</p>
 <ul>
 <li><strong><code>terraform</code> (&gt;= 1.5)</strong> — hard-required for any cluster lifecycle command (<code>up</code>, <code>down</code>, <code>plan</code>, <code>apply</code>).</li>
 <li><strong><code>helm</code> (3.x)</strong> — flagged required by <code>doctor</code> during <code>roksbnkctl up</code>. The charts install via the <code>helm_release</code> resource — the <code>hashicorp/helm</code> provider speaks the Helm 3 protocol via an embedded Go runtime, so no host <code>helm</code> is shelled out for the chart installs (see <a href="#the-terraform-native-deployment-model">Chapter 10</a>). FAR chart-version discovery does shell out to host <code>helm</code>, though: the <code>data.external.versions</code> lookup runs <code>helm registry login</code> + <code>helm pull</code> to read the FLO/CIS chart versions, so <code>helm</code> is genuinely required. Keeping <code>helm</code> installed keeps <code>doctor</code> green.</li>
@@ -1442,12 +1442,17 @@ roksbnkctl init -w ci-run-42 \
 <tr><td style="text-align: right"><code>126</code></td><td>Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused.</td></tr>
 <tr><td style="text-align: right"><code>127</code></td><td>The target could not be reached at all.</td></tr>
 <tr><td style="text-align: right"><code>130</code></td><td>The operator interrupted it (Ctrl-C / <code>SIGINT</code>).</td></tr>
-<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs.</td></tr>
+<tr><td style="text-align: right"><code>125</code></td><td><strong><code>upgrade</code> / <code>self update</code> only.</strong> The upgrade removed the old binary and could not put anything back, so there is no <code>roksbnkctl</code> at the install path. The message names the <code>.old</code> sidecar and the command to rename it.</td></tr>
+<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs. That includes <code>125</code> from any command <strong>other</strong> than <code>upgrade</code> / <code>self update</code>, which spawn no child.</td></tr>
 </tbody>
 </table>
 </div>
 <p><code>130</code> is worth wiring into CI cleanup: it distinguishes <em>“someone stopped this”</em>
-from <em>“it broke”</em>, which a job that retries on failure should treat differently.
+from <em>“it broke”</em>, which a job that retries on failure should treat differently.</p>
+<p><code>125</code> matters for the same reason, in the opposite direction: an ordinary failed
+upgrade is safe to retry, and this one is not — there is nothing left to run. A
+wrapper that retries on any non-zero status will loop forever on a machine that
+cannot recover until someone renames the sidecar back.
 Before v1.50.0 only <code>roksbnkctl init</code> produced it — every other command turned
 the same Ctrl-C into <code>1</code>.</p>
 <p><code>2</code> is similarly worth separating. It means the command never ran, so retrying
@@ -2172,11 +2177,11 @@ opinion, not that it insists on <code>single-nic</code> — so it defers to what
 cluster actually is. This matters because a <code>config.yaml</code> is not always
 hand-written and durable: the <a href="#registering-the-cluster-with-bnk-forge">BNK Forge modules</a>
 regenerate one per step from a curated environment, so a mode set by the step
-that <em>created</em> the cluster is simply absent by the time the step that <em>installs
+that <em>created</em> the cluster is absent by the time the step that <em>installs
 BNK</em> runs. Reading that absence as a demand for <code>single-nic</code> would refuse a
 correct deployment at its second step, over a contradiction nobody expressed.</p>
 <p>The refusal in the third row is what stops terraform from planning a
-<strong>replacement</strong> of a running cluster — which it will do quite happily, rendered
+<strong>replacement</strong> of a running cluster — which it will do without complaint, rendered
 as output that reads like an update.</p>
 <h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
 <p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both
@@ -2540,7 +2545,7 @@ roksbnkctl -w canada down --auto
 <li><strong>The cluster is a classic-infrastructure ROKS</strong> (not vpc-gen2). Registration refuses; classic clusters aren’t supported.</li>
 <li><strong>The cluster’s worker pool is too small.</strong> BNK trials need at least 2 workers with adequate CPU/memory. The upstream HCL provisions appropriately-sized workers; an existing cluster might not.</li>
 </ul>
-<p>For the first three, the cluster simply isn’t a candidate. For the last one, the apply may run but <code>flo</code> / <code>cne_instance</code> will fail to schedule — scale the worker pool first.</p>
+<p>For the first three, the cluster isn’t a candidate. For the last one, the apply may run but <code>flo</code> / <code>cne_instance</code> will fail to schedule — scale the worker pool first.</p>
 <h2 id="re-registering-and-unregistering"><a class="header" href="#re-registering-and-unregistering">Re-registering and unregistering</a></h2>
 <p>To <strong>re-register</strong> with new data (e.g. you renamed the COS instance, or the master URL changed), just run <code>cluster register</code> again — it overwrites <code>cluster-outputs.json</code> in place.</p>
 <p>To <strong>unregister</strong> without destroying anything, delete the file directly:</p>
@@ -3019,7 +3024,7 @@ resource "kubectl_manifest" "license" {
 <p>A concept note on the deployment model, for readers who want the <em>why</em> rather than the <em>how</em>.</p>
 <p><strong>The plan-time-CRD problem.</strong> Applying a CR whose CRD is installed <em>in the same apply</em> (the FLO chart installs the CNEInstance and License CRDs, then we apply those CRs) is the classic Terraform trap. HashiCorp’s own <code>kubernetes_manifest</code> does a typed-schema lookup of the kind at <strong>plan</strong> time and fails with <code>cannot select exact GVK ... no matches for kind</code> because the CRD doesn’t exist yet. The <code>alekc/kubectl</code> provider’s <code>kubectl_manifest</code> carries the manifest as an opaque YAML string and resolves the GVK at <strong>apply</strong> time — so it applies a CR whose CRD is created in the same run, no plan-time schema lookup. It gives us real state + drift + finalizer-aware delete + <code>wait_for</code>, <em>without</em> the plan-time-CRD failure and <em>without</em> building a custom provider or a Go reconciler. Ordering (CRD before CR) is expressed with <code>depends_on</code> on the chart’s <code>helm_release</code> — <code>wait_for</code> removes the sleep, not the ordering.</p>
 <p><strong>What stays IBM-Cloud-native.</strong> The IBM IAM trusted-profile resources (for the CNE controller service account) and the COS reads (the FAR auth archive and the license JWT, fetched via the IBM IAM token + the COS S3 REST API) are IBM-Cloud-native Terraform resources/data sources, not Kubernetes mutations.</p>
-<p><strong>The air-gap caveat for <code>alekc/kubectl</code>.</strong> <code>alekc/kubectl</code> is a third-party provider on the public Terraform registry (<code>registry.terraform.io/providers/alekc/kubectl</code>). On connected runs it downloads at <code>terraform init</code> like any provider. For <strong>air-gapped / offline</strong> ROKS installs it must be pre-staged: build a <code>terraform providers mirror</code> bundle on a connected machine and point the offline runner at it via a <code>provider_installation { filesystem_mirror { ... } }</code> block in the Terraform CLI config (or an internal <code>network_mirror</code>). The provider is pinned (<code>&gt;= 2.4.0</code>) and recorded in <code>.terraform.lock.hcl</code>, so mirrored installs are reproducible.</p>
+<p><strong>The air-gap caveat for <code>alekc/kubectl</code>.</strong> <code>alekc/kubectl</code> is a third-party provider on the public Terraform registry (<code>registry.terraform.io/providers/alekc/kubectl</code>). On connected runs it downloads at <code>terraform init</code> like any provider. For <strong>air-gapped / offline</strong> ROKS installs it must be pre-staged: build a <code>terraform providers mirror</code> bundle on a connected machine and point the offline runner at it via a <code>provider_installation { filesystem_mirror { ... } }</code> block in the Terraform CLI config (or an internal <code>network_mirror</code>). The provider is bounded (<code>~&gt; 2.4</code>) and pinned in <code>.terraform.lock.hcl</code>, which now ships inside the <code>roksbnkctl</code> binary and seeds each workspace’s terraform directory — so a mirrored install resolves the same version, and the recorded checksums verify what the mirror serves.</p>
 <blockquote>
 <p><strong>Note — transcripts, resource counts, and timings are illustrative.</strong> The sample <code>terraform plan</code> / <code>apply</code> / <code>bnk up</code> / <code>bnk down</code> output, the <code>~41</code>/<code>~77</code>-resource breakdowns, and the timing figures in this chapter are <em>representative</em> of the terraform-native path, not captured from a live run. The command <strong>surface</strong> (the resource <em>shapes</em> — <code>helm_release</code> / <code>kubernetes_*_v1</code> / <code>kubectl_manifest</code> + <code>wait_for</code>) is reconciled against the built binary and the landed terraform and is accurate; treat the specific numbers and console lines as orientation, not contract.</p>
 </blockquote>
@@ -3894,6 +3899,214 @@ unconditionally in a teardown script. Registered clusters are never destroyed �
 <code>external_endpoint</code> plus <code>external_endpoints</code> — every worker URL the proxy answers on.
 All of them are IP SANs on its certificate, so any one is a valid
 <code>bnk.flp.external.url</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="bnk-24"><a class="header" href="#bnk-24">BNK 2.4</a></h1>
+<p><code>roksbnkctl</code> drives BNK <strong>2.3</strong> and <strong>2.4</strong> from one build. Which one you get is
+decided by <code>bnk.manifest_version</code> and nothing else — there is deliberately no
+<code>bnk.line</code> field and no <code>ROKSBNKCTL_BNK_LINE</code> override, because a second way to
+say which release this is, is a second thing that can disagree with the manifest
+being installed.</p>
+<pre><code class="language-yaml">bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170   # -&gt; the 2.3 line
+  # manifest_version: 2.4.0-EA               # -&gt; the 2.4 line
+</code></pre>
+<p>The derived value is rendered as a <code>bnk_line</code> terraform variable (<code>"2.3"</code> or
+<code>"2.4"</code>), and the modules gate per-release resources with <code>count</code> on it. There is
+no forked copy of the tree: the 2.4 changes are additive resources, which <code>count</code>
+expresses cleanly and two copies of a file do not.</p>
+<blockquote>
+<p><strong><code>2.4.0-EA</code> carries no build suffix</strong>, where 2.3 versions have four dot/dash
+segments (<code>2.3.0-3.2598.3-0.0.170</code>). Anything you write that parses a manifest
+version should key on the <code>major.minor</code> prefix rather than the segment count.</p>
+</blockquote>
+<h2 id="what-actually-changes"><a class="header" href="#what-actually-changes">What actually changes</a></h2>
+<p>2.4 replaces the data-plane configuration model. It runs the CNEInstance with
+<code>USE_GATEWAY_SETTINGS=true</code>, and under that flag the CNE controller <strong>ignores</strong>
+the <code>cloud-network-mapping</code> ConfigMap and the entire <code>F5SPK*</code> custom-resource
+family that a 2.3 install creates, reading two new CRs instead.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>2.3</th><th>2.4</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cloud-network-mapping</code> ConfigMap</td><td><code>Infra.spec.networks[]</code> + <code>networkAttachments[]</code></td></tr>
+<tr><td><code>F5SPKVlan</code> × 2</td><td><code>Infra.spec.networks[type=vlan]</code></td></tr>
+<tr><td><code>F5SPKStaticRoute</code> × N</td><td><code>Infra.spec.staticRoutes[]</code></td></tr>
+<tr><td><code>F5SPKSnatpool</code></td><td><code>GatewaySettings.spec.sourceNATPools[]</code></td></tr>
+<tr><td><code>F5SPKEgress</code> × 2</td><td><code>GatewaySettings.spec.egressConfigs[]</code> + <code>Infra.spec.egressDefaults</code></td></tr>
+<tr><td><code>F5BnkGateway</code></td><td><code>GatewaySettings</code> (the Gateway’s <code>parametersRef</code> target)</td></tr>
+<tr><td>VIP address arithmetic</td><td>IPAM allocation, read from <code>Gateway.status.addresses</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>roksbnkctl</code> emits both CRs for you. The addressing comes from the per-zone CIDRs
+you already configure — nothing new to fill in for a standard install:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>your existing config</th><th>the 2.4 IPAM pool it becomes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ext_vlan_cidr</code></td><td><code>external-vlan-ipam</code> — TMM VLAN self-IPs</td></tr>
+<tr><td><code>int_vip_cidr</code></td><td><code>vip-listener-ipam</code> — ingress VIPs</td></tr>
+<tr><td><code>int_snat_cidr</code></td><td><code>egress-snat-ipam</code> — egress SNAT addresses</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>gateway_egress_mode</code> means the same thing on both lines: <code>snatpool</code> becomes a
+<code>Pool</code> egress config backed by <code>egress-snat-ipam</code>, <code>automap</code> becomes an <code>Automap</code>
+config, and <code>both</code> produces both.</p>
+<h3 id="things-24-stops-needing"><a class="header" href="#things-24-stops-needing">Things 2.4 stops needing</a></h3>
+<p>Three of the four items in the 2.4 guide’s own “Changes From BNK Release-2.3”
+section are <em>subtractions</em>, which is easy to miss when reading a list of
+additions. On the 2.4 line <code>roksbnkctl</code> no longer creates:</p>
+<ul>
+<li><strong>a separate CIS Helm release</strong> — CIS is integrated into FLO, and
+<code>externalBigip.enabled</code> on the CNEInstance is what turns it on;</li>
+<li><strong>the node-labeler Job</strong> — <code>app=f5-tmm</code> labelling is not required;</li>
+<li><strong>the <code>macvlan-conf</code> NetworkAttachmentDefinition</strong> — the product creates its
+own internal NAD as <code>macvlan-internal</code> on <code>dummy0</code>, owned by the <code>F5Tmm</code> CR,
+and that name is reserved;</li>
+<li><strong>eighteen of nineteen privileged SCC bindings.</strong> FLO grants its components
+what they need, so the install requires one binding rather than nineteen.</li>
+</ul>
+<blockquote>
+<p>The guide also asks for one privileged SCC binding <strong>per application
+namespace</strong> (<code>oc adm policy add-scc-to-user privileged -n &lt;ns&gt; -z default</code>).
+<code>roksbnkctl</code> does not create those: it knows the FLO and utils namespaces and
+nothing about where you will run workloads. That one stays an operator step.</p>
+</blockquote>
+<h2 id="the-trusted-profile"><a class="header" href="#the-trusted-profile">The Trusted Profile</a></h2>
+<p>2.4’s CNE controller authenticates to IBM Cloud with a <strong>Trusted Profile</strong> and
+uses it to write into your VPC — adding the <code>Infra</code> IPAM CIDRs as VPC address
+prefixes, creating a routing table, and advertising TMM virtual-IP routes to the
+transit gateway.</p>
+<p><code>roksbnkctl</code> creates the profile, links it to the cluster’s service account, and
+passes its id to the CNEInstance as
+<code>advanced.cneController.env.CLOUD_TRUSTED_PROFILE</code>. Two access policies are
+attached: <strong>Viewer + Editor on the cluster’s VPC</strong>, so the controller can manage
+the network objects it creates, and <strong>Viewer on the cluster itself</strong>, so it can
+read the topology it next-hops routes against.</p>
+<p>Because those IPAM CIDRs become real VPC address prefixes, they must not collide
+with what the cluster VPC already allocates — see
+<a href="#sharing-a-transit-gateway-across-clusters">Transit gateway sharing</a>.</p>
+<h2 id="moving-between-lines"><a class="header" href="#moving-between-lines">Moving between lines</a></h2>
+<p><strong>You cannot flip a deployed workspace from 2.3 to 2.4 in place.</strong> <code>bnk up</code> and
+<code>gateway up</code> both refuse it, and the refusal names the reasons, because none of
+them is visible in a terraform plan:</p>
+<ul>
+<li><strong>GTM object naming differs.</strong> 2.3 writes <code>server_&lt;tmm_selfip&gt;</code>; 2.4 writes
+<code>server_&lt;digitalassetid&gt;_&lt;cluster-name&gt;_&lt;ns&gt;_&lt;ip&gt;</code>. Those objects live on an
+external BIG-IP — outside the cluster and outside terraform state — so nothing
+here removes them, and leaving both formats in place causes device IP
+conflicts.</li>
+<li><strong>The network model is replaced, not migrated.</strong> The <code>F5SPK*</code> objects a 2.3
+install created are simply no longer read, and they stay on the cluster.</li>
+<li><strong>The CWC licence secrets survive a teardown</strong> and must be cleared before a
+reinstall licenses cleanly. <code>bnk down</code> now removes them for you.</li>
+</ul>
+<p>To run 2.4, use a <strong>new workspace and a new install</strong>. Changing
+<code>CLUSTER_IDENTIFIER</code> on a deployed workspace needs the same manual GTM cleanup,
+for the same reason.</p>
+<h2 id="mtls-and-the-gateway-api-bundle"><a class="header" href="#mtls-and-the-gateway-api-bundle">mTLS and the Gateway API bundle</a></h2>
+<p>A base 2.4 install works with whatever Gateway API bundle OpenShift ships: its
+<code>crd-installer</code> logs a graceful skip and leaves the platform’s CRDs alone.</p>
+<p><strong>mTLS is the exception.</strong> It needs Gateway API 1.5.0 standard, and installing
+that means deleting the OpenShift ingress-operator’s
+<code>ValidatingAdmissionPolicy</code> and its binding — which the platform recreates
+quickly, so it is a race. Opt in:</p>
+<pre><code class="language-yaml">bnk:
+  gateway_api_mtls: true      # ROKSBNKCTL_GATEWAY_API_MTLS=true
+</code></pre>
+<p>Off by default, because deleting a platform admission policy on a cluster that
+does not need the newer bundle is a change nobody asked for. Ignored on 2.3,
+where that sweep always runs — there the <code>crd-installer</code> <em>does</em> force its own
+CRDs and is blocked without it.</p>
+<h2 id="per-component-settings"><a class="header" href="#per-component-settings">Per-component settings</a></h2>
+<p>The 2.4 CNEInstance takes an environment list for each of its ~26 components.
+Anything not surfaced as a first-class field is reachable through the
+passthrough, in YAML or from the environment:</p>
+<pre><code class="language-yaml">bnk:
+  advanced:
+    tmm:
+      env:
+        TMM_DEFAULT_MTU: "9000"
+    cneController:
+      env:
+        GSLB_DATACENTER_NAME: "datacenter-eu-gb"
+</code></pre>
+<pre><code class="language-bash">ROKSBNKCTL_BNK_ADV_TMM_ENV_TMM_DEFAULT_MTU=9000
+ROKSBNKCTL_BNK_ADV_CNECONTROLLER_ENV_GSLB_DATACENTER_NAME=datacenter-eu-gb
+</code></pre>
+<p>An entry here <strong>replaces</strong> the default of the same name rather than adding a
+second copy of it — the CNEInstance spec is read by the lifecycle operator, not
+by kubelet, so “the last duplicate wins” is not a rule to rely on. That is what
+makes this the way to <em>change</em> a default rather than only to add to it.</p>
+<p><code>USE_GATEWAY_SETTINGS</code> is deliberately <strong>not</strong> the example here, though earlier
+drafts of this page used it. <code>roksbnkctl</code> sets it on 2.4 itself, because on 2.4
+there is no working configuration without it: without the flag the controller
+never reads the <code>Infra</code> and <code>GatewaySettings</code> CRs that <code>gateway up</code> applies, and
+they sit at <code>Accepted=Unknown</code> forever. You can still override it through this
+passthrough — that is what the replace-not-append rule buys you — but you should
+not have to.</p>
+<p>The component name is matched case-insensitively, and one that <code>roksbnkctl</code> does
+not recognize is passed through rather than refused — the component set belongs
+to the product, and this tool should not be the reason a newly shipped one is
+unreachable.</p>
+<h2 id="checking-a-24-install"><a class="header" href="#checking-a-24-install">Checking a 2.4 install</a></h2>
+<p><code>bnk status</code> reports the CNEInstance’s aggregate <code>Available</code> condition plus any
+component condition that is not <code>True</code>, which is what turns a timeout into a
+diagnosis:</p>
+<pre><code>cneinstance:            Available=False (ComponentsNotReady)
+cneinstance_not_ready:  F5TmmAvailable=False
+</code></pre>
+<p>That distinction matters on 2.4. <code>CNEControllerAvailable=True</code> can sit next to
+<code>Available=False</code> with TMM at 0/3 and nothing passing traffic.</p>
+<p>The gate itself is <code>CNEControllerAvailable</code> on <strong>both</strong> lines, and deliberately
+so: waiting on the aggregate at the gate deadlocks 2.4, because the aggregate
+cannot go True until the License CR exists and the License CR is created after
+the gate. The aggregate is checked separately, after licensing, which is where
+it can actually be satisfied.</p>
+<blockquote>
+<p>If a 2.4 install looks broken in a way that has nothing to do with what you
+changed, check the <code>License</code> CR first. The controller refuses to run <em>any</em>
+resource controller until it is Active, logging <code>License is not enabled.. skip Resource controllers</code>.</p>
+</blockquote>
+<p><code>gateway status</code> reports the <code>Infra</code> and <code>GatewaySettings</code> CRs alongside the
+Gateway, and reads the <strong>IPAM-allocated</strong> VIP from the Gateway’s status — on 2.4
+there is no address to compute, only one to read.</p>
+<h2 id="support-status"><a class="header" href="#support-status">Support status</a></h2>
+<p>2.4 is <strong>verified against <code>2.4.0-EA</code></strong>: <code>bnk up</code> reaches all eighteen CNEInstance
+conditions with TMM at 5/5 and the licence Active, on a single-NIC OCP 4.20
+cluster with connected licensing.</p>
+<p>What that run covered, and what it did not, because the difference matters:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th></th></tr>
+</thead>
+<tbody>
+<tr><td>exercised</td><td><code>bnk up</code> on an adopted cluster — manifest <code>2.4.0-EA</code>, FAR <code>repo.f5.com</code> with the non-GA service account, three workers, single-NIC, connected licensing</td></tr>
+<tr><td>exercised</td><td>the <strong>gateway phase</strong> — <code>gateway up</code> applies <code>Infra</code> and <code>GatewaySettings</code>, and both reach <code>Accepted</code>, <code>ResolvedRefs</code> and <code>Programmed</code> = <code>True</code>, with the CNEInstance still 18/18 and the licence still Active afterwards</td></tr>
+<tr><td><strong>not</strong> exercised</td><td>mTLS, multi-NIC, disconnected licensing, <code>EgressGateway</code> CRs, and the contract boundary</td></tr>
+</tbody>
+</table>
+</div>
+<p>Running the gateway phase is what found the three defects that made it
+impossible before it was run: the gateway plan failed outright on 2.4, nothing
+set <code>USE_GATEWAY_SETTINGS</code> so no controller ever reconciled the CRs, and the
+<code>cneinstance_advanced_env</code> override meant to let you set it by hand was read by
+no terraform at all. None of the three was visible in the source — the third
+least of all, since the variable’s name appears everywhere it should.</p>
+<p>2.4 EA is <strong>single-NIC throughout</strong> — one NetworkAttachmentDefinition, one
+<code>external-vlan</code> network in the <code>Infra</code> CR, and no second data-plane interface
+anywhere. An earlier expectation that 2.4 would bring multi-NIC is withdrawn, and
+the verified run was single-NIC, so it is evidence for single-NIC and nothing
+else.</p>
+<p><code>support_matrix.yaml</code> records the same thing in the same terms. Its rule is worth
+repeating, because it is what keeps that file useful: a cell with no coverage is
+a claim nobody has checked.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="tearing-down-1"><a class="header" href="#tearing-down-1">Tearing down</a></h1>
 <blockquote>
@@ -5921,6 +6134,11 @@ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 <li><strong>Context cancellation / timeout</strong> ⇒ exit code <code>137</code> (the conventional SIGKILL-on-signal code).</li>
 </ul>
 <p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “we never reached the tool” (<code>127</code>) from “we reached the tool, then the backend died mid-flight” (<code>126</code>) from “we ran out of time” (<code>137</code>).</p>
+<h3 id="one-code-outside-the-backend-surface-125"><a class="header" href="#one-code-outside-the-backend-surface-125">One code outside the backend surface: <code>125</code></a></h3>
+<p><code>roksbnkctl upgrade</code> and <code>roksbnkctl self update</code> exit <strong><code>125</code></strong> when an upgrade removed the old binary and could not put anything back — so there is no <code>roksbnkctl</code> at the install path and the only copy is the <code>.old</code> sidecar beside it. The error names the file and the command to rename it.</p>
+<p>This is separate from <code>1</code> because the two need opposite responses. An ordinary failed upgrade is safe to retry; this one cannot be retried at all, because there is nothing left to run. A wrapper that treats them alike either loops forever on a machine that will never recover, or reports a bricked install as routine.</p>
+<p>Note the overlap with the passthrough range above. It is deliberate and bounded, but it is an overlap: a wrapped tool that exits <code>125</code> still propagates <code>125</code>, exactly as the table says. What cannot happen is a <em>single invocation</em> meaning both — <code>upgrade</code> and <code>self update</code> spawn no child process at all (extraction, checksum verification and the install are in-process), so a <code>125</code> from those two commands has exactly one meaning, and a <code>125</code> from anything else is a child’s status. This is the same bargain already made for <code>2</code>, which is both “bad invocation” and whatever a child chose to exit with.</p>
+<p>In practice this fires on Windows, where a running <code>.exe</code> is locked and the upgrade works by renaming the old binary aside before moving the new one in. A second process holding a handle at that moment — an antivirus scanner opening the freshly written file is the usual one — can make the second rename fail; if the rollback then fails too, this is the result.</p>
 <h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
 <p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
@@ -5991,6 +6209,17 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 </table>
 </div>
 <p>Note the <strong>126 vs 127 split</strong>: 127 means “we never reached the tool” (binary missing, daemon unreachable, SSH refused); 126 means “we reached the tool but the backend itself broke after that point” (couldn’t fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface">PRD 03 §“Backend interface”</a>. CI scripts that distinguish “test infra broken” from “real test failure” can now key on the difference.</p>
+<p><code>upgrade</code> / <code>self update</code> add one code of their own, listed separately because they wrap no child:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Outcome</th><th>Exit code</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td>Upgrade left no binary at the install path (rollback also failed)</td><td><code>125</code></td><td><code>exitcode.SelfUpdateStranded</code></td></tr>
+</tbody>
+</table>
+</div>
 <h4 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h4>
 <ul>
 <li>You have the tool installed and on PATH already.</li>
@@ -7176,7 +7405,7 @@ cleared 0 entries
 <li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
 <li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
 <li>It is not persisted. Setting it in one invocation does not affect the next.</li>
-<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v1.0 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
+<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
 </ul>
 <p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
 <h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>
@@ -9164,7 +9393,7 @@ than the pinned build would hit a hard refusal on a combination never known to b
 wrong, with no action available to them. It warns and proceeds instead.</p>
 <p><strong>An unset <code>network_mode</code> defers to the recorded cluster.</strong> Each step’s
 environment carries only what that step needs, so a mode set by <code>cluster-create</code>
-is simply absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
+is absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
 absence as a demand for <code>single-nic</code> would refuse a correct multi-NIC deployment
 at its second module. Only an <em>explicit</em> contradiction is refused.</p>
 <p>The practical rule for blueprint authors: <strong>only the module that CREATES a
@@ -14155,8 +14384,8 @@ shared gateway collides <strong>by construction</strong>.</p>
 </thead>
 <tbody>
 <tr><td>services (Harbor + FLP)</td><td><em>existing, <code>auto</code></em></td><td><code>10.241.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
-<tr><td>first disconnected cluster</td><td><code>10.242.0.0/16</code></td><td><code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
-<tr><td>second disconnected cluster</td><td><code>10.243.0.0/16</code></td><td><code>10.243.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>first disconnected cluster</td><td><code>10.245.0.0/16</code></td><td><code>10.245.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>second disconnected cluster</td><td><code>10.247.0.0/16</code></td><td><code>10.247.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -14670,7 +14899,7 @@ container module or an argv-only runner: no shell, no prompts, nowhere to stage 
 <p>Settings that <em>define</em> a topology — <code>ROKSBNKCTL_CLUSTER_CREATE</code>,
 <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>, <code>ROKSBNKCTL_LICENSE_MODE</code> — are pinned in the workflow YAML
 next to the steps they govern, not in the ConfigMap. That is why the connected and disconnected
-workflows differ in essentially one line.</p>
+workflows differ in one line.</p>
 <h3 id="bring-your-own-controller--versions-and-constraints"><a class="header" href="#bring-your-own-controller--versions-and-constraints">Bring your own controller — versions and constraints</a></h3>
 <p><strong>Argo Workflows, not Argo CD.</strong> These are <code>argo submit</code> pipelines: no git repository, no
 <code>Application</code>, nothing to sync. If you already run Argo CD, it is not what drives this — you need

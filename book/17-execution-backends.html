@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -275,6 +275,11 @@ roksbnkctl ibmcloud --backend ssh:jumphost ks cluster ls
 <li><strong>Context cancellation / timeout</strong> ⇒ exit code <code>137</code> (the conventional SIGKILL-on-signal code).</li>
 </ul>
 <p>This way, your CI script can tell “the tool said X failed” (typical exit codes) from “we never reached the tool” (<code>127</code>) from “we reached the tool, then the backend died mid-flight” (<code>126</code>) from “we ran out of time” (<code>137</code>).</p>
+<h3 id="one-code-outside-the-backend-surface-125"><a class="header" href="#one-code-outside-the-backend-surface-125">One code outside the backend surface: <code>125</code></a></h3>
+<p><code>roksbnkctl upgrade</code> and <code>roksbnkctl self update</code> exit <strong><code>125</code></strong> when an upgrade removed the old binary and could not put anything back — so there is no <code>roksbnkctl</code> at the install path and the only copy is the <code>.old</code> sidecar beside it. The error names the file and the command to rename it.</p>
+<p>This is separate from <code>1</code> because the two need opposite responses. An ordinary failed upgrade is safe to retry; this one cannot be retried at all, because there is nothing left to run. A wrapper that treats them alike either loops forever on a machine that will never recover, or reports a bricked install as routine.</p>
+<p>Note the overlap with the passthrough range above. It is deliberate and bounded, but it is an overlap: a wrapped tool that exits <code>125</code> still propagates <code>125</code>, exactly as the table says. What cannot happen is a <em>single invocation</em> meaning both — <code>upgrade</code> and <code>self update</code> spawn no child process at all (extraction, checksum verification and the install are in-process), so a <code>125</code> from those two commands has exactly one meaning, and a <code>125</code> from anything else is a child’s status. This is the same bargain already made for <code>2</code>, which is both “bad invocation” and whatever a child chose to exit with.</p>
+<p>In practice this fires on Windows, where a running <code>.exe</code> is locked and the upgrade works by renaming the old binary aside before moving the new one in. A second process holding a handle at that moment — an antivirus scanner opening the freshly written file is the usual one — can make the second rename fail; if the rollback then fails too, this is the result.</p>
 <h2 id="per-tool-defaults-from-exec"><a class="header" href="#per-tool-defaults-from-exec">Per-tool defaults from <code>exec:</code></a></h2>
 <p>Workspace config carries the per-tool default backend in the <code>exec:</code> block:</p>
 <pre><code class="language-yaml"># ~/.roksbnkctl/&lt;workspace&gt;/config.yaml
@@ -345,6 +350,17 @@ cmd.Stderr = redactor(opts.Stderr, creds)
 </table>
 </div>
 <p>Note the <strong>126 vs 127 split</strong>: 127 means “we never reached the tool” (binary missing, daemon unreachable, SSH refused); 126 means “we reached the tool but the backend itself broke after that point” (couldn’t fork, container created but crashed, pod scheduled but evicted before exec). The local + docker backends split 126 vs 127 per <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#backend-interface">PRD 03 §“Backend interface”</a>. CI scripts that distinguish “test infra broken” from “real test failure” can now key on the difference.</p>
+<p><code>upgrade</code> / <code>self update</code> add one code of their own, listed separately because they wrap no child:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Outcome</th><th>Exit code</th><th>Source</th></tr>
+</thead>
+<tbody>
+<tr><td>Upgrade left no binary at the install path (rollback also failed)</td><td><code>125</code></td><td><code>exitcode.SelfUpdateStranded</code></td></tr>
+</tbody>
+</table>
+</div>
 <h4 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h4>
 <ul>
 <li>You have the tool installed and on PATH already.</li>

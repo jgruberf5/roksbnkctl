@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -328,8 +328,8 @@ shared gateway collides <strong>by construction</strong>.</p>
 </thead>
 <tbody>
 <tr><td>services (Harbor + FLP)</td><td><em>existing, <code>auto</code></em></td><td><code>10.241.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
-<tr><td>first disconnected cluster</td><td><code>10.242.0.0/16</code></td><td><code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
-<tr><td>second disconnected cluster</td><td><code>10.243.0.0/16</code></td><td><code>10.243.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>first disconnected cluster</td><td><code>10.245.0.0/16</code></td><td><code>10.245.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>second disconnected cluster</td><td><code>10.247.0.0/16</code></td><td><code>10.247.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
 </tbody>
 </table>
 </div>
@@ -843,7 +843,7 @@ container module or an argv-only runner: no shell, no prompts, nowhere to stage 
 <p>Settings that <em>define</em> a topology — <code>ROKSBNKCTL_CLUSTER_CREATE</code>,
 <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>, <code>ROKSBNKCTL_LICENSE_MODE</code> — are pinned in the workflow YAML
 next to the steps they govern, not in the ConfigMap. That is why the connected and disconnected
-workflows differ in essentially one line.</p>
+workflows differ in one line.</p>
 <h3 id="bring-your-own-controller--versions-and-constraints"><a class="header" href="#bring-your-own-controller--versions-and-constraints">Bring your own controller — versions and constraints</a></h3>
 <p><strong>Argo Workflows, not Argo CD.</strong> These are <code>argo submit</code> pipelines: no git repository, no
 <code>Application</code>, nothing to sync. If you already run Argo CD, it is not what drives this — you need

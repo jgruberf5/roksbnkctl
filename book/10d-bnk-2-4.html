@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Registering an existing cluster - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>BNK 2.4 - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,216 +177,223 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="registering-an-existing-cluster"><a class="header" href="#registering-an-existing-cluster">Registering an existing cluster</a></h1>
-<p><code>roksbnkctl cluster register &lt;name&gt;</code> wires <code>roksbnkctl</code> up to a ROKS cluster that already exists in your IBM Cloud account — one you didn’t provision via <a href="./08-cluster-phase.html"><code>cluster up</code></a>. After a successful register, the workspace behaves exactly as if you’d done <code>cluster up</code>: <code>roksbnkctl up</code> deploys BNK trials onto the registered cluster, <code>roksbnkctl down</code> tears those trials down, <code>roksbnkctl status</code> reports the cluster’s identity, and so on.</p>
-<p>This chapter covers when registration is the right answer, what input is required vs auto-discovered, the COS naming convention, the <code>cluster-outputs.json</code> write, and a worked example.</p>
-<blockquote>
-<p><strong><code>roksbnkctl init</code> can register for you.</strong> Answering <strong>no</strong> to <em>Create a new ROKS cluster?</em> in the <a href="./07-quick-start.html#reusing-an-existing-cluster"><code>init</code> interview</a> lists the account’s running OpenShift clusters and registers the one you pick — it performs the same <code>cluster-outputs.json</code> write described here, inline. Use <code>cluster register &lt;name&gt;</code> directly when you want to (re)register without re-running the full interview, or when scripting.</p>
-</blockquote>
-<blockquote>
-<p><strong><code>cluster up</code> attaches when <code>cluster.create=false</code>.</strong> You don’t need a separate <code>cluster register</code> call: if the workspace’s <code>cluster.create</code> is <code>false</code>, <code>roksbnkctl cluster up</code> <em>attaches</em> to the existing cluster named in <code>cluster.name</code> (the same discovery + <code>cluster-outputs.json</code> write) instead of running the terraform create. So one command — and one toggle in an automation/CI form — covers both “make a new cluster” and “use the existing one”. Set it non-interactively with <code>ROKSBNKCTL_CLUSTER_CREATE</code> / <code>ROKSBNKCTL_CLUSTER_NAME</code> (see <a href="./07a-unattended-setup.html">Chapter 7a</a>).</p>
-</blockquote>
-<h2 id="when-to-use-this"><a class="header" href="#when-to-use-this">When to use this</a></h2>
-<p><code>cluster register</code> is the answer when <strong>all</strong> of these are true:</p>
-<ul>
-<li>A ROKS cluster already exists in the IBM Cloud account.</li>
-<li>You have IAM access to the cluster’s VPC + container service.</li>
-<li>You want <code>roksbnkctl</code> to deploy BNK trials onto that cluster.</li>
-<li>You don’t want <code>roksbnkctl</code> to own the cluster’s lifecycle (it shouldn’t be <code>terraform destroy</code>-able from your workstation).</li>
-</ul>
-<p>Common scenarios:</p>
-<ol>
-<li>
-<p><strong>Your team operates the ROKS cluster centrally.</strong> A platform team provisioned the cluster via their own Terraform / Pulumi / IBM Cloud Schematics; you just want to deploy BNK trials onto it. Register it; deploy trials; tear them back down. The cluster itself stays under the platform team’s ownership.</p>
-</li>
-<li>
-<p><strong>You’re attaching to an existing demo cluster.</strong> A workshop hosts a shared cluster that participants attach to. Each participant registers it in their own workspace and deploys their own trial — trials are isolated by namespace under the same cluster.</p>
-</li>
-<li>
-<p><strong>You provisioned the cluster manually for testing.</strong> You created a one-off cluster via <code>ibmcloud ks cluster create vpc-gen2 ...</code> and want to move forward with <code>roksbnkctl</code> rather than re-creating it.</p>
-</li>
-</ol>
-<p>If none of those apply — i.e. you want <code>roksbnkctl</code> to own cluster lifecycle end-to-end — use <code>cluster up</code> instead. Register and <code>cluster up</code> are mutually exclusive per workspace; the second one wins.</p>
-<h2 id="required-input-vs-auto-discovery"><a class="header" href="#required-input-vs-auto-discovery">Required input vs auto-discovery</a></h2>
-<p><code>cluster register</code> takes one positional argument (the cluster name or ID) and one optional flag (<code>--registry-cos-name</code>).</p>
-<pre><code class="language-bash">roksbnkctl cluster register &lt;cluster-name-or-id&gt; [--registry-cos-name &lt;cos-instance-name&gt;]
+                        <h1 id="bnk-24"><a class="header" href="#bnk-24">BNK 2.4</a></h1>
+<p><code>roksbnkctl</code> drives BNK <strong>2.3</strong> and <strong>2.4</strong> from one build. Which one you get is
+decided by <code>bnk.manifest_version</code> and nothing else — there is deliberately no
+<code>bnk.line</code> field and no <code>ROKSBNKCTL_BNK_LINE</code> override, because a second way to
+say which release this is, is a second thing that can disagree with the manifest
+being installed.</p>
+<pre><code class="language-yaml">bnk:
+  manifest_version: 2.3.0-3.2598.3-0.0.170   # -&gt; the 2.3 line
+  # manifest_version: 2.4.0-EA               # -&gt; the 2.4 line
 </code></pre>
-<p>Everything else is <strong>auto-discovered</strong> via the IBM SDK:</p>
+<p>The derived value is rendered as a <code>bnk_line</code> terraform variable (<code>"2.3"</code> or
+<code>"2.4"</code>), and the modules gate per-release resources with <code>count</code> on it. There is
+no forked copy of the tree: the 2.4 changes are additive resources, which <code>count</code>
+expresses cleanly and two copies of a file do not.</p>
+<blockquote>
+<p><strong><code>2.4.0-EA</code> carries no build suffix</strong>, where 2.3 versions have four dot/dash
+segments (<code>2.3.0-3.2598.3-0.0.170</code>). Anything you write that parses a manifest
+version should key on the <code>major.minor</code> prefix rather than the segment count.</p>
+</blockquote>
+<h2 id="what-actually-changes"><a class="header" href="#what-actually-changes">What actually changes</a></h2>
+<p>2.4 replaces the data-plane configuration model. It runs the CNEInstance with
+<code>USE_GATEWAY_SETTINGS=true</code>, and under that flag the CNE controller <strong>ignores</strong>
+the <code>cloud-network-mapping</code> ConfigMap and the entire <code>F5SPK*</code> custom-resource
+family that a 2.3 install creates, reading two new CRs instead.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>Field</th><th>Source</th></tr>
+<tr><th>2.3</th><th>2.4</th></tr>
 </thead>
 <tbody>
-<tr><td><code>cluster_id</code></td><td><code>ibmcloud ks cluster get &lt;name&gt;</code> (resolved by name → ID)</td></tr>
-<tr><td><code>region</code></td><td>from the cluster lookup</td></tr>
-<tr><td><code>resource_group_id</code></td><td>from the cluster lookup</td></tr>
-<tr><td><code>vpc_id</code></td><td>from the cluster’s <code>provider.vpcs[0].id</code></td></tr>
-<tr><td><code>master_url</code></td><td>from the cluster lookup</td></tr>
-<tr><td><code>openshift_version</code></td><td>from the cluster’s <code>masterKubeVersion</code></td></tr>
-<tr><td><code>registry_cos_crn</code></td><td>discovered via the registry COS instance lookup (see below)</td></tr>
+<tr><td><code>cloud-network-mapping</code> ConfigMap</td><td><code>Infra.spec.networks[]</code> + <code>networkAttachments[]</code></td></tr>
+<tr><td><code>F5SPKVlan</code> × 2</td><td><code>Infra.spec.networks[type=vlan]</code></td></tr>
+<tr><td><code>F5SPKStaticRoute</code> × N</td><td><code>Infra.spec.staticRoutes[]</code></td></tr>
+<tr><td><code>F5SPKSnatpool</code></td><td><code>GatewaySettings.spec.sourceNATPools[]</code></td></tr>
+<tr><td><code>F5SPKEgress</code> × 2</td><td><code>GatewaySettings.spec.egressConfigs[]</code> + <code>Infra.spec.egressDefaults</code></td></tr>
+<tr><td><code>F5BnkGateway</code></td><td><code>GatewaySettings</code> (the Gateway’s <code>parametersRef</code> target)</td></tr>
+<tr><td>VIP address arithmetic</td><td>IPAM allocation, read from <code>Gateway.status.addresses</code></td></tr>
 </tbody>
 </table>
 </div>
-<p>The cluster lookup goes through the same container-service endpoint <code>ibmcloud ks cluster get</code> uses — no host <code>ibmcloud</code> install required. If the named cluster doesn’t exist in the account, the call returns a clear <code>no cluster named &lt;foo&gt;</code> error rather than a 404 stack trace.</p>
-<p>A <strong>vpc-gen2</strong> cluster is required. Classic infrastructure clusters return successfully but their <code>vpc_id</code> is empty, and <code>cluster register</code> refuses to write a record without one:</p>
-<pre><code>Error: cluster "old-classic" has no VPC — roksbnkctl only supports vpc-gen2 clusters
-</code></pre>
-<h2 id="the-cos-naming-convention"><a class="header" href="#the-cos-naming-convention">The COS naming convention</a></h2>
-<p><code>roksbnkctl up</code> needs a Cloud Object Storage instance to act as the registry for FAR images, JWT licenses, and schematic state. <code>cluster register</code> verifies that this COS instance exists at registration time so a later <code>up</code> doesn’t fail mid-apply with a missing-instance error.</p>
-<h3 id="default-convention"><a class="header" href="#default-convention">Default convention</a></h3>
-<p>The bundled HCL falls back to <strong><code>&lt;cluster-name&gt;-cos</code></strong> if the user’s tfvars don’t override <code>roks_cos_instance_name</code>. So <code>cluster register</code> defaults to looking up <code>&lt;cluster-name&gt;-cos</code>:</p>
-<pre><code class="language-bash"># Cluster name: "canada-roks" → expects COS instance "canada-roks-cos"
-roksbnkctl cluster register canada-roks
-</code></pre>
-<h3 id="override-with---registry-cos-name"><a class="header" href="#override-with---registry-cos-name">Override with <code>--registry-cos-name</code></a></h3>
-<p>If your team set <code>roks_cos_instance_name</code> to something else in their tfvars (or named the COS instance via the IBM Cloud console with a different convention), pass <code>--registry-cos-name &lt;name&gt;</code>:</p>
-<pre><code class="language-bash">roksbnkctl cluster register canada-roks \
-  --registry-cos-name canada-roks-bnk-registry
-</code></pre>
-<p>The instance name is <strong>case-sensitive</strong> and must match exactly — <code>Canada-ROKS-COS</code> and <code>canada-roks-cos</code> are different instances.</p>
-<h3 id="what-if-the-cos-doesnt-exist-yet"><a class="header" href="#what-if-the-cos-doesnt-exist-yet">What if the COS doesn’t exist yet?</a></h3>
-<p><code>cluster register</code> errors out:</p>
-<pre><code>Error: registry COS instance "canada-roks-cos" not found in account: ...
-  Either run `roksbnkctl cluster up` to create it, or pass --registry-cos-name &lt;name&gt;
-  if your tfvars uses a different roks_cos_instance_name
-</code></pre>
-<p>You have two options:</p>
-<ol>
-<li>
-<p><strong>Create the COS instance</strong> in the IBM Cloud console with the conventional name (<code>&lt;cluster&gt;-cos</code>), then re-run register. The instance can be empty — <code>roksbnkctl up</code> will populate it with the bucket structure it needs on its first apply.</p>
-</li>
-<li>
-<p><strong>Use a different name</strong> that already exists in the account, via <code>--registry-cos-name &lt;name&gt;</code>.</p>
-</li>
-</ol>
-<p>Either way, <code>cluster register</code> won’t write <code>cluster-outputs.json</code> until both the cluster and its registry COS instance exist.</p>
-<h2 id="the-cluster-outputsjson-write"><a class="header" href="#the-cluster-outputsjson-write">The <code>cluster-outputs.json</code> write</a></h2>
-<p>On success, <code>cluster register</code> writes <code>~/.roksbnkctl/&lt;workspace&gt;/cluster-outputs.json</code> — the same file <code>cluster up</code> writes. The contents look nearly identical; the differences are <code>source</code>, and what is deliberately left <strong>empty</strong>:</p>
-<pre><code class="language-json">{
-  "cluster_name": "canada-roks",
-  "cluster_id": "cre6h4l20jjsg4kvt3a0",
-  "region": "ca-tor",
-  "resource_group_id": "abc123...",
-  "vpc_id": "r038-...",
-  "schema_version": 2,
-  "network_mode": "single-nic",
-  "registry_cos_crn": "crn:v1:bluemix:public:cloud-object-storage:global:a/...",
-  "registry_cos_name": "canada-roks-cos",
-  "master_url": "https://c106.ca-tor.containers.cloud.ibm.com:31415",
-  "openshift_version": "4.14_openshift",
-  "source": "cluster-register",
-  "recorded_at": "2026-05-08T14:22:08Z"
-}
-</code></pre>
-<p>The <code>source</code> field is <code>cluster-register</code> (vs <code>cluster-up</code> for self-provisioned clusters). Downstream commands that care about provenance — for example, a future <code>roksbnkctl cluster down</code> would refuse to destroy a <code>cluster-register</code>-sourced cluster — read this field. Subnet IDs (<code>subnet_ids</code>) and transit gateway ID (<code>transit_gateway_id</code>) are left blank for registered clusters; the bundled HCL doesn’t need them when <code>roksbnkctl up</code> runs against a pre-existing cluster.</p>
-<p><strong><code>vpc_cidr</code> is also left empty here, and that is deliberate.</strong> It records the
-block <em>this tool used to create</em> a VPC. On the adopt path the setting never
-applied, so writing the configured value would record something that was never
-true of the VPC.</p>
-<p>That has one consequence worth knowing: because the create-time warning for
-<code>cluster.vpc_cidr</code> fires only on a disagreement with a <strong>recorded</strong> value, a
-workspace built by <code>cluster register</code> will never emit it — there is nothing
-recorded to disagree with. Silence there means “not knowable”, not “your value
-is fine”. See <a href="./26-troubleshooting.html">Chapter 26</a>.</p>
-<p><strong><code>network_mode</code>, by contrast, is recorded</strong> — from the config, since an adopted
-cluster’s mode cannot yet be detected from the IBM API. On a single-NIC cluster
-(every cluster today) the default is correct and nothing needs saying. When
-multi-NIC ROKS ships, adopting one will mean setting <code>cluster.network_mode</code> to
-match <strong>what the cluster is</strong>, not what you want — the opposite of how the same
-field reads on <code>cluster up</code>.</p>
-<h2 id="worked-example-register-canada-roks"><a class="header" href="#worked-example-register-canada-roks">Worked example: register canada-roks</a></h2>
-<p>The full flow for attaching to a hypothetical <code>canada-roks</code> cluster.</p>
-<h3 id="step-1--create-or-pick-a-workspace"><a class="header" href="#step-1--create-or-pick-a-workspace">Step 1 — create or pick a workspace</a></h3>
-<pre><code class="language-bash">roksbnkctl ws new canada
-roksbnkctl init -w canada
-# (interactive — fill in region as ca-tor; cluster.name = canada-roks)
-</code></pre>
-<p>You can also run <code>cluster register</code> against the current workspace; the <code>-w</code> is just for clarity.</p>
-<h3 id="step-2--cluster-register"><a class="header" href="#step-2--cluster-register">Step 2 — <code>cluster register</code></a></h3>
-<pre><code class="language-bash">roksbnkctl -w canada cluster register canada-roks
-</code></pre>
-<p>Sample output:</p>
-<pre><code>→ Looking up cluster "canada-roks"
-✓ Cluster canada-roks (cre6h4l20jjsg4kvt3a0) — state: normal, masters: 4.14_openshift
-✓ VPC r038-... (resource group prod-rg)
-→ Verifying registry COS instance "canada-roks-cos"
-✓ COS instance canada-roks-cos (abc-123-def-...)
-✓ Wrote ~/.roksbnkctl/canada/cluster-outputs.json
-</code></pre>
-<p>If the COS naming was non-conventional:</p>
-<pre><code class="language-bash">roksbnkctl -w canada cluster register canada-roks \
-  --registry-cos-name canada-bnk-registry
-</code></pre>
-<h3 id="step-3--verify-with-cluster-show"><a class="header" href="#step-3--verify-with-cluster-show">Step 3 — verify with <code>cluster show</code></a></h3>
-<pre><code class="language-bash">roksbnkctl -w canada cluster show
-workspace:        canada
-source:           cluster-register
-recorded_at:      2026-05-08T14:22:08Z
-
-cluster_name:     canada-roks
-cluster_id:       cre6h4l20jjsg4kvt3a0
-region:           ca-tor
-resource_group:   abc123...
-openshift:        4.14_openshift
-master_url:       https://c106.ca-tor.containers.cloud.ibm.com:31415
-
-vpc_id:           r038-...
-registry_cos:     canada-roks-cos
-registry_cos_crn: crn:v1:bluemix:public:cloud-object-storage:global:a/...
-</code></pre>
-<h3 id="step-4--fetch-the-kubeconfig"><a class="header" href="#step-4--fetch-the-kubeconfig">Step 4 — fetch the kubeconfig</a></h3>
-<p><code>cluster register</code> does <strong>not</strong> automatically download the kubeconfig — it’s a metadata-only operation. Grab it explicitly:</p>
-<pre><code class="language-bash">roksbnkctl -w canada kubeconfig --download
-# → Fetching admin kubeconfig for "canada-roks"
-# ✓ Wrote /home/you/.kube/config (12345 bytes)
-</code></pre>
-<h3 id="step-5--use-the-cluster-as-if-youd-done-cluster-up"><a class="header" href="#step-5--use-the-cluster-as-if-youd-done-cluster-up">Step 5 — use the cluster as if you’d done <code>cluster up</code></a></h3>
-<p>From here, the workflow is identical to a self-provisioned cluster:</p>
-<pre><code class="language-bash"># Verify reachability
-roksbnkctl -w canada k get nodes
-
-# Deploy a BNK trial onto it
-roksbnkctl -w canada up --auto
-
-# Tear the trial back down (cluster survives)
-roksbnkctl -w canada down --auto
-</code></pre>
-<p><code>roksbnkctl up</code> reads <code>cluster-outputs.json</code> and uses the cluster identity directly — no need to re-state cluster name/region/RG in the trial’s tfvars.</p>
-<h2 id="when-register-isnt-enough"><a class="header" href="#when-register-isnt-enough">When register isn’t enough</a></h2>
-<p>Some scenarios where <code>cluster register</code> won’t get you over the line:</p>
+<p><code>roksbnkctl</code> emits both CRs for you. The addressing comes from the per-zone CIDRs
+you already configure — nothing new to fill in for a standard install:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>your existing config</th><th>the 2.4 IPAM pool it becomes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ext_vlan_cidr</code></td><td><code>external-vlan-ipam</code> — TMM VLAN self-IPs</td></tr>
+<tr><td><code>int_vip_cidr</code></td><td><code>vip-listener-ipam</code> — ingress VIPs</td></tr>
+<tr><td><code>int_snat_cidr</code></td><td><code>egress-snat-ipam</code> — egress SNAT addresses</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>gateway_egress_mode</code> means the same thing on both lines: <code>snatpool</code> becomes a
+<code>Pool</code> egress config backed by <code>egress-snat-ipam</code>, <code>automap</code> becomes an <code>Automap</code>
+config, and <code>both</code> produces both.</p>
+<h3 id="things-24-stops-needing"><a class="header" href="#things-24-stops-needing">Things 2.4 stops needing</a></h3>
+<p>Three of the four items in the 2.4 guide’s own “Changes From BNK Release-2.3”
+section are <em>subtractions</em>, which is easy to miss when reading a list of
+additions. On the 2.4 line <code>roksbnkctl</code> no longer creates:</p>
 <ul>
-<li><strong>The cluster is in a different IBM Cloud account.</strong> API keys are account-scoped; you’d need a key for the cluster’s account. <code>cluster register</code> doesn’t cross account boundaries.</li>
-<li><strong>The cluster is private (no public master endpoint).</strong> <code>roksbnkctl up</code> needs to apply Helm charts and Kubernetes manifests against the master. If the master is only reachable from inside a VPN, route the apply through <code>--on jumphost</code> or wait for the SSH execution backend in Sprint 4.</li>
-<li><strong>The cluster is a classic-infrastructure ROKS</strong> (not vpc-gen2). Registration refuses; classic clusters aren’t supported.</li>
-<li><strong>The cluster’s worker pool is too small.</strong> BNK trials need at least 2 workers with adequate CPU/memory. The upstream HCL provisions appropriately-sized workers; an existing cluster might not.</li>
+<li><strong>a separate CIS Helm release</strong> — CIS is integrated into FLO, and
+<code>externalBigip.enabled</code> on the CNEInstance is what turns it on;</li>
+<li><strong>the node-labeler Job</strong> — <code>app=f5-tmm</code> labelling is not required;</li>
+<li><strong>the <code>macvlan-conf</code> NetworkAttachmentDefinition</strong> — the product creates its
+own internal NAD as <code>macvlan-internal</code> on <code>dummy0</code>, owned by the <code>F5Tmm</code> CR,
+and that name is reserved;</li>
+<li><strong>eighteen of nineteen privileged SCC bindings.</strong> FLO grants its components
+what they need, so the install requires one binding rather than nineteen.</li>
 </ul>
-<p>For the first three, the cluster isn’t a candidate. For the last one, the apply may run but <code>flo</code> / <code>cne_instance</code> will fail to schedule — scale the worker pool first.</p>
-<h2 id="re-registering-and-unregistering"><a class="header" href="#re-registering-and-unregistering">Re-registering and unregistering</a></h2>
-<p>To <strong>re-register</strong> with new data (e.g. you renamed the COS instance, or the master URL changed), just run <code>cluster register</code> again — it overwrites <code>cluster-outputs.json</code> in place.</p>
-<p>To <strong>unregister</strong> without destroying anything, delete the file directly:</p>
-<pre><code class="language-bash">rm ~/.roksbnkctl/canada/cluster-outputs.json
-</code></pre>
-<p>The workspace’s <code>config.yaml</code> and <code>state/</code> survive; only the cluster identity record is removed. The next <code>roksbnkctl up</code> will fail with <code>workspace has no cluster-outputs.json</code> until you either re-register or run <code>cluster up</code>.</p>
-<p>There’s deliberately <strong>no</strong> <code>roksbnkctl cluster unregister</code> command. Deleting the JSON is a single-file operation that doesn’t deserve its own subcommand, and the absence of one nudges users toward “destroy the trial first, then deal with the cluster identity” rather than “unregister without thinking about the consequences”.</p>
-<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<blockquote>
+<p>The guide also asks for one privileged SCC binding <strong>per application
+namespace</strong> (<code>oc adm policy add-scc-to-user privileged -n &lt;ns&gt; -z default</code>).
+<code>roksbnkctl</code> does not create those: it knows the FLO and utils namespaces and
+nothing about where you will run workloads. That one stays an operator step.</p>
+</blockquote>
+<h2 id="the-trusted-profile"><a class="header" href="#the-trusted-profile">The Trusted Profile</a></h2>
+<p>2.4’s CNE controller authenticates to IBM Cloud with a <strong>Trusted Profile</strong> and
+uses it to write into your VPC — adding the <code>Infra</code> IPAM CIDRs as VPC address
+prefixes, creating a routing table, and advertising TMM virtual-IP routes to the
+transit gateway.</p>
+<p><code>roksbnkctl</code> creates the profile, links it to the cluster’s service account, and
+passes its id to the CNEInstance as
+<code>advanced.cneController.env.CLOUD_TRUSTED_PROFILE</code>. Two access policies are
+attached: <strong>Viewer + Editor on the cluster’s VPC</strong>, so the controller can manage
+the network objects it creates, and <strong>Viewer on the cluster itself</strong>, so it can
+read the topology it next-hops routes against.</p>
+<p>Because those IPAM CIDRs become real VPC address prefixes, they must not collide
+with what the cluster VPC already allocates — see
+<a href="./09a-transit-gateway-sharing.html">Transit gateway sharing</a>.</p>
+<h2 id="moving-between-lines"><a class="header" href="#moving-between-lines">Moving between lines</a></h2>
+<p><strong>You cannot flip a deployed workspace from 2.3 to 2.4 in place.</strong> <code>bnk up</code> and
+<code>gateway up</code> both refuse it, and the refusal names the reasons, because none of
+them is visible in a terraform plan:</p>
 <ul>
-<li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — the alternative when you want <code>roksbnkctl</code> to provision the cluster.</li>
-<li><a href="./10-deploying-bnk-trials.html">Chapter 10 — Deploying BNK trials</a> — what <code>roksbnkctl up</code> does on top of a registered (or <code>cluster up</code>’d) cluster.</li>
-<li><a href="./25-cos-supply-chain.html">Chapter 25 — COS supply chain management</a> — the COS instance and bucket layout that <code>--registry-cos-name</code> points at.</li>
-<li><a href="./10a-air-gapped-install.html">Chapter 10a — Air-gapped install</a> — mirror BNK into your own registry; a registered cluster installs from it exactly like a created one.</li>
-<li><a href="./10c-flp-licensing.html">Chapter 10c — Licensing with the F5 License Proxy</a> — a registered cluster is a first-class base for the proxy (<a href="./10c-flp-licensing.html#flow-b--an-existing-cluster-registered-in-the-workspace">Flow B</a>), and <strong>both</strong> clusters in the shared-licensing topology (<a href="./10c-flp-licensing.html#flow-c--a-shared-licensing-cluster">Flow C</a>) can be registered rather than built.</li>
+<li><strong>GTM object naming differs.</strong> 2.3 writes <code>server_&lt;tmm_selfip&gt;</code>; 2.4 writes
+<code>server_&lt;digitalassetid&gt;_&lt;cluster-name&gt;_&lt;ns&gt;_&lt;ip&gt;</code>. Those objects live on an
+external BIG-IP — outside the cluster and outside terraform state — so nothing
+here removes them, and leaving both formats in place causes device IP
+conflicts.</li>
+<li><strong>The network model is replaced, not migrated.</strong> The <code>F5SPK*</code> objects a 2.3
+install created are simply no longer read, and they stay on the cluster.</li>
+<li><strong>The CWC licence secrets survive a teardown</strong> and must be cleared before a
+reinstall licenses cleanly. <code>bnk down</code> now removes them for you.</li>
 </ul>
+<p>To run 2.4, use a <strong>new workspace and a new install</strong>. Changing
+<code>CLUSTER_IDENTIFIER</code> on a deployed workspace needs the same manual GTM cleanup,
+for the same reason.</p>
+<h2 id="mtls-and-the-gateway-api-bundle"><a class="header" href="#mtls-and-the-gateway-api-bundle">mTLS and the Gateway API bundle</a></h2>
+<p>A base 2.4 install works with whatever Gateway API bundle OpenShift ships: its
+<code>crd-installer</code> logs a graceful skip and leaves the platform’s CRDs alone.</p>
+<p><strong>mTLS is the exception.</strong> It needs Gateway API 1.5.0 standard, and installing
+that means deleting the OpenShift ingress-operator’s
+<code>ValidatingAdmissionPolicy</code> and its binding — which the platform recreates
+quickly, so it is a race. Opt in:</p>
+<pre><code class="language-yaml">bnk:
+  gateway_api_mtls: true      # ROKSBNKCTL_GATEWAY_API_MTLS=true
+</code></pre>
+<p>Off by default, because deleting a platform admission policy on a cluster that
+does not need the newer bundle is a change nobody asked for. Ignored on 2.3,
+where that sweep always runs — there the <code>crd-installer</code> <em>does</em> force its own
+CRDs and is blocked without it.</p>
+<h2 id="per-component-settings"><a class="header" href="#per-component-settings">Per-component settings</a></h2>
+<p>The 2.4 CNEInstance takes an environment list for each of its ~26 components.
+Anything not surfaced as a first-class field is reachable through the
+passthrough, in YAML or from the environment:</p>
+<pre><code class="language-yaml">bnk:
+  advanced:
+    tmm:
+      env:
+        TMM_DEFAULT_MTU: "9000"
+    cneController:
+      env:
+        GSLB_DATACENTER_NAME: "datacenter-eu-gb"
+</code></pre>
+<pre><code class="language-bash">ROKSBNKCTL_BNK_ADV_TMM_ENV_TMM_DEFAULT_MTU=9000
+ROKSBNKCTL_BNK_ADV_CNECONTROLLER_ENV_GSLB_DATACENTER_NAME=datacenter-eu-gb
+</code></pre>
+<p>An entry here <strong>replaces</strong> the default of the same name rather than adding a
+second copy of it — the CNEInstance spec is read by the lifecycle operator, not
+by kubelet, so “the last duplicate wins” is not a rule to rely on. That is what
+makes this the way to <em>change</em> a default rather than only to add to it.</p>
+<p><code>USE_GATEWAY_SETTINGS</code> is deliberately <strong>not</strong> the example here, though earlier
+drafts of this page used it. <code>roksbnkctl</code> sets it on 2.4 itself, because on 2.4
+there is no working configuration without it: without the flag the controller
+never reads the <code>Infra</code> and <code>GatewaySettings</code> CRs that <code>gateway up</code> applies, and
+they sit at <code>Accepted=Unknown</code> forever. You can still override it through this
+passthrough — that is what the replace-not-append rule buys you — but you should
+not have to.</p>
+<p>The component name is matched case-insensitively, and one that <code>roksbnkctl</code> does
+not recognize is passed through rather than refused — the component set belongs
+to the product, and this tool should not be the reason a newly shipped one is
+unreachable.</p>
+<h2 id="checking-a-24-install"><a class="header" href="#checking-a-24-install">Checking a 2.4 install</a></h2>
+<p><code>bnk status</code> reports the CNEInstance’s aggregate <code>Available</code> condition plus any
+component condition that is not <code>True</code>, which is what turns a timeout into a
+diagnosis:</p>
+<pre><code>cneinstance:            Available=False (ComponentsNotReady)
+cneinstance_not_ready:  F5TmmAvailable=False
+</code></pre>
+<p>That distinction matters on 2.4. <code>CNEControllerAvailable=True</code> can sit next to
+<code>Available=False</code> with TMM at 0/3 and nothing passing traffic.</p>
+<p>The gate itself is <code>CNEControllerAvailable</code> on <strong>both</strong> lines, and deliberately
+so: waiting on the aggregate at the gate deadlocks 2.4, because the aggregate
+cannot go True until the License CR exists and the License CR is created after
+the gate. The aggregate is checked separately, after licensing, which is where
+it can actually be satisfied.</p>
+<blockquote>
+<p>If a 2.4 install looks broken in a way that has nothing to do with what you
+changed, check the <code>License</code> CR first. The controller refuses to run <em>any</em>
+resource controller until it is Active, logging <code>License is not enabled.. skip Resource controllers</code>.</p>
+</blockquote>
+<p><code>gateway status</code> reports the <code>Infra</code> and <code>GatewaySettings</code> CRs alongside the
+Gateway, and reads the <strong>IPAM-allocated</strong> VIP from the Gateway’s status — on 2.4
+there is no address to compute, only one to read.</p>
+<h2 id="support-status"><a class="header" href="#support-status">Support status</a></h2>
+<p>2.4 is <strong>verified against <code>2.4.0-EA</code></strong>: <code>bnk up</code> reaches all eighteen CNEInstance
+conditions with TMM at 5/5 and the licence Active, on a single-NIC OCP 4.20
+cluster with connected licensing.</p>
+<p>What that run covered, and what it did not, because the difference matters:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th></th></tr>
+</thead>
+<tbody>
+<tr><td>exercised</td><td><code>bnk up</code> on an adopted cluster — manifest <code>2.4.0-EA</code>, FAR <code>repo.f5.com</code> with the non-GA service account, three workers, single-NIC, connected licensing</td></tr>
+<tr><td>exercised</td><td>the <strong>gateway phase</strong> — <code>gateway up</code> applies <code>Infra</code> and <code>GatewaySettings</code>, and both reach <code>Accepted</code>, <code>ResolvedRefs</code> and <code>Programmed</code> = <code>True</code>, with the CNEInstance still 18/18 and the licence still Active afterwards</td></tr>
+<tr><td><strong>not</strong> exercised</td><td>mTLS, multi-NIC, disconnected licensing, <code>EgressGateway</code> CRs, and the contract boundary</td></tr>
+</tbody>
+</table>
+</div>
+<p>Running the gateway phase is what found the three defects that made it
+impossible before it was run: the gateway plan failed outright on 2.4, nothing
+set <code>USE_GATEWAY_SETTINGS</code> so no controller ever reconciled the CRs, and the
+<code>cneinstance_advanced_env</code> override meant to let you set it by hand was read by
+no terraform at all. None of the three was visible in the source — the third
+least of all, since the variable’s name appears everywhere it should.</p>
+<p>2.4 EA is <strong>single-NIC throughout</strong> — one NetworkAttachmentDefinition, one
+<code>external-vlan</code> network in the <code>Infra</code> CR, and no second data-plane interface
+anywhere. An earlier expectation that 2.4 would bring multi-NIC is withdrawn, and
+the verified run was single-NIC, so it is evidence for single-NIC and nothing
+else.</p>
+<p><code>support_matrix.yaml</code> records the same thing in the same terms. Its rule is worth
+repeating, because it is what keeps that file useful: a cell with no coverage is
+a claim nobody has checked.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="08a-three-phase-lifecycle.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="10c-flp-licensing.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="09a-transit-gateway-sharing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="11-tearing-down.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -396,11 +403,11 @@ roksbnkctl -w canada down --auto
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="08a-three-phase-lifecycle.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="10c-flp-licensing.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="09a-transit-gateway-sharing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="11-tearing-down.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

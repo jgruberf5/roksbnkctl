@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -293,11 +293,11 @@ opinion, not that it insists on <code>single-nic</code> — so it defers to what
 cluster actually is. This matters because a <code>config.yaml</code> is not always
 hand-written and durable: the <a href="./24a-bnk-forge-registration.html">BNK Forge modules</a>
 regenerate one per step from a curated environment, so a mode set by the step
-that <em>created</em> the cluster is simply absent by the time the step that <em>installs
+that <em>created</em> the cluster is absent by the time the step that <em>installs
 BNK</em> runs. Reading that absence as a demand for <code>single-nic</code> would refuse a
 correct deployment at its second step, over a contradiction nobody expressed.</p>
 <p>The refusal in the third row is what stops terraform from planning a
-<strong>replacement</strong> of a running cluster — which it will do quite happily, rendered
+<strong>replacement</strong> of a running cluster — which it will do without complaint, rendered
 as output that reads like an update.</p>
 <h2 id="parallel-up-cluster-first-then-bnk--testing"><a class="header" href="#parallel-up-cluster-first-then-bnk--testing">Parallel <code>up</code>: Cluster first, then BNK || Testing</a></h2>
 <p>A fresh <code>roksbnkctl up</code> provisions the cluster <strong>serially first</strong> (both

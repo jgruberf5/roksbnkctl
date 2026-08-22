@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -542,7 +542,7 @@ than the pinned build would hit a hard refusal on a combination never known to b
 wrong, with no action available to them. It warns and proceeds instead.</p>
 <p><strong>An unset <code>network_mode</code> defers to the recorded cluster.</strong> Each step’s
 environment carries only what that step needs, so a mode set by <code>cluster-create</code>
-is simply absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
+is absent when <code>bnk-install</code> regenerates <code>config.yaml</code>. Reading that
 absence as a demand for <code>single-nic</code> would refuse a correct multi-NIC deployment
 at its second module. Only an <em>explicit</em> contradiction is refused.</p>
 <p>The practical rule for blueprint authors: <strong>only the module that CREATES a

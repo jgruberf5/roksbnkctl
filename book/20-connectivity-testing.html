@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -279,7 +279,7 @@ cleared 0 entries
 <li>It does not change L4 / DNS behaviour. A name that won’t resolve still fails; a host that drops TCP still fails.</li>
 <li>It is not per-host — there’s no <code>--insecure-only=foo.example.com</code>. Once set, the run skips verification for everything in <code>extra_hosts</code>.</li>
 <li>It is not persisted. Setting it in one invocation does not affect the next.</li>
-<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The v1.0 schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
+<li>It is not the same as a config-level <code>insecure_tls: true</code> per host. The schema doesn’t have that knob; the only way to skip cert verification today is the session-wide flag.</li>
 </ul>
 <p>If you need different TLS-trust posture per endpoint (one URL strict, another lenient), run two invocations with two different <code>extra_hosts</code> lists in two workspaces — that’s the workaround until per-host trust lands.</p>
 <h2 id="reading-the-output"><a class="header" href="#reading-the-output">Reading the output</a></h2>

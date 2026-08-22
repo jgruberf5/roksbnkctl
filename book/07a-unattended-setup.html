@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -242,12 +242,17 @@ roksbnkctl init -w ci-run-42 \
 <tr><td style="text-align: right"><code>126</code></td><td>Permission denied: SSH authentication, a host-key mismatch, a credential the remote end refused.</td></tr>
 <tr><td style="text-align: right"><code>127</code></td><td>The target could not be reached at all.</td></tr>
 <tr><td style="text-align: right"><code>130</code></td><td>The operator interrupted it (Ctrl-C / <code>SIGINT</code>).</td></tr>
-<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs.</td></tr>
+<tr><td style="text-align: right"><code>125</code></td><td><strong><code>upgrade</code> / <code>self update</code> only.</strong> The upgrade removed the old binary and could not put anything back, so there is no <code>roksbnkctl</code> at the install path. The message names the <code>.old</code> sidecar and the command to rename it.</td></tr>
+<tr><td style="text-align: right"><em>other</em></td><td>A wrapped tool’s own status, passed through unchanged — <code>terraform</code>, <code>ibmcloud</code>, and <code>--on &lt;target&gt;</code> remote commands all propagate theirs. That includes <code>125</code> from any command <strong>other</strong> than <code>upgrade</code> / <code>self update</code>, which spawn no child.</td></tr>
 </tbody>
 </table>
 </div>
 <p><code>130</code> is worth wiring into CI cleanup: it distinguishes <em>“someone stopped this”</em>
-from <em>“it broke”</em>, which a job that retries on failure should treat differently.
+from <em>“it broke”</em>, which a job that retries on failure should treat differently.</p>
+<p><code>125</code> matters for the same reason, in the opposite direction: an ordinary failed
+upgrade is safe to retry, and this one is not — there is nothing left to run. A
+wrapper that retries on any non-zero status will loop forever on a machine that
+cannot recover until someone renames the sidecar back.
 Before v1.50.0 only <code>roksbnkctl init</code> produced it — every other command turned
 the same Ctrl-C into <code>1</code>.</p>
 <p><code>2</code> is similarly worth separating. It means the command never ran, so retrying

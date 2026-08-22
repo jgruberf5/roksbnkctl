@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f1235fbc.js";
+            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-b51fc22b.js"></script>
+        <script src="toc-a118ce28.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -179,9 +179,9 @@
                     <main>
                         <h1 id="preface"><a class="header" href="#preface">Preface</a></h1>
 <h2 id="foreword"><a class="header" href="#foreword">Foreword</a></h2>
-<p>Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A <code>terraform init/plan/apply</code> against an HCL tree somebody handed you. A manual <code>ibmcloud ks cluster config</code> to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual <code>oc adm policy add-scc-to-user privileged</code> to let iperf3 actually run. SSH plumbing, env-var plumbing, kubeconfig plumbing — each one a small thing, and together a half-day of yak-shaving before BNK was even on the cluster.</p>
+<p>Standing up F5 BIG-IP Next for Kubernetes (BNK) on IBM Cloud Red Hat OpenShift (ROKS) used to be a multi-step deployment that hit a different surface at every step. A <code>terraform init/plan/apply</code> against an HCL tree somebody handed you. A manual <code>ibmcloud ks cluster config</code> to pull a kubeconfig. A separate IBM Cloud CLI install with its own apt-source dance. A manual <code>oc adm policy add-scc-to-user privileged</code> to let iperf3 actually run. SSH, environment variables, kubeconfig — each a small thing, and together half a day before BNK was even on the cluster.</p>
 <p><code>roksbnkctl</code> collapses that into a single static binary plus four interchangeable execution backends (<code>local</code>, <code>docker</code>, <code>k8s</code>, <code>ssh:&lt;target&gt;</code>) plus an opt-in in-cluster ops pod. One command brings a workspace up; one command tears it down; the connectivity, DNS, and throughput tests run from whichever network vantage the question actually requires. The tool exists because the manual path has too many moving parts for somebody who just wants to evaluate BNK or run a customer demo.</p>
-<p>This book is the user-facing documentation for <code>roksbnkctl</code>. It ships alongside the v1.0 binary.</p>
+<p>This book is the user-facing documentation for <code>roksbnkctl</code>, and ships with the binary.</p>
 <h2 id="who-this-book-is-for"><a class="header" href="#who-this-book-is-for">Who this book is for</a></h2>
 <p>Four audiences:</p>
 <ul>
@@ -207,7 +207,7 @@
 </ul>
 <p>You do <strong>not</strong> need prior experience with:</p>
 <ul>
-<li><strong>Terraform</strong> — <code>roksbnkctl</code> embeds a vetted HCL tree and drives <code>terraform</code> for you. You can ignore the underlying HCL until you want to customise it (<a href="./13-terraform-variables.html">Chapter 13</a>).</li>
+<li><strong>Terraform</strong> — <code>roksbnkctl</code> embeds a vetted HCL tree and drives <code>terraform</code> for you. You can ignore the underlying HCL until you want to customize it (<a href="./13-terraform-variables.html">Chapter 13</a>).</li>
 <li><strong>OpenShift specifics</strong> — the tool treats ROKS as Kubernetes with a thin SCC + project overlay; the few OpenShift-specific gotchas are called out in <a href="./22-throughput-testing.html">Chapter 22</a> and <a href="./26-troubleshooting.html">Chapter 26</a>.</li>
 <li><strong>F5 BIG-IP Next</strong> — BNK is the thing the book deploys; you don’t need to be a Big-IP engineer to evaluate it. <a href="./01-what-is-bnk.html">Chapter 1</a> is the 5-minute “what is this product” primer.</li>
 </ul>
