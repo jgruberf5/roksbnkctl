@@ -394,6 +394,15 @@ locals {
     } : k => v if !local.line_pre_24 && length(local.tmm_placement) > 0
   }
 
+  # wholeCluster moves WITH watchNamespaces: the product validates them together
+  # and rejects "watch everything" expressed twice. 2.4 conforms to the reference
+  # (false + ["All"]); 2.3 keeps the true it has always shipped.
+  whole_cluster_effective = (
+    var.cneinstance_whole_cluster_override != ""
+    ? var.cneinstance_whole_cluster_override == "true"
+    : (local.line_pre_24 ? var.cneinstance_whole_cluster : false)
+  )
+
   # demoMode: true is what 2.3 has always shipped; 2.4 conforms to the reference
   # and turns it OFF. An explicit setting wins on either line.
   demo_mode_effective = var.cneinstance_demo_mode != "" ? var.cneinstance_demo_mode == "true" : local.line_pre_24
@@ -486,7 +495,7 @@ locals {
       type       = "BNK"
     }
     manifestVersion = var.f5_bigip_k8s_manifest_version
-    wholeCluster    = var.cneinstance_whole_cluster
+    wholeCluster    = local.whole_cluster_effective
     telemetry = {
       loggingSubsystem = {
         enabled = var.cneinstance_logging_subsystem

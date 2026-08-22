@@ -1029,6 +1029,9 @@ func renderBNK24Conformance(w io.Writer, ws *config.Workspace) {
 	if b.DemoMode != nil {
 		fmt.Fprintf(w, "cneinstance_demo_mode = %q\n", strconv.FormatBool(*b.DemoMode))
 	}
+	if b.WholeCluster != nil {
+		fmt.Fprintf(w, "cneinstance_whole_cluster_override = %q\n", strconv.FormatBool(*b.WholeCluster))
+	}
 }
 
 // renderBNKTCPSettings emits the F5BigTcpSetting overrides.

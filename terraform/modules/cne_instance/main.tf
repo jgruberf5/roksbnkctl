@@ -91,6 +91,7 @@ module "cneinstance" {
   cneinstance_cluster_identifier             = var.cneinstance_cluster_identifier
   cneinstance_gateway_api_version            = var.cneinstance_gateway_api_version
   cneinstance_demo_mode                      = var.cneinstance_demo_mode
+  cneinstance_whole_cluster_override         = var.cneinstance_whole_cluster_override
   cneinstance_cloud_env                      = true
   cneinstance_cloud_provider                 = "ibm"
   cneinstance_vpc_name                       = try(data.ibm_is_vpc.cluster_vpc[0].name, "")

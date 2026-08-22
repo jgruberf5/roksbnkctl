@@ -156,6 +156,7 @@ Source: `terraform/variables.tf`
 | `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
 | `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
 | `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
+| `cneinstance_whole_cluster_override` | `string` | `""` | spec.wholeCluster, as a tri-state. | no |
 
 ## Module: `cert_manager`
 
@@ -236,6 +237,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_tmm_zone_when_unsatisfiable` | `string` | `"DoNotSchedule"` | whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule. | no |
 | `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
 | `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
+| `cneinstance_whole_cluster_override` | `string` | `""` | spec.wholeCluster, as a tri-state. | no |
 
 ## Module: `flo`
 

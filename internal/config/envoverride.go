@@ -59,6 +59,7 @@ import (
 //	ROKSBNKCTL_CLUSTER_IDENTIFIER              → bnk.cluster_identifier
 //	ROKSBNKCTL_GATEWAY_API_VERSION             → bnk.gateway_api_version
 //	ROKSBNKCTL_DEMO_MODE                       → bnk.demo_mode (bool)
+//	ROKSBNKCTL_WHOLE_CLUSTER                   → bnk.whole_cluster (bool)
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
@@ -209,6 +210,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 		{"ROKSBNKCTL_TMM_ROLLING_UPDATE", func(b *bool) { ws.BNK.TMMRollingUpdate = b }},
 		{"ROKSBNKCTL_EXTERNAL_BIGIP", func(b *bool) { ws.BNK.ExternalBigIP = b }},
 		{"ROKSBNKCTL_DEMO_MODE", func(b *bool) { ws.BNK.DemoMode = b }},
+		{"ROKSBNKCTL_WHOLE_CLUSTER", func(b *bool) { ws.BNK.WholeCluster = b }},
 	} {
 		if v := envValue(o.env); v != "" {
 			if b, err := strconv.ParseBool(v); err == nil {
@@ -868,6 +870,7 @@ var bespokeOverrideNames = []string{
 	// BNK 2.4 conformance with F5's reference CNEInstance.
 	"ROKSBNKCTL_CLUSTER_IDENTIFIER",
 	"ROKSBNKCTL_DEMO_MODE",
+	"ROKSBNKCTL_WHOLE_CLUSTER",
 	"ROKSBNKCTL_EXTERNAL_BIGIP",
 	"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET",
 	"ROKSBNKCTL_GATEWAY_API_VERSION",

@@ -33,6 +33,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Defaults are F5's reference values, not invented ones, and a committed copy of
   their reference spec is now a test fixture: drift from it fails.
 
+- **`bnk.whole_cluster`.** Conforms to the reference on 2.4 (`false`, paired with
+  `watchNamespaces: ["All"]`) and stays `true` on 2.3. The two move together
+  because the product validates them together: `wholeCluster: true` alongside
+  `watchNamespaces: ["All"]` is rejected outright as an invalid product
+  configuration, since it says "watch everything" twice in contradictory ways.
+
 - **`bnk.demo_mode`.** Demo mode was being enabled on every install, on both
   lines. It now defaults to **false on 2.4**, matching the reference. It stays
   true on 2.3 — that is what has shipped and been exercised there, and changing a

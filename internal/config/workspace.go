@@ -542,6 +542,15 @@ type BNKCfg struct {
 	//
 	// Empty writes NO CR. The product manages its own default TCP profile, and
 	// emitting an empty one would fight it.
+	// WholeCluster is spec.wholeCluster. Nil means the LINE default: true on 2.3,
+	// false on 2.4 to match F5's reference.
+	//
+	// It moves WITH watch_namespaces and cannot be set independently of it: the
+	// product validates the pair and rejects wholeCluster=true alongside
+	// watchNamespaces=["All"] as an invalid product configuration, because that
+	// says "watch everything" twice in two contradictory ways.
+	WholeCluster *bool `yaml:"whole_cluster,omitempty" default:"false on 2.4, true on 2.3"`
+
 	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
 
 	// TCPSettingsName is the F5BigTcpSetting to write. F5's reference cluster

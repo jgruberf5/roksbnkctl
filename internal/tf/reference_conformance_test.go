@@ -133,3 +133,50 @@ func TestTwoFourPlacementMatchesTheReferenceAndCanBeTurnedOff(t *testing.T) {
 		}
 	}
 }
+
+// wholeCluster and watchNamespaces are validated TOGETHER by the product, and
+// this test exists because I broke that.
+//
+// Conforming watchNamespaces to the reference's ["All"] while leaving
+// wholeCluster at the true this tree had always rendered produced a CR the API
+// server rejected outright:
+//
+//	CNEInstance "f5-bnk-f5-cne-controller" is invalid: spec: Invalid value:
+//	"object": Invalid product configuration, please check WholeCluster,
+//	WatchNamespaces and GatewayAPI settings
+//
+// Saying "watch everything" twice, in two ways that contradict, is not
+// emphasis. It cost a full run: cluster build, install, failure — about an hour.
+//
+// The pair is asserted on both lines, because the bug was conforming one line's
+// half of a pair.
+func TestWholeClusterAndWatchNamespacesStayConsistent(t *testing.T) {
+	mod := []string{"cne_instance", "modules", "cneinstance"}
+
+	for _, tc := range []struct {
+		line             string
+		wantWholeCluster string
+		wantWatch        string
+	}{
+		// 2.4 conforms to the reference: watch All, wholeCluster off.
+		{"2.4", "false", `["All"]`},
+		// 2.3 is untouched: wholeCluster true, no watchNamespaces at all.
+		{"2.3", "true", `"(absent)"`},
+	} {
+		t.Run(tc.line, func(t *testing.T) {
+			vars := "bnk_line = \"" + tc.line + "\"\ncneinstance_whole_cluster = true\n"
+			got := consoleJSON(t, mod, vars,
+				`nonsensitive("${local.cneinstance_spec.wholeCluster}|${jsonencode(try(local.cneinstance_spec.watchNamespaces, "(absent)"))}")`)
+			var s string
+			if err := json.Unmarshal([]byte(got), &s); err != nil {
+				t.Fatalf("decode %q: %v", got, err)
+			}
+			want := tc.wantWholeCluster + "|" + tc.wantWatch
+			if s != want {
+				t.Errorf("wholeCluster|watchNamespaces on %s = %s, want %s.\n"+
+					"These are validated together; wholeCluster=true with watchNamespaces=[\"All\"] "+
+					"is rejected by the API server as an invalid product configuration.", tc.line, s, want)
+			}
+		})
+	}
+}

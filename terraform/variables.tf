@@ -1254,3 +1254,20 @@ variable "cneinstance_tcp_settings_name" {
   type        = string
   default     = "sys-default-tcp"
 }
+
+variable "cneinstance_whole_cluster_override" {
+  description = <<-EOT
+    spec.wholeCluster, as a tri-state.
+
+    Empty means the LINE default: true on 2.3, which is what has always shipped,
+    and FALSE on 2.4, matching F5's reference. "true"/"false" pins it.
+
+    This has to move with watchNamespaces. The two are validated together by the
+    product — `wholeCluster: true` with `watchNamespaces: ["All"]` is rejected as
+    "Invalid product configuration, please check WholeCluster, WatchNamespaces
+    and GatewayAPI settings", because saying "watch everything" twice in two
+    different ways is a contradiction rather than emphasis.
+  EOT
+  type        = string
+  default     = ""
+}
