@@ -60,14 +60,18 @@ func TestEveryStateOutputTheCLIReadsExistsAtTheRoot(t *testing.T) {
 	used := map[string]token.Position{}
 	fset := token.NewFileSet()
 	pkgDir := filepath.Join(root, "internal", "cli")
-	pkgs, err := parser.ParseDir(fset, pkgDir, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", pkgDir, err)
+	goFiles, err := filepath.Glob(filepath.Join(pkgDir, "*.go"))
+	if err != nil || len(goFiles) == 0 {
+		t.Fatalf("no Go files in %s: %v", pkgDir, err)
 	}
-	for _, pkg := range pkgs {
-		for name, file := range pkg.Files {
+	{
+		for _, name := range goFiles {
 			if strings.HasSuffix(name, "_test.go") {
 				continue
+			}
+			file, perr := parser.ParseFile(fset, name, nil, 0)
+			if perr != nil {
+				t.Fatalf("parse %s: %v", name, perr)
 			}
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
