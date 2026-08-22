@@ -106,7 +106,7 @@ The story, in six phases:
   4. ${B}bnk up${N} — BIG-IP Next for Kubernetes + its licence.
   5. ${B}testing up${N} + ${B}test${N} — jump hosts, then the probes.
   6. ${B}bnk down${N} then ${B}bnk up${N} — swap BNK, the cluster never moves.
-Then the demo STOPS, leaving everything up so you can explore. `teardown` removes it.
+Then the demo STOPS, leaving everything up so you can explore. \`teardown\` removes it.
 EOF
 # These demos are RECORDED: register every credential so banner/say/ok/show and
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
@@ -144,8 +144,8 @@ cluster:
   workers_per_zone: ${WORKERS_PER_ZONE}
 resources:
   # The testing phase provisions ONLY these toggles, and they now default OFF
-  # (matching the `init` interview). Phase 5/6 runs `testing up` + `test`, and
-  # `test` runs its probes FROM a jumphost — so the demo must ask for one
+  # (matching the \`init\` interview). Phase 5/6 runs \`testing up\` + \`test\`, and
+  # \`test\` runs its probes FROM a jumphost — so the demo must ask for one
   # explicitly or the testing phase provisions nothing.
   tgw_jumphost: { create: true }
   client_vpc:   { create: true }   # the jumphost lives in it

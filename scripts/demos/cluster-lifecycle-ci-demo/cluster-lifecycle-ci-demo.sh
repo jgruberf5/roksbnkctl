@@ -46,7 +46,7 @@ FORGE_PASS="${FORGE_PASS:-}"
 FORGE_INSECURE="${FORGE_INSECURE:-true}"        # Forge usually has a self-signed cert
 
 TEST_HOSTS="${TEST_HOSTS:-https://www.example.com}"   # probe targets, space-separated
-RUNNER_TAG="${RUNNER_TAG:-v1.32.0}"
+RUNNER_TAG="${RUNNER_TAG:-v1.52.0}"
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 WS="${CI_WORKSPACE:-roksbnkctl-ci}"             # the pipeline's workspace
 PREFIX="${PREFIX:-$WS}"
@@ -159,8 +159,8 @@ cluster:
   workers_per_zone: ${WORKERS_PER_ZONE}
 resources:
   # The testing phase provisions ONLY these toggles, and they now default OFF
-  # (matching the `init` interview). Phase 5/6 runs `testing up` + `test`, and
-  # `test` runs its probes FROM a jumphost — so the demo must ask for one
+  # (matching the \`init\` interview). Phase 5/6 runs \`testing up\` + \`test\`, and
+  # \`test\` runs its probes FROM a jumphost — so the demo must ask for one
   # explicitly or the testing phase provisions nothing.
   tgw_jumphost: { create: true }
   client_vpc:   { create: true }   # the jumphost lives in it
