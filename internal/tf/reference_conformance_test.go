@@ -180,3 +180,42 @@ func TestWholeClusterAndWatchNamespacesStayConsistent(t *testing.T) {
 		})
 	}
 }
+
+// deploymentSize defaults to Tiny on 2.4, matching both F5's reference and this
+// tree's OWN variable description ("Tiny is what the BNK 2.4 install guide
+// uses") — which had been contradicted by a Small default on both lines.
+//
+// This is not cosmetic. Small makes TMM request 4Gi of hugepages-2Mi, and a
+// stock ROKS worker reports hugepages-2Mi=0 — including on F5's reference
+// cluster, whose TMM pods request no hugepages at all and run fine on Tiny.
+//
+// It stayed invisible while demoMode was true, because demo mode drops the
+// hugepage request. Turning demoMode off to conform exposed it: three TMM pods
+// Pending on "0/3 nodes are available: 3 Insufficient hugepages-2Mi", followed
+// by a 15-minute wait for an Available that could never arrive. Two settings
+// that each looked right alone were wrong together.
+func TestDeploymentSizeDefaultsToTheReferenceSizeOnTwoFour(t *testing.T) {
+	mod := []string{"cne_instance", "modules", "cneinstance"}
+
+	for _, tc := range []struct {
+		name, vars, want string
+	}{
+		{"2.4 unset takes the reference size", "bnk_line = \"2.4\"\n", "Tiny"},
+		{"2.3 unset is unchanged", "bnk_line = \"2.3\"\n", "Small"},
+		// Explicit Small must be reachable on 2.4. Using the value itself as the
+		// tri-state would have made the reference default unaskable-for.
+		{"2.4 explicit Small is honoured", "bnk_line = \"2.4\"\ncneinstance_deployment_size = \"Small\"\n", "Small"},
+		{"2.4 explicit Medium is honoured", "bnk_line = \"2.4\"\ncneinstance_deployment_size = \"Medium\"\n", "Medium"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := consoleJSON(t, mod, tc.vars, "nonsensitive(local.cneinstance_spec.deploymentSize)")
+			var s string
+			if err := json.Unmarshal([]byte(got), &s); err != nil {
+				t.Fatalf("decode %q: %v", got, err)
+			}
+			if s != tc.want {
+				t.Errorf("deploymentSize = %q, want %q", s, tc.want)
+			}
+		})
+	}
+}

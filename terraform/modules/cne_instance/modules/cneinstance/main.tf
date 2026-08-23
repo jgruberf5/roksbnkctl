@@ -394,6 +394,28 @@ locals {
     } : k => v if !local.line_pre_24 && length(local.tmm_placement) > 0
   }
 
+  # deploymentSize: the 2.4 guide and F5's reference both use Tiny; this tree
+  # defaulted to Small on both lines, contradicting our own variable description
+  # ("Tiny is what the BNK 2.4 install guide uses").
+  #
+  # It matters more than a label. Small makes TMM request 4Gi of hugepages-2Mi,
+  # and a stock ROKS worker reports hugepages-2Mi=0 — including F5's own
+  # reference cluster. That was invisible while demoMode was true, because demo
+  # mode drops the hugepage request; turning demoMode off to conform exposed it
+  # as three TMM pods Pending on "0/3 nodes are available: 3 Insufficient
+  # hugepages-2Mi", and a 15-minute wait for an Available that could never come.
+  #
+  # So the two conform together: Tiny + demoMode false is the reference's pairing.
+  # Empty means "unset", so an operator who explicitly wants Small on 2.4 gets
+  # Small. Using the value itself as the tri-state would have made the reference
+  # default unreachable-by-agreement — you could not ask for the thing the
+  # default already was.
+  deployment_size_effective = (
+    var.cneinstance_deployment_size != ""
+    ? var.cneinstance_deployment_size
+    : (local.line_pre_24 ? "Small" : "Tiny")
+  )
+
   # wholeCluster moves WITH watchNamespaces: the product validates them together
   # and rejects "watch everything" expressed twice. 2.4 conforms to the reference
   # (false + ["All"]); 2.3 keeps the true it has always shipped.
@@ -507,7 +529,7 @@ locals {
     certificate = {
       clusterIssuer = var.cluster_issuer_name
     }
-    deploymentSize = var.cneinstance_deployment_size
+    deploymentSize = local.deployment_size_effective
     registry = {
       uri              = local.cneinstance_registry_uri
       imagePullSecrets = local.cneinstance_image_pull_secrets

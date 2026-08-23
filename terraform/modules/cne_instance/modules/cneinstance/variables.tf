@@ -70,7 +70,7 @@ variable "cluster_issuer_name" {
 variable "cneinstance_deployment_size" {
   description = "Deployment size for CNEInstance"
   type        = string
-  default     = "Small"
+  default     = ""
 }
 
 variable "far_repo_url" {

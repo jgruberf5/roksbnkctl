@@ -33,6 +33,18 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Defaults are F5's reference values, not invented ones, and a committed copy of
   their reference spec is now a test fixture: drift from it fails.
 
+- **`deploymentSize` defaults to `Tiny` on 2.4**, matching F5's reference and this
+  tool's own variable description — which said *"Tiny is what the BNK 2.4 install
+  guide uses"* while the code defaulted to `Small` on both lines.
+
+  Not cosmetic: `Small` makes TMM request 4Gi of `hugepages-2Mi`, and a stock
+  ROKS worker reports `hugepages-2Mi=0` — including F5's reference cluster, whose
+  TMM pods request none and run fine on `Tiny`. Demo mode had been hiding it by
+  dropping the hugepage request; turning demo mode off to conform exposed three
+  TMM pods Pending on *"Insufficient hugepages-2Mi"*. Two settings that each
+  looked right alone were wrong together. 2.3 keeps `Small`, and an explicit size
+  is honoured on either line.
+
 - **`bnk.whole_cluster`.** Conforms to the reference on 2.4 (`false`, paired with
   `watchNamespaces: ["All"]`) and stays `true` on 2.3. The two move together
   because the product validates them together: `wholeCluster: true` alongside
