@@ -68,17 +68,43 @@ func TestUndocumentedConfigFieldsDoNotGrow(t *testing.T) {
 		t.Skipf("chapter unreadable: %v", err)
 	}
 
-	const ceiling = 73
+	// 75 rows carry no description today. The ratchet only ever goes DOWN.
+	const ceiling = 75
+
+	lines := strings.Split(string(b), "\n")
+
+	// Find the description column from the HEADER rather than hard-coding an
+	// index. This test previously hard-coded 5 and was reading `required`, which
+	// is never blank — so it reported 0 undocumented fields out of 215 and passed
+	// vacuously, for exactly as long as the table has had a `default` column. A
+	// guard that returns a confident answer about the wrong column is worse than
+	// no guard, because it converts "nobody checked" into "something checked and
+	// said yes".
+	descCol := -1
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "| key |") {
+			continue
+		}
+		for i, h := range strings.Split(line, "|") {
+			if strings.TrimSpace(h) == "description" {
+				descCol = i
+			}
+		}
+		break
+	}
+	if descCol < 0 {
+		t.Fatal("no `| key |` header row with a `description` column found in the reference; " +
+			"this test cannot locate the column it grades and would otherwise pass vacuously")
+	}
 
 	blank, total := 0, 0
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range lines {
 		if !strings.HasPrefix(line, "| `") {
 			continue
 		}
 		total++
 		cols := strings.Split(line, "|")
-		// | key | type | line | required | description |  -> description is [5]
-		if len(cols) >= 6 && strings.TrimSpace(cols[5]) == "" {
+		if len(cols) > descCol && strings.TrimSpace(cols[descCol]) == "" {
 			blank++
 		}
 	}

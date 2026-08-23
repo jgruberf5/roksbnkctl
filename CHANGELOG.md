@@ -8,6 +8,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **The undocumented-field ratchet was grading the wrong column** (#181). It
+  hard-coded column index 5 and read `required`, which is never blank — so it
+  reported **0 undocumented fields out of 215** and had been passing vacuously
+  ever since the table gained a `default` column. The true figure is **75 of
+  215**. It now finds `description` from the header row and refuses to run at
+  all if it cannot, so the next column added cannot blind it again.
+
 - **A mirror we could never authenticate to is refused before the apply, not
   fifteen minutes into it.** The chart pull picks its credential by falling
   through a chain whose last arm uses the literal username `unused` with the
