@@ -106,8 +106,15 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   (`TMM_IGNORE_GATEWAYS`, `DISABLE_HT` to keep hyperthread siblings off TMM's
   pinned cores, `ENABLE_K8S_ROUTES`), the TMM rolling-update policy
   (`maxSurge 0 / maxUnavailable 1` — the same shape as the cwc Multi-Attach
-  deadlock), and `GATEWAY_API_VERSION`, which was set **nowhere** so the
-  controller ran on the operator default of v1.4.1 against F5's 1.5.0.
+  deadlock), and `GATEWAY_API_VERSION`, which was set **nowhere**.
+
+  A caveat on that last one, verified on a live 2.4 cluster rather than assumed:
+  the value now propagates correctly through both layers we can reach — the
+  CNEInstance carries `1.5.0` (byte-identical to F5's reference capture) and FLO
+  copies it onto the CNEController CR — but the controller **Deployment** F5's
+  operator then generates from that CR runs `v1.3.0` regardless. The last hop is
+  F5's to make. We emit what the reference emits; the running controller does not
+  yet reflect it, and no setting on our side changes that. Tracked in #185.
 
   Every setting is a `config.yaml` field, a `ROKSBNKCTL_*` override, and a row in
   the generated configuration reference with its line and default. The placement
