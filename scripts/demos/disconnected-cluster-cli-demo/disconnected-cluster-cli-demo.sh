@@ -218,7 +218,7 @@ teardown(){
   fi
   ok "teardown complete — the adopted cluster ${EXISTING_CLUSTER} was left untouched"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — DISCONNECTED BNK onto an EXISTING cluster"

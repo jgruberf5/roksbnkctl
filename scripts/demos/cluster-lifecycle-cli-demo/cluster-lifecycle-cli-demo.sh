@@ -68,10 +68,10 @@ teardown(){
   secret "$IBMCLOUD_API_KEY" "${FORGE_PASS:-}"
   banner "TEARDOWN — cluster-lifecycle CLI demo"
   say "One 'down' removes every phase of workspace '${WS}' — testing, BNK, and the cluster itself."
-  run "$ROKSBNKCTL_BIN" -w "$WS" down --auto
+  must "$ROKSBNKCTL_BIN" -w "$WS" down --auto
   ok "teardown complete — cluster ${CLUSTER_NAME} and every phase of workspace '${WS}' are gone"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # Source .env when EITHER the API key or the Forge credentials are missing.
 # Keying only on IBMCLOUD_API_KEY meant that exporting the key in your shell made

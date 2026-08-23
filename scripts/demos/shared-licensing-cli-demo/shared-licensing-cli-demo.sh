@@ -96,7 +96,7 @@ teardown(){
   say "The private registry keeps its mirrored artifacts — it was built off-camera and is shared."
   say "To empty it too:  roksbnkctl -w ${SVC_WS} registry delete --force  (before clearing the workspace)"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — A SHARED LICENSING CLUSTER"

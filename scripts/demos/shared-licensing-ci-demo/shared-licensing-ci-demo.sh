@@ -131,7 +131,7 @@ teardown(){
   say "The private registry keeps its mirrored artifacts — it was built off-camera and is shared."
   say "To empty it too:  docker run --rm -v ${WORK}:/work --env-file <svc env> ${RUNNER} -w ${SVC_WS} registry delete --force"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — SHARED LICENSING AS A CI PIPELINE"

@@ -223,12 +223,24 @@ func freeStuckBNKNamespace(ctx context.Context, cctx *config.Context, tfws *tf.W
 	if cctx == nil || cctx.Workspace == nil {
 		return false
 	}
+	// SAY why it cannot run rather than returning quietly. A silent false here
+	// is indistinguishable from "there was nothing to repair", and the two lead
+	// to opposite conclusions: one means the teardown was clean, the other means
+	// the namespace is still wedged and the next install will fail.
+	//
+	// That distinction cost a run. In a container the credential resolver can
+	// fail where it succeeds on the host, so the repair never ran, printed
+	// nothing, and the teardown looked identical to one with nothing to do.
 	body, err := clusterKubeconfigBytes(ctx, cctx, tfws)
 	if err != nil {
+		fmt.Fprintf(w, "  ⚠ cannot check for a stuck BNK namespace: %v\n", err)
+		fmt.Fprintf(w, "    If a later `bnk up` fails with \"namespace is being terminated\", clear the\n")
+		fmt.Fprintf(w, "    F5 finalizers by hand: kubectl -n <ns> patch <kind>/<name> --type=merge -p '{\"metadata\":{\"finalizers\":null}}'\n")
 		return false
 	}
 	kc, err := k8s.NewFromKubeconfigBytes(body)
 	if err != nil {
+		fmt.Fprintf(w, "  ⚠ cannot check for a stuck BNK namespace: building a client failed: %v\n", err)
 		return false
 	}
 	flo, utils := cctx.Workspace.BNKNamespaces()

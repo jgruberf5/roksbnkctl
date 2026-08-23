@@ -105,10 +105,17 @@ teardown(){
   secret "$IBMCLOUD_API_KEY" "${FORGE_PASS:-}"
   banner "TEARDOWN — cluster-lifecycle CI demo"
   say "One 'down' removes every phase of workspace '${WS}' — testing, BNK, and the cluster itself."
-  run "${RUN[@]}" down --auto
+  # `must`, not `run`. A teardown that fails must not report success: the next
+  # run then races a half-deleted VPC and dies on "Provided Name … is not
+  # unique", which names the symptom and not the cause. Observed exactly that —
+  # a destroy failed with "context deadline exceeded", teardown returned 0, and
+  # the following run failed six minutes later on a name collision.
+  must "${RUN[@]}" down --auto
   ok "teardown complete — cluster ${WS} and every phase of the workspace are gone"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+# Propagate the teardown's status. `exit 0` here discarded it, so a caller
+# driving repeated runs could not tell a clean teardown from a wedged one.
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # Source .env when EITHER the API key or the Forge credentials are missing.
 # Keying only on IBMCLOUD_API_KEY meant that exporting the key in your shell made
