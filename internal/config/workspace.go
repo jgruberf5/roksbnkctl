@@ -1168,11 +1168,30 @@ func (r *RegistryCfg) IncludeDepsOrDefault() bool {
 // BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field
 // order/names match the terraform cneinstance_network_zones object.
 type BNKZoneCfg struct {
-	ExtVLANCIDR    string `yaml:"ext_vlan_cidr"`
-	IntVLANCIDR    string `yaml:"int_vlan_cidr"`
-	IntSNATCIDR    string `yaml:"int_snat_cidr"`
-	IntVIPCIDR     string `yaml:"int_vip_cidr"`
+	// ExtVLANCIDR is the zone's EXTERNAL VLAN — the client side of the data
+	// plane, where traffic arrives. Overlay addressing internal to BNK: it does
+	// not have to exist in the VPC, but it must not collide with anything the
+	// cluster can route to.
+	ExtVLANCIDR string `yaml:"ext_vlan_cidr"`
+
+	// IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches
+	// the workloads it fronts.
+	IntVLANCIDR string `yaml:"int_vlan_cidr"`
+
+	// IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the
+	// return traffic comes back through TMM rather than routing around it.
+	IntSNATCIDR string `yaml:"int_snat_cidr"`
+
+	// IntVIPCIDR is the range virtual servers are allocated from on the internal
+	// side.
+	IntVIPCIDR string `yaml:"int_vip_cidr"`
+
+	// ExternalSelfIP is TMM's own address on the external VLAN. Must sit inside
+	// ExtVLANCIDR.
 	ExternalSelfIP string `yaml:"external_selfip"`
+
+	// InternalSelfIP is TMM's own address on the internal VLAN. Must sit inside
+	// IntVLANCIDR.
 	InternalSelfIP string `yaml:"internal_selfip"`
 }
 

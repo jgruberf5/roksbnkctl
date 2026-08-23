@@ -246,12 +246,12 @@ BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field order/n
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `ext_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes |  |
-| `int_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes |  |
-| `int_snat_cidr` | `string` | 2.3 + 2.4 | — | yes |  |
-| `int_vip_cidr` | `string` | 2.3 + 2.4 | — | yes |  |
-| `external_selfip` | `string` | 2.3 + 2.4 | — | yes |  |
-| `internal_selfip` | `string` | 2.3 + 2.4 | — | yes |  |
+| `ext_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes | ExtVLANCIDR is the zone's EXTERNAL VLAN — the client side of the data plane, where traffic arrives. |
+| `int_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes | IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches the workloads it fronts. |
+| `int_snat_cidr` | `string` | 2.3 + 2.4 | — | yes | IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the return traffic comes back through TMM rather than routing around it. |
+| `int_vip_cidr` | `string` | 2.3 + 2.4 | — | yes | IntVIPCIDR is the range virtual servers are allocated from on the internal side. |
+| `external_selfip` | `string` | 2.3 + 2.4 | — | yes | ExternalSelfIP is TMM's own address on the external VLAN. |
+| `internal_selfip` | `string` | 2.3 + 2.4 | — | yes | InternalSelfIP is TMM's own address on the internal VLAN. |
 
 ## `COSCfg`
 
