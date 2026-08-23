@@ -17,18 +17,62 @@ import (
 // this struct. Plaintext keys in the YAML are rejected at load time by
 // rejectPlaintextSecrets.
 type Workspace struct {
-	IBMCloud IBMCloudCfg          `yaml:"ibmcloud"`
-	Cluster  ClusterCfg           `yaml:"cluster"`
-	BNK      BNKCfg               `yaml:"bnk,omitempty"`
-	Gateway  GatewayCfg           `yaml:"gateway,omitempty"`
-	Registry *RegistryCfg         `yaml:"registry,omitempty"`
-	Test     TestCfg              `yaml:"test,omitempty"`
-	TFSource TFSourceCfg          `yaml:"tf_source"`
-	COS      *COSCfg              `yaml:"cos,omitempty"`
-	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
-	State    StateCfg             `yaml:"state,omitempty"`
-	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
-	Agent    *AgentCfg            `yaml:"agent,omitempty"`
+	// IBMCloud is the account context every phase runs against: region,
+	// resource group, and the API key (base64-obfuscated, never plaintext).
+	IBMCloud IBMCloudCfg `yaml:"ibmcloud"`
+
+	// Cluster describes the ROKS cluster — either one to CREATE, or one that
+	// already exists and is being adopted (`create: false` plus its name).
+	// Adopting is the common case: most estates build their own clusters.
+	Cluster ClusterCfg `yaml:"cluster"`
+
+	// BNK configures the BIG-IP Next for Kubernetes install itself: the
+	// manifest version (which also decides whether the 2.3 or 2.4 model is
+	// rendered), licensing, the per-zone network mapping, and the CNEInstance
+	// settings that place the TMM pods.
+	BNK BNKCfg `yaml:"bnk,omitempty"`
+
+	// Gateway configures the Gateway API resources installed after BNK. On 2.4
+	// this is the Infra + GatewaySettings model; on 2.3 it is BNKGateway plus
+	// the static routes.
+	Gateway GatewayCfg `yaml:"gateway,omitempty"`
+
+	// Registry selects where images and charts are pulled from: F5's Artifact
+	// Repository directly, or a mirror that a disconnected cluster can reach —
+	// IBM Container Registry, or any OCI registry (`generic`) such as
+	// Artifactory or Harbor. nil means no mirror; images come from F5.
+	Registry *RegistryCfg `yaml:"registry,omitempty"`
+
+	// Test configures the connectivity, DNS and throughput probes `roksbnkctl
+	// test` runs, and the jumphost they run FROM.
+	Test TestCfg `yaml:"test,omitempty"`
+
+	// TFSource selects which Terraform the binary applies: the `embedded` tree
+	// shipped inside this binary (the default, and the only version matched to
+	// it), a GitHub release, or a local path for testing a fork.
+	TFSource TFSourceCfg `yaml:"tf_source"`
+
+	// COS is the IBM Cloud Object Storage bucket the FAR service-account
+	// credential is read from, for estates that stage it there rather than
+	// passing a local file. nil means the credential comes from a file.
+	COS *COSCfg `yaml:"cos,omitempty"`
+
+	// Targets are named remote hosts (`ssh:<target>`) that Exec backends can
+	// run tools on — a jumphost inside the VPC, say, when the operator's
+	// workstation cannot reach the cluster directly.
+	Targets map[string]TargetCfg `yaml:"targets,omitempty"`
+
+	// State controls where Terraform state is kept and how it is locked.
+	State StateCfg `yaml:"state,omitempty"`
+
+	// BNKForge points at a BNK Forge server, which takes over a durable cluster
+	// once roksbnkctl has built it. nil means no Forge; every phase runs
+	// standalone.
+	BNKForge *BNKForgeCfg `yaml:"bnkforge,omitempty"`
+
+	// Agent configures `roksbnkctl agent`, which hands the workspace to a
+	// coding agent. nil means the feature is unconfigured.
+	Agent *AgentCfg `yaml:"agent,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base.
 	// When non-empty, the
@@ -303,13 +347,41 @@ type HugepagesCfg struct {
 // Existing name/ID used when Create=false and a live dependent still needs
 // to reference the resource by name.
 type ResourcesCfg struct {
-	TransitGateway   ResourceToggle `yaml:"transit_gateway"`
-	RegistryCOS      ResourceToggle `yaml:"registry_cos"`
-	CertManager      ResourceToggle `yaml:"cert_manager"`
-	BNK              ResourceToggle `yaml:"bnk"`
-	TGWJumphost      ResourceToggle `yaml:"tgw_jumphost"`
+	// TransitGateway controls the transit gateway the cluster VPC attaches to.
+	// Create=false + Existing=<name-or-id> ADOPTS one that already exists, which
+	// is almost always what you want: gateways are account-scoped, quota-limited
+	// and usually shared, so creating one silently burns a connection.
+	TransitGateway ResourceToggle `yaml:"transit_gateway"`
+
+	// RegistryCOS controls the IBM Cloud Object Storage bucket that backs a
+	// mirror registry. Set Create=false when the bucket already exists, or when
+	// the mirror is an external registry (Artifactory, Harbor) that needs none.
+	RegistryCOS ResourceToggle `yaml:"registry_cos"`
+
+	// CertManager controls whether cert-manager is INSTALLED or adopted. Set
+	// Create=false to adopt one the cluster already runs — an OpenShift estate
+	// usually installs it as a day-1 add-on, and `bnk up` otherwise fails with
+	// `namespaces "cert-manager" already exists`. Adopting also means `bnk down`
+	// cannot delete it, or the certificates it has issued.
+	CertManager ResourceToggle `yaml:"cert_manager"`
+
+	// BNK controls whether the BIG-IP Next for Kubernetes install runs at all.
+	// Create=false leaves the cluster built but empty — useful for staging the
+	// infrastructure ahead of the entitlement.
+	BNK ResourceToggle `yaml:"bnk"`
+
+	// TGWJumphost controls the optional testing jumphost in the client VPC.
+	// Defaults OFF, as the `init` interview does. `roksbnkctl test` runs its
+	// probes FROM a jumphost, so the testing phase provisions nothing without it.
+	TGWJumphost ResourceToggle `yaml:"tgw_jumphost"`
+
+	// ClusterJumphosts controls the per-cluster jumphosts. Defaults OFF.
 	ClusterJumphosts ResourceToggle `yaml:"cluster_jumphosts"`
-	ClientVPC        ResourceToggle `yaml:"client_vpc"`
+
+	// ClientVPC controls the testing client VPC that the jumphost lives in.
+	// Defaults OFF; it consumes a transit-gateway connection. Create=false +
+	// Existing=<name> adopts one instead.
+	ClientVPC ResourceToggle `yaml:"client_vpc"`
 	// ClusterVPC controls the ROKS cluster's OWN VPC. Create=true (default)
 	// provisions a new one (named from the prefix); Create=false + Existing=<vpc-id>
 	// brings your own — rendered as use_existing_cluster_vpc + existing_cluster_vpc_id.

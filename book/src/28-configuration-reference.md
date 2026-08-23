@@ -32,18 +32,18 @@ Workspace is ~/.roksbnkctl/<name>/config.yaml.  Mirrors the per-workspace exampl
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `ibmcloud` | `IBMCloudCfg` | 2.3 + 2.4 | — | yes |  |
-| `cluster` | `ClusterCfg` | 2.3 + 2.4 | — | yes |  |
-| `bnk` | `BNKCfg` | 2.3 + 2.4 | — | no |  |
-| `gateway` | `GatewayCfg` | 2.3 + 2.4 | — | no |  |
-| `registry` | `*RegistryCfg` | 2.3 + 2.4 | — | no |  |
-| `test` | `TestCfg` | 2.3 + 2.4 | — | no |  |
-| `tf_source` | `TFSourceCfg` | 2.3 + 2.4 | — | yes |  |
-| `cos` | `*COSCfg` | 2.3 + 2.4 | — | no |  |
-| `targets` | `map[string]TargetCfg` | 2.3 + 2.4 | — | no |  |
-| `state` | `StateCfg` | 2.3 + 2.4 | — | no |  |
-| `bnkforge` | `*BNKForgeCfg` | 2.3 + 2.4 | — | no |  |
-| `agent` | `*AgentCfg` | 2.3 + 2.4 | — | no |  |
+| `ibmcloud` | `IBMCloudCfg` | 2.3 + 2.4 | — | yes | IBMCloud is the account context every phase runs against: region, resource group, and the API key (base64-obfuscated, never plaintext). |
+| `cluster` | `ClusterCfg` | 2.3 + 2.4 | — | yes | Cluster describes the ROKS cluster — either one to CREATE, or one that already exists and is being adopted (`create: false` plus its name). |
+| `bnk` | `BNKCfg` | 2.3 + 2.4 | — | no | BNK configures the BIG-IP Next for Kubernetes install itself: the manifest version (which also decides whether the 2.3 or 2.4 model is rendered), licensing, the per-zone network mapping, and the CNEInstance settings that place the TMM pods. |
+| `gateway` | `GatewayCfg` | 2.3 + 2.4 | — | no | Gateway configures the Gateway API resources installed after BNK. |
+| `registry` | `*RegistryCfg` | 2.3 + 2.4 | — | no | Registry selects where images and charts are pulled from: F5's Artifact Repository directly, or a mirror that a disconnected cluster can reach — IBM Container Registry, or any OCI registry (`generic`) such as Artifactory or Harbor. |
+| `test` | `TestCfg` | 2.3 + 2.4 | — | no | Test configures the connectivity, DNS and throughput probes `roksbnkctl test` runs, and the jumphost they run FROM. |
+| `tf_source` | `TFSourceCfg` | 2.3 + 2.4 | — | yes | TFSource selects which Terraform the binary applies: the `embedded` tree shipped inside this binary (the default, and the only version matched to it), a GitHub release, or a local path for testing a fork. |
+| `cos` | `*COSCfg` | 2.3 + 2.4 | — | no | COS is the IBM Cloud Object Storage bucket the FAR service-account credential is read from, for estates that stage it there rather than passing a local file. |
+| `targets` | `map[string]TargetCfg` | 2.3 + 2.4 | — | no | Targets are named remote hosts (`ssh:<target>`) that Exec backends can run tools on — a jumphost inside the VPC, say, when the operator's workstation cannot reach the cluster directly. |
+| `state` | `StateCfg` | 2.3 + 2.4 | — | no | State controls where Terraform state is kept and how it is locked. |
+| `bnkforge` | `*BNKForgeCfg` | 2.3 + 2.4 | — | no | BNKForge points at a BNK Forge server, which takes over a durable cluster once roksbnkctl has built it. |
+| `agent` | `*AgentCfg` | 2.3 + 2.4 | — | no | Agent configures `roksbnkctl agent`, which hands the workspace to a coding agent. |
 | `prefix` | `string` | 2.3 + 2.4 | — | no | Prefix is the workspace's account-scoped resource-name base. |
 | `resources` | `*ResourcesCfg` | 2.3 + 2.4 | — | no | Resources carries the per-resource create toggles (and the existing-resource name/ID for any declined-but-still-depended-on resource). |
 | `exec` | `map[string]ExecToolCfg` | 2.3 + 2.4 | — | no | Exec is the per-tool execution-backend config block introduced in Sprint 3 (PRD 03). |
@@ -381,13 +381,13 @@ ResourcesCfg holds the per-resource create toggles for a prefix-driven workspace
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `transit_gateway` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `registry_cos` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `cert_manager` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `bnk` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `tgw_jumphost` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `cluster_jumphosts` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
-| `client_vpc` | `ResourceToggle` | 2.3 + 2.4 | — | yes |  |
+| `transit_gateway` | `ResourceToggle` | 2.3 + 2.4 | — | yes | TransitGateway controls the transit gateway the cluster VPC attaches to. |
+| `registry_cos` | `ResourceToggle` | 2.3 + 2.4 | — | yes | RegistryCOS controls the IBM Cloud Object Storage bucket that backs a mirror registry. |
+| `cert_manager` | `ResourceToggle` | 2.3 + 2.4 | — | yes | CertManager controls whether cert-manager is INSTALLED or adopted. |
+| `bnk` | `ResourceToggle` | 2.3 + 2.4 | — | yes | BNK controls whether the BIG-IP Next for Kubernetes install runs at all. |
+| `tgw_jumphost` | `ResourceToggle` | 2.3 + 2.4 | — | yes | TGWJumphost controls the optional testing jumphost in the client VPC. |
+| `cluster_jumphosts` | `ResourceToggle` | 2.3 + 2.4 | — | yes | ClusterJumphosts controls the per-cluster jumphosts. |
+| `client_vpc` | `ResourceToggle` | 2.3 + 2.4 | — | yes | ClientVPC controls the testing client VPC that the jumphost lives in. |
 | `cluster_vpc` | `ResourceToggle` | 2.3 + 2.4 | — | yes | ClusterVPC controls the ROKS cluster's OWN VPC. |
 | `client_region` | `string` | 2.3 + 2.4 | — | no | ClientRegion is the region the testing client (TGW jumphost + client VPC) is installed in. |
 | `testing_client_vpc_name` | `string` | 2.3 + 2.4 | — | no | TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name). |
