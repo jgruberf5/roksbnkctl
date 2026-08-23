@@ -1,3 +1,23 @@
+locals {
+  # Name the flavor rather than auto-select from vCPU/memory minimums.
+  #
+  # The auto-select returns the smallest bx2 profile meeting both minimums, and
+  # profile FAMILIES differ in ways minimums do not express — local disk, network
+  # bandwidth, CPU generation. Two profiles with the same vCPU and memory are not
+  # interchangeable, and we only ever test specific ones. Naming the flavor makes
+  # the cluster deterministic and matches what was actually validated.
+  #
+  # 2.4 defaults to the flavor of F5's approved reference cluster, cx3d.8x20,
+  # which five consecutive clean demo runs were performed on. 2.3 keeps the
+  # auto-select it has always used: it has never been validated on cx3d, and
+  # changing a working line's node shape without a run to back it would be a
+  # guess.
+  worker_flavor_effective = (
+    var.roks_worker_flavor != "" ? var.roks_worker_flavor :
+    (var.bnk_line == "2.4" ? "cx3d.8x20" : "")
+  )
+}
+
 # ============================================================
 # ROKS Cluster + Transit Gateway
 # ============================================================
@@ -60,6 +80,7 @@ module "cluster" {
   openshift_cluster_version = var.openshift_cluster_version
   workers_per_zone          = var.roks_workers_per_zone
   min_worker_vcpu_count     = var.roks_min_worker_vcpu_count
+  worker_flavor             = local.worker_flavor_effective
   min_worker_memory_gb      = var.roks_min_worker_memory_gb
   roksbnkctl_binary         = var.roksbnkctl_binary
 }

@@ -46,7 +46,7 @@ FORGE_PASS="${FORGE_PASS:-}"
 FORGE_INSECURE="${FORGE_INSECURE:-true}"        # Forge usually has a self-signed cert
 
 TEST_HOSTS="${TEST_HOSTS:-https://www.example.com}"   # probe targets, space-separated
-RUNNER_TAG="${RUNNER_TAG:-v1.32.0}"
+RUNNER_TAG="${RUNNER_TAG:-v1.52.0}"
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 WS="${CI_WORKSPACE:-roksbnkctl-ci}"             # the pipeline's workspace
 PREFIX="${PREFIX:-$WS}"
@@ -58,8 +58,40 @@ source "$HERE/../lib/demo-format.sh"
 # RUN is the runner invocation each CI step calls. The image ENTRYPOINT is
 # roksbnkctl, so args after the image are roksbnkctl args. -e passes secrets by
 # NAME (the value never appears in argv); -v mounts the state volume at /work.
+# Every ROKSBNKCTL_* override in the environment is forwarded BY NAME, alongside
+# the credentials. Without this the container sees none of them: the pipeline
+# could not be configured at all from CI, which is the one place a container
+# runner exists to serve. Found by an override being silently dropped and the
+# workspace falling back to COS it had no access to.
+#
+# By name, not by value, for the same reason the credentials are: the value never
+# appears in argv, so it cannot leak into a process list or a recording.
+# NOT every ROKSBNKCTL_* is a workspace override. Some configure the CLI's own
+# runtime and are HOST-specific — ROKSBNKCTL_HOME above all, which names a
+# directory on this machine. Forwarding it makes the container try to write to a
+# host path it cannot see:
+#
+#   saving workspace: creating /mnt/d/…/home/bnk24d: mkdir /mnt/d: permission denied
+#
+# The container sets its own ROKSBNKCTL_HOME to /work/.roksbnkctl, which is the
+# mounted volume and the whole point of the state volume. So the runtime
+# variables are skipped and the configuration overrides are forwarded.
+# NOTE the ${RUN_ENV[@]+"${RUN_ENV[@]}"} form where this is expanded below. macOS
+# ships bash 3.2, where expanding an EMPTY array under `set -u` is an unbound
+# variable error; bash 4.4+ allows it. A demo run with no ROKSBNKCTL_* set — which
+# is exactly what the behavioural tests do — leaves this array empty, so the plain
+# "${RUN_ENV[@]}" form aborts the script on macOS and nowhere else.
+RUN_ENV=()
+while IFS='=' read -r _n _; do
+  case "$_n" in
+    ROKSBNKCTL_HOME) ;;                       # host path; the container sets its own
+    ROKSBNKCTL_*)    RUN_ENV+=(-e "$_n") ;;
+  esac
+done < <(env)
+
 RUN=(docker run --rm -v "$WORK:/work"
      -e IBMCLOUD_API_KEY -e BNK_FORGE_URL -e BNK_FORGE_USER -e BNK_FORGE_PASSWORD
+     ${RUN_ENV[@]+"${RUN_ENV[@]}"}
      "$RUNNER" -w "$WS")
 
 # ============================ teardown =======================================
@@ -78,10 +110,17 @@ teardown(){
   secret "$IBMCLOUD_API_KEY" "${FORGE_PASS:-}"
   banner "TEARDOWN — cluster-lifecycle CI demo"
   say "One 'down' removes every phase of workspace '${WS}' — testing, BNK, and the cluster itself."
-  run "${RUN[@]}" down --auto
+  # `must`, not `run`. A teardown that fails must not report success: the next
+  # run then races a half-deleted VPC and dies on "Provided Name … is not
+  # unique", which names the symptom and not the cause. Observed exactly that —
+  # a destroy failed with "context deadline exceeded", teardown returned 0, and
+  # the following run failed six minutes later on a name collision.
+  must "${RUN[@]}" down --auto
   ok "teardown complete — cluster ${WS} and every phase of the workspace are gone"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+# Propagate the teardown's status. `exit 0` here discarded it, so a caller
+# driving repeated runs could not tell a clean teardown from a wedged one.
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # Source .env when EITHER the API key or the Forge credentials are missing.
 # Keying only on IBMCLOUD_API_KEY meant that exporting the key in your shell made
@@ -159,8 +198,8 @@ cluster:
   workers_per_zone: ${WORKERS_PER_ZONE}
 resources:
   # The testing phase provisions ONLY these toggles, and they now default OFF
-  # (matching the `init` interview). Phase 5/6 runs `testing up` + `test`, and
-  # `test` runs its probes FROM a jumphost — so the demo must ask for one
+  # (matching the \`init\` interview). Phase 5/6 runs \`testing up\` + \`test\`, and
+  # \`test\` runs its probes FROM a jumphost — so the demo must ask for one
   # explicitly or the testing phase provisions nothing.
   tgw_jumphost: { create: true }
   client_vpc:   { create: true }   # the jumphost lives in it
@@ -181,7 +220,7 @@ bnkforge:
 YAML
 fi
 show_file "$WORK/config.yaml"
-run "${RUN[@]}" init --config-file /work/config.yaml --override-from-env
+must "${RUN[@]}" init --config-file /work/config.yaml --override-from-env
 ok "workspace '$WS' seeded on the /work volume — it outlives every container"
 endphase P2
 
@@ -190,7 +229,7 @@ pause; phase P3 "PHASE 3/7  —  cluster up: build the ROKS cluster"   # LONG
 say "A full hands-off build would just be 'roksbnkctl up'. Here the pipeline drives each phase as"
 say "its own job — starting with the cluster: VPC, subnets, gateways and the ROKS workers."
 begin_long
-run "${RUN[@]}" cluster up --auto
+must "${RUN[@]}" cluster up --auto
 end_long
 run "${RUN[@]}" cluster config
 ok "ROKS cluster '$WS' is up"
@@ -215,7 +254,7 @@ pause; phase P5 "PHASE 5/7  —  bnk up: install BIG-IP Next for Kubernetes"   #
 say "The BNK phase installs BIG-IP Next for Kubernetes ${BNK_VERSION} and its licence onto the"
 say "cluster from phase 3 — and it runs the Kubernetes verbs in-process, so the image needs no kubectl."
 begin_long
-run "${RUN[@]}" bnk up --auto
+must "${RUN[@]}" bnk up --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 run "${RUN[@]}" k get licenses.k8s.f5net.com -A
@@ -227,12 +266,12 @@ pause; phase P6 "PHASE 6/7  —  testing up + test: the probe framework"   # LON
 say "The testing phase stands up the jump host(s) the connectivity / DNS / throughput probes run"
 say "from. In CI this is the gate — 'test' is what a pipeline asserts on."
 begin_long
-run "${RUN[@]}" testing up --auto
+must "${RUN[@]}" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
-  run "${RUN[@]}" test hosts add "$h"
+  must "${RUN[@]}" test hosts add "$h"
 done
-run "${RUN[@]}" test
+must "${RUN[@]}" test
 ok "probes ran against: $TEST_HOSTS"
 endphase P6
 
@@ -241,7 +280,7 @@ pause; phase P7 "PHASE 7/7  —  bnk down then bnk up: swap BNK, keep the cluste
 say "Down JUST the BNK phase. The cluster and the testing framework keep running — a pipeline can"
 say "redeploy BNK on every commit without ever re-provisioning a cluster."
 begin_long
-run "${RUN[@]}" bnk down --auto
+must "${RUN[@]}" bnk down --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 if [[ "$BNK_VERSION_REBUILD" != "$BNK_VERSION" ]]; then
@@ -253,7 +292,7 @@ else
   say "bump bnk.manifest_version first — set BNK_VERSION_REBUILD to see that here."
 fi
 begin_long
-run "${RUN[@]}" bnk up --auto
+must "${RUN[@]}" bnk up --auto
 end_long
 run "${RUN[@]}" k get pods -n f5-bnk
 ok "BNK removed and reinstalled — no re-provisioning, the cluster never moved"

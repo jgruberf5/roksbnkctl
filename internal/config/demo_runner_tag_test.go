@@ -17,9 +17,50 @@ import (
 // TestDemoEnvAllowlistCoversEveryOverride: the drift fails a test instead of
 // being discovered later. Cutting a release now means bumping the pin in the
 // same commit as the CHANGELOG entry, which is where it belongs.
-func TestDemoRunnerTagMatchesTheCurrentRelease(t *testing.T) {
-	root := repoRootForDemoTest(t)
+// Every demo that pins a runner image is checked, DISCOVERED rather than named.
+//
+// The previous version of this test named one demo — the blueprint one. The
+// other four drifted unseen: two CI demos sat on v1.32.0 and one on v1.33.0
+// while the release was v1.52.0, twenty releases behind, and the blueprint
+// demo's own .env.example sat on v1.49.0 while its script said v1.52.0 — which
+// per the test below is the copy that WINS.
+//
+// A guard that names its subjects only guards the subjects someone remembered
+// to add. This one globs, so a new demo is covered the day it lands, and a demo
+// that stops pinning anything makes the discovery return fewer files than it
+// did — which the count assertion catches.
+func demoRunnerPins(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	pat := regexp.MustCompile(`(?:RUNNER_TAG:-|roksbnkctl-tools-runner:|RUNNER_TAG=)(v\d+\.\d+\.\d+)`)
+	out := map[string][]string{}
+	// .yaml, .md and .html are in here because the pin that shipped stale was in
+	// an Argo workflow the .sh/.env.example globs never looked at — and the
+	// README documents submitting that workflow directly, with no override, so
+	// the stale pin was what a reader would actually run.
+	for _, glob := range []string{
+		"scripts/demos/*/*.sh", "scripts/demos/*/.env.example",
+		"scripts/demos/*/*.yaml", "scripts/demos/*/*.md", "scripts/demos/*/*.html",
+	} {
+		files, err := filepath.Glob(filepath.Join(root, glob))
+		if err != nil {
+			t.Fatalf("glob %s: %v", glob, err)
+		}
+		for _, f := range files {
+			b, rerr := os.ReadFile(f)
+			if rerr != nil {
+				continue
+			}
+			for _, m := range pat.FindAllStringSubmatch(string(b), -1) {
+				rel, _ := filepath.Rel(root, f)
+				out[rel] = append(out[rel], m[1])
+			}
+		}
+	}
+	return out
+}
 
+func currentReleaseFromChangelog(t *testing.T, root string) string {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
 	if err != nil {
 		t.Skipf("CHANGELOG unreadable: %v", err)
@@ -28,23 +69,35 @@ func TestDemoRunnerTagMatchesTheCurrentRelease(t *testing.T) {
 	if m == nil {
 		t.Fatal("no released version heading found in CHANGELOG.md — the extraction regex has drifted")
 	}
-	latest := m[1]
+	return m[1]
+}
 
-	demo := filepath.Join(root, "scripts/demos/blueprint-workflows-ci-demo/blueprint-workflows-ci-demo.sh")
-	d, err := os.ReadFile(demo)
-	if err != nil {
-		t.Skipf("demo script unreadable: %v", err)
-	}
-	pin := regexp.MustCompile(`RUNNER_TAG="\$\{RUNNER_TAG:-(v[\d.]+)\}"`).FindStringSubmatch(string(d))
-	if pin == nil {
-		t.Fatal("could not find the RUNNER_TAG default — this test can no longer detect drift, which is worse than the drift")
+func TestDemoRunnerTagMatchesTheCurrentRelease(t *testing.T) {
+	root := repoRootForDemoTest(t)
+	latest := currentReleaseFromChangelog(t, root)
+
+	pins := demoRunnerPins(t, root)
+	// The floor is the real count, not a token minimum. A loose floor let a
+	// broken regex still match six files and pass with a stale pin in place.
+	// 15 files pin a runner image today. The floor is what makes the discovery
+	// honest: a glob that silently stops matching would otherwise pass with
+	// nothing checked. Raise it when a demo is added — it was 13 while 15 files
+	// pinned, so the two newest could have lost their pin unnoticed.
+	const wantFiles = 15
+	if len(pins) < wantFiles {
+		t.Fatalf("found runner pins in %d files, expected at least %d.\n"+
+			"This test discovers its subjects, so finding fewer means the discovery broke — "+
+			"which is worse than the drift it looks for.\nfound: %v", len(pins), wantFiles, pins)
 	}
 
-	if pin[1] != latest {
-		t.Errorf("the blueprint demo pins runner image %s but the newest release is %s.\n"+
-			"The demo would exercise %s regardless of the installed binary. Bump RUNNER_TAG in\n"+
-			"  scripts/demos/blueprint-workflows-ci-demo/blueprint-workflows-ci-demo.sh\n"+
-			"in the same commit as the CHANGELOG entry.", pin[1], latest, pin[1])
+	for file, found := range pins {
+		for _, got := range found {
+			if got != latest {
+				t.Errorf("%s pins runner image %s but the newest release is %s.\n"+
+					"The demo would exercise %s regardless of the installed binary. Bump it in the "+
+					"same commit as the CHANGELOG entry.", file, got, latest, got)
+			}
+		}
 	}
 }
 

@@ -304,7 +304,163 @@ locals {
         name  = "USE_GATEWAY_SETTINGS"
         value = "true"
       },
+      # F5's reference pins this; roksbnkctl set it nowhere, so the controller
+      # ran on the operator default (v1.4.1 on the verified cluster). The 2.4 EA
+      # guide requires the 1.5 bundle for mTLS.
+      {
+        name  = "GATEWAY_API_VERSION"
+        value = var.cneinstance_gateway_api_version
+      },
     ]
+    # The three TMM settings F5's reference carries that this tree did not.
+    tmm = [
+      {
+        name  = "TMM_IGNORE_GATEWAYS"
+        value = "true"
+      },
+      # Hyperthreading off: TMM pins cores, and a sibling hyperthread on a
+      # pinned core is contention the data plane cannot see or schedule around.
+      {
+        name  = "DISABLE_HT"
+        value = "true"
+      },
+      {
+        name  = "ENABLE_K8S_ROUTES"
+        value = "true"
+      },
+    ]
+  }
+
+  # ── 2.4 pod placement ───────────────────────────────────────────────────────
+  #
+  # This is the mechanism that REPLACED the node-labeler on 2.4. #171 removed the
+  # labeler because 2.4 does not need it; what it did not do is add the thing
+  # that took over, so 2.4 shipped with neither. TMM landing one-per-node and
+  # spread across zones was left to the scheduler's discretion.
+  # Every attribute of the reference placement block is a variable, including
+  # the topology keys. Those keys are the IBM ROKS node labels — `kubernetes.io/
+  # hostname` and `topology.kubernetes.io/zone` — and hard-coding them would make
+  # this unusable on a cluster that labels its topology differently, which is
+  # exactly the assumption the node-labeler used to bake in.
+  tmm_pod_selector = {
+    matchLabels = {
+      app = var.cneinstance_tmm_pod_label
+    }
+  }
+
+  # Built as lists so the "off" case is an empty list rather than null: a
+  # conditional whose branches are an object and null has no consistent type and
+  # terraform rejects it at evaluation.
+  tmm_anti_affinity_terms = var.cneinstance_tmm_anti_affinity ? [
+    {
+      labelSelector = local.tmm_pod_selector
+      topologyKey   = var.cneinstance_tmm_anti_affinity_topology_key
+    },
+  ] : []
+
+  tmm_zone_spread_terms = var.cneinstance_tmm_zone_spread ? [
+    {
+      labelSelector     = local.tmm_pod_selector
+      maxSkew           = var.cneinstance_tmm_zone_max_skew
+      topologyKey       = var.cneinstance_tmm_zone_topology_key
+      whenUnsatisfiable = var.cneinstance_tmm_zone_when_unsatisfiable
+    },
+  ] : []
+
+  tmm_placement = merge(
+    length(local.tmm_anti_affinity_terms) > 0 ? {
+      affinity = {
+        podAntiAffinity = {
+          requiredDuringSchedulingIgnoredDuringExecution = local.tmm_anti_affinity_terms
+        }
+      }
+    } : {},
+    length(local.tmm_zone_spread_terms) > 0 ? {
+      topologySpreadConstraints = local.tmm_zone_spread_terms
+    } : {},
+  )
+
+  # Emitted only when something is actually configured, so an operator who turns
+  # both off gets no placement key rather than an empty object the CR must
+  # interpret.
+  # `cond ? {} : {...}` does not type-check in terraform: an empty object and a
+  # populated one have different types and it refuses to unify them. A `for` with
+  # an `if` yields an empty object of the SAME type, so it composes with merge().
+  cneinstance_placement_24 = {
+    for k, v in {
+      placement = {
+        dataPlane = local.tmm_placement
+      }
+    } : k => v if !local.line_pre_24 && length(local.tmm_placement) > 0
+  }
+
+  # deploymentSize: the 2.4 guide and F5's reference both use Tiny; this tree
+  # defaulted to Small on both lines, contradicting our own variable description
+  # ("Tiny is what the BNK 2.4 install guide uses").
+  #
+  # It matters more than a label. Small makes TMM request 4Gi of hugepages-2Mi,
+  # and a stock ROKS worker reports hugepages-2Mi=0 — including F5's own
+  # reference cluster. That was invisible while demoMode was true, because demo
+  # mode drops the hugepage request; turning demoMode off to conform exposed it
+  # as three TMM pods Pending on "0/3 nodes are available: 3 Insufficient
+  # hugepages-2Mi", and a 15-minute wait for an Available that could never come.
+  #
+  # So the two conform together: Tiny + demoMode false is the reference's pairing.
+  # Empty means "unset", so an operator who explicitly wants Small on 2.4 gets
+  # Small. Using the value itself as the tri-state would have made the reference
+  # default unreachable-by-agreement — you could not ask for the thing the
+  # default already was.
+  deployment_size_effective = (
+    var.cneinstance_deployment_size != ""
+    ? var.cneinstance_deployment_size
+    : (local.line_pre_24 ? "Small" : "Tiny")
+  )
+
+  # wholeCluster moves WITH watchNamespaces: the product validates them together
+  # and rejects "watch everything" expressed twice. 2.4 conforms to the reference
+  # (false + ["All"]); 2.3 keeps the true it has always shipped.
+  whole_cluster_effective = (
+    var.cneinstance_whole_cluster_override != ""
+    ? var.cneinstance_whole_cluster_override == "true"
+    : (local.line_pre_24 ? var.cneinstance_whole_cluster : false)
+  )
+
+  # demoMode: true is what 2.3 has always shipped; 2.4 conforms to the reference
+  # and turns it OFF. An explicit setting wins on either line.
+  demo_mode_effective = var.cneinstance_demo_mode != "" ? var.cneinstance_demo_mode == "true" : local.line_pre_24
+
+  cneinstance_conformance_24 = merge({
+    for k, v in {
+      tmmReplicas     = var.cneinstance_tmm_replicas
+      watchNamespaces = var.cneinstance_watch_namespaces
+      externalBigip = {
+        enabled = var.cneinstance_external_bigip
+      }
+    } : k => v if !local.line_pre_24
+  }, local.cneinstance_placement_24)
+
+  # advanced.externalBigip.env, 2.4 and only when the feature is on.
+  adv_external_bigip_24 = {
+    for k, v in {
+      externalBigip = {
+        env = [
+          { name = "ENABLE_EXT_BIGIP_DATASERVER_MONITOR", value = "true" },
+          { name = "ENABLE_EXT_BIGIP_POOL_MONITOR", value = "true" },
+          { name = "EXTERNAL_BIGIP_LOGIN_SECRET", value = var.cneinstance_external_bigip_login_secret },
+          { name = "CLUSTER_IDENTIFIER", value = var.cneinstance_cluster_identifier },
+        ]
+      }
+    } : k => v if !local.line_pre_24 && var.cneinstance_external_bigip
+  }
+
+  # TMM rolling-update policy, 2.4.
+  adv_tmm_rolling_24 = {
+    for k, v in {
+      rollingUpdate = {
+        maxSurge       = 0
+        maxUnavailable = 1
+      }
+    } : k => v if !local.line_pre_24 && var.cneinstance_tmm_rolling_update
   }
 
   # `lookup(m, k, [])` is not usable here: adv_env_defaults is an OBJECT (its
@@ -355,13 +511,13 @@ locals {
     c => contains(keys(var.cneinstance_advanced_env), c) ? { env = local.adv_env[c] } : {}
   }
 
-  cneinstance_spec = {
+  cneinstance_spec = merge({
     product = {
       gatewayAPI = var.cneinstance_gateway_api
       type       = "BNK"
     }
     manifestVersion = var.f5_bigip_k8s_manifest_version
-    wholeCluster    = var.cneinstance_whole_cluster
+    wholeCluster    = local.whole_cluster_effective
     telemetry = {
       loggingSubsystem = {
         enabled = var.cneinstance_logging_subsystem
@@ -373,7 +529,7 @@ locals {
     certificate = {
       clusterIssuer = var.cluster_issuer_name
     }
-    deploymentSize = var.cneinstance_deployment_size
+    deploymentSize = local.deployment_size_effective
     registry = {
       uri              = local.cneinstance_registry_uri
       imagePullSecrets = local.cneinstance_image_pull_secrets
@@ -406,19 +562,19 @@ locals {
         env = local.adv_env["cneController"]
       }
       demoMode = merge({
-        enabled = true
+        enabled = local.demo_mode_effective
       }, local.adv_env_optional["demoMode"])
       maintenanceMode = merge({
         enabled = false
       }, local.adv_env_optional["maintenanceMode"])
-      tmm = {
+      tmm = merge({
         env = local.adv_env["tmm"]
-      }
+      }, local.adv_tmm_rolling_24)
       pseudoCNI = {
         env = local.adv_env["pseudoCNI"]
       }
-    }, local.adv_env_extra)
-  }
+    }, local.adv_env_extra, local.adv_external_bigip_24)
+  }, local.cneinstance_conformance_24)
 }
 
 locals {
@@ -725,3 +881,105 @@ resource "kubectl_manifest" "cneinstance_scc_policies" {
   depends_on = [var.flo_deployment_dependency]
 }
 
+
+# ── F5BigTcpSetting ──────────────────────────────────────────────────────────
+#
+# The data-plane TCP profile. F5's approved reference cluster carries a
+# hand-applied `sys-default-tcp` in the BNK namespace — despite the "sys-default"
+# name it was applied by engineering, not created by the product, which is why it
+# is ours to surface.
+#
+# Only written when the operator sets something. The product manages its own
+# default otherwise, and an empty CR would be this tree fighting it.
+#
+# Values arrive as strings because config.yaml and environment variables carry
+# text; the CR is typed, so each value is coerced here — a number if it parses as
+# one, a bool for "true"/"false", a string otherwise.
+resource "kubectl_manifest" "tcp_settings" {
+  count             = local.use_kubectl && length(var.cneinstance_tcp_settings) > 0 ? 1 : 0
+  server_side_apply = true
+  force_conflicts   = true
+
+  # Written as YAML text rather than yamlencode(map) because a terraform map has
+  # ONE value type: a `for` producing mixed bool/number/string unifies them all
+  # to string, and the CR would get "300" where it wants 300. Emitting the
+  # document directly lets YAML's own scalar rules do the typing — an unquoted
+  # 300 is an int, true is a bool — and anything else is JSON-quoted so a value
+  # containing a colon or a leading special character stays a valid string.
+  yaml_body = <<-YAML
+    apiVersion: k8s.f5net.com/v1
+    kind: F5BigTcpSetting
+    metadata:
+      name: ${var.cneinstance_tcp_settings_name}
+      namespace: ${var.flo_namespace}
+    spec:
+    ${indent(2, join("\n", [
+  for k in sort(keys(var.cneinstance_tcp_settings)) :
+  "${k}: ${(
+    can(tonumber(var.cneinstance_tcp_settings[k])) ||
+    contains(["true", "false"], lower(var.cneinstance_tcp_settings[k]))
+  ) ? lower(var.cneinstance_tcp_settings[k]) : jsonencode(var.cneinstance_tcp_settings[k])}"
+]))}
+  YAML
+
+depends_on = [kubectl_manifest.cneinstance]
+}
+
+# ── hugepages on the worker pool ─────────────────────────────────────────────
+#
+# BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small
+# requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including
+# F5's approved reference cluster, which runs Tiny for exactly that reason. So
+# any size above Tiny needs hugepages allocated, or TMM never schedules.
+#
+# A Tuned profile rather than a MachineConfig: the Node Tuning Operator is
+# already installed on OpenShift (the reference cluster has tuned/default), it
+# owns the node-level kernel tuning surface, and it renders the MachineConfig
+# itself. Writing a MachineConfig by hand would put this tree in competition
+# with an operator that is already there to do it.
+#
+# THIS REBOOTS WORKERS. `cmdline_hugepages` is a bootloader argument, so the
+# Machine Config Operator rolls the pool to apply it — draining and restarting
+# each node in turn. Hence off by default: a cluster that does not need
+# hugepages should never be rebooted because a default said so.
+resource "kubectl_manifest" "hugepages_tuned" {
+  count             = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
+  server_side_apply = true
+  force_conflicts   = true
+
+  yaml_body = yamlencode({
+    apiVersion = "tuned.openshift.io/v1"
+    kind       = "Tuned"
+    metadata = {
+      name      = var.cneinstance_hugepages_profile_name
+      namespace = "openshift-cluster-node-tuning-operator"
+    }
+    spec = {
+      profile = [
+        {
+          name = var.cneinstance_hugepages_profile_name
+          data = join("\n", [
+            "[main]",
+            "summary=Allocate hugepages for BIG-IP Next for Kubernetes TMM",
+            "include=openshift-node",
+            "",
+            "[bootloader]",
+            format("cmdline_hugepages=+hugepagesz=%s hugepages=%d",
+            var.cneinstance_hugepages_size, var.cneinstance_hugepages_count),
+            "",
+          ])
+        },
+      ]
+      recommend = [
+        {
+          machineConfigLabels = {
+            "machineconfiguration.openshift.io/role" = var.cneinstance_hugepages_node_role
+          }
+          # Above the default profile's priority so this wins for these nodes.
+          priority = 20
+          profile  = var.cneinstance_hugepages_profile_name
+        },
+      ]
+    }
+  })
+}

@@ -17,18 +17,62 @@ import (
 // this struct. Plaintext keys in the YAML are rejected at load time by
 // rejectPlaintextSecrets.
 type Workspace struct {
-	IBMCloud IBMCloudCfg          `yaml:"ibmcloud"`
-	Cluster  ClusterCfg           `yaml:"cluster"`
-	BNK      BNKCfg               `yaml:"bnk,omitempty"`
-	Gateway  GatewayCfg           `yaml:"gateway,omitempty"`
-	Registry *RegistryCfg         `yaml:"registry,omitempty"`
-	Test     TestCfg              `yaml:"test,omitempty"`
-	TFSource TFSourceCfg          `yaml:"tf_source"`
-	COS      *COSCfg              `yaml:"cos,omitempty"`
-	Targets  map[string]TargetCfg `yaml:"targets,omitempty"`
-	State    StateCfg             `yaml:"state,omitempty"`
-	BNKForge *BNKForgeCfg         `yaml:"bnkforge,omitempty"`
-	Agent    *AgentCfg            `yaml:"agent,omitempty"`
+	// IBMCloud is the account context every phase runs against: region,
+	// resource group, and the API key (base64-obfuscated, never plaintext).
+	IBMCloud IBMCloudCfg `yaml:"ibmcloud"`
+
+	// Cluster describes the ROKS cluster — either one to CREATE, or one that
+	// already exists and is being adopted (`create: false` plus its name).
+	// Adopting is the common case: most estates build their own clusters.
+	Cluster ClusterCfg `yaml:"cluster"`
+
+	// BNK configures the BIG-IP Next for Kubernetes install itself: the
+	// manifest version (which also decides whether the 2.3 or 2.4 model is
+	// rendered), licensing, the per-zone network mapping, and the CNEInstance
+	// settings that place the TMM pods.
+	BNK BNKCfg `yaml:"bnk,omitempty"`
+
+	// Gateway configures the Gateway API resources installed after BNK. On 2.4
+	// this is the Infra + GatewaySettings model; on 2.3 it is BNKGateway plus
+	// the static routes.
+	Gateway GatewayCfg `yaml:"gateway,omitempty"`
+
+	// Registry selects where images and charts are pulled from: F5's Artifact
+	// Repository directly, or a mirror that a disconnected cluster can reach —
+	// IBM Container Registry, or any OCI registry (`generic`) such as
+	// Artifactory or Harbor. nil means no mirror; images come from F5.
+	Registry *RegistryCfg `yaml:"registry,omitempty"`
+
+	// Test configures the connectivity, DNS and throughput probes `roksbnkctl
+	// test` runs, and the jumphost they run FROM.
+	Test TestCfg `yaml:"test,omitempty"`
+
+	// TFSource selects which Terraform the binary applies: the `embedded` tree
+	// shipped inside this binary (the default, and the only version matched to
+	// it), a GitHub release, or a local path for testing a fork.
+	TFSource TFSourceCfg `yaml:"tf_source"`
+
+	// COS is the IBM Cloud Object Storage bucket the FAR service-account
+	// credential is read from, for estates that stage it there rather than
+	// passing a local file. nil means the credential comes from a file.
+	COS *COSCfg `yaml:"cos,omitempty"`
+
+	// Targets are named remote hosts (`ssh:<target>`) that Exec backends can
+	// run tools on — a jumphost inside the VPC, say, when the operator's
+	// workstation cannot reach the cluster directly.
+	Targets map[string]TargetCfg `yaml:"targets,omitempty"`
+
+	// State controls where Terraform state is kept and how it is locked.
+	State StateCfg `yaml:"state,omitempty"`
+
+	// BNKForge points at a BNK Forge server, which takes over a durable cluster
+	// once roksbnkctl has built it. nil means no Forge; every phase runs
+	// standalone.
+	BNKForge *BNKForgeCfg `yaml:"bnkforge,omitempty"`
+
+	// Agent configures `roksbnkctl agent`, which hands the workspace to a
+	// coding agent. nil means the feature is unconfigured.
+	Agent *AgentCfg `yaml:"agent,omitempty"`
 
 	// Prefix is the workspace's account-scoped resource-name base.
 	// When non-empty, the
@@ -136,7 +180,7 @@ type BNKTrustedProfileCfg struct {
 	// ["Viewer", "Editor"]. Editor is what lets the controller manage TMM's
 	// network attachments; narrowing it fails at attachment time on a running
 	// cluster rather than at apply, so change it only against a tested policy.
-	Roles []string `yaml:"roles,omitempty"`
+	Roles []string `yaml:"roles,omitempty" default:"[Viewer, Editor]"`
 }
 
 // AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is
@@ -177,8 +221,14 @@ type TargetCfg struct {
 }
 
 type IBMCloudCfg struct {
-	Region        string `yaml:"region"`
-	ResourceGroup string `yaml:"resource_group"`
+	// Region is the IBM Cloud region everything in this workspace is created in
+	// or adopted from, e.g. "us-east". The testing client can live elsewhere via
+	// resources.client_region.
+	Region string `yaml:"region"`
+
+	// ResourceGroup is the IBM Cloud resource group resources are placed in, and
+	// the one an adopted cluster is looked up in.
+	ResourceGroup string `yaml:"resource_group" default:"default"`
 	APIKeySource  string `yaml:"api_key_source,omitempty"` // env | keychain | config | prompt — see secrets.go
 
 	// APIKeyB64 stores the API key base64-encoded inline in the workspace
@@ -195,10 +245,25 @@ type IBMCloudCfg struct {
 }
 
 type ClusterCfg struct {
-	Create           bool   `yaml:"create"`
-	Name             string `yaml:"name"`
+	// Create decides whether this workspace BUILDS the ROKS cluster or adopts one
+	// that already exists. false means adopt: Name must then match a cluster in
+	// the account, and `cluster register` takes it over without changing it.
+	// Adopting is the common case — most estates build clusters to their own
+	// standards and ask roksbnkctl only for BNK.
+	Create bool `yaml:"create"`
+
+	// Name is the ROKS cluster's name — the one to create, or the existing one to
+	// adopt when Create is false.
+	Name string `yaml:"name"`
+
+	// OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g.
+	// "4.20"). Empty takes IBM's current default, which moves over time — pin it
+	// when a run has to be reproducible. Ignored when adopting.
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
-	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty"`
+
+	// WorkersPerZone is the worker count PER ZONE, not in total: ROKS spans three
+	// availability zones, so 2 here is a six-node cluster. Ignored when adopting.
+	WorkersPerZone int `yaml:"workers_per_zone,omitempty" default:"1"`
 
 	// PublicGateway controls whether the cluster subnets attach a public gateway
 	// for worker Internet egress. nil → the terraform default (true, current
@@ -206,7 +271,7 @@ type ClusterCfg struct {
 	// operator must supply private connectivity (VPEs / private service endpoints)
 	// for image pulls and IBM Cloud services. A pointer so "unset" is distinct from
 	// an explicit false. Rendered as cluster_public_gateway.
-	PublicGateway *bool `yaml:"public_gateway,omitempty"`
+	PublicGateway *bool `yaml:"public_gateway,omitempty" default:"true"`
 
 	// VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved
 	// from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18.
@@ -232,7 +297,7 @@ type ClusterCfg struct {
 	// is refused rather than planned.
 	//
 	// Empty means single-nic, so every existing config.yaml is unaffected.
-	NetworkMode string `yaml:"network_mode,omitempty"`
+	NetworkMode string `yaml:"network_mode,omitempty" default:"single-nic"`
 
 	// ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per
 	// zone in zone order, instead of creating them (#61).
@@ -248,12 +313,58 @@ type ClusterCfg struct {
 	// are read from the subnets themselves, not from the region default.
 	ExistingSubnetIDs []string `yaml:"existing_subnet_ids,omitempty"`
 
-	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
-	// (the cluster module picks the smallest bx2 profile meeting both minimums).
-	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
-	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
-	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty"`
-	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty"`
+	// WorkerFlavor names the worker profile EXACTLY, e.g. "cx3d.8x20". Empty
+	// auto-selects from MinWorkerVCPUCount / MinWorkerMemoryGB.
+	//
+	// The auto-select only considers the bx2 family, so any other profile is
+	// unreachable without naming it here — F5's approved reference cluster runs
+	// cx3d.8x20, which no combination of minimums can produce. Naming the flavor
+	// also pins the exact variant, where two profiles meeting the same minimums
+	// can differ in attributes nothing here tests.
+	WorkerFlavor string `yaml:"worker_flavor,omitempty"`
+
+	// MinWorkerVCPUCount is the vCPU floor for the worker-flavor auto-select: the
+	// cluster module picks the smallest bx2 profile meeting this and
+	// MinWorkerMemoryGB. Ignored when WorkerFlavor names a profile outright.
+	// Rendered as roks_min_worker_vcpu_count; 0 leaves the terraform default (16).
+	// Only meaningful when the cluster is created.
+	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty" default:"16"`
+
+	// MinWorkerMemoryGB is the memory floor for the same auto-select. Rendered as
+	// roks_min_worker_memory_gb; 0 leaves the terraform default (64).
+	MinWorkerMemoryGB int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
+}
+
+// HugepagesCfg allocates hugepages on the worker pool through the OpenShift
+// Node Tuning Operator.
+//
+// BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small
+// requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including
+// F5's approved reference cluster, which runs Tiny for exactly this reason. So
+// any size above Tiny needs this, or nodes prepared some other way.
+//
+// APPLYING THIS REBOOTS WORKERS. The profile sets a bootloader kernel argument,
+// and the Machine Config Operator rolls the pool to apply it — draining and
+// restarting each node in turn. On a live cluster that is a maintenance event,
+// not a configuration change.
+type HugepagesCfg struct {
+	// Enabled allocates hugepages. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// Size is the hugepage size, e.g. "2M" or "1G". TMM asks for hugepages-2Mi,
+	// so 2M is what matches unless F5 says otherwise for a given size.
+	Size string `yaml:"size,omitempty" default:"2M"`
+
+	// Count is the number of pages PER NODE. 2048 x 2M = 4Gi, which is what
+	// deploymentSize Small was observed to request.
+	Count int `yaml:"count,omitempty" default:"2048"`
+
+	// NodeRole is the machineconfiguration.openshift.io/role the profile applies
+	// to. "worker" is every worker in the pool.
+	NodeRole string `yaml:"node_role,omitempty" default:"worker"`
+
+	// ProfileName names the Tuned profile and CR.
+	ProfileName string `yaml:"profile_name,omitempty" default:"bnk-hugepages"`
 }
 
 // ResourcesCfg holds the per-resource create toggles for a prefix-driven
@@ -263,13 +374,41 @@ type ClusterCfg struct {
 // Existing name/ID used when Create=false and a live dependent still needs
 // to reference the resource by name.
 type ResourcesCfg struct {
-	TransitGateway   ResourceToggle `yaml:"transit_gateway"`
-	RegistryCOS      ResourceToggle `yaml:"registry_cos"`
-	CertManager      ResourceToggle `yaml:"cert_manager"`
-	BNK              ResourceToggle `yaml:"bnk"`
-	TGWJumphost      ResourceToggle `yaml:"tgw_jumphost"`
+	// TransitGateway controls the transit gateway the cluster VPC attaches to.
+	// Create=false + Existing=<name-or-id> ADOPTS one that already exists, which
+	// is almost always what you want: gateways are account-scoped, quota-limited
+	// and usually shared, so creating one silently burns a connection.
+	TransitGateway ResourceToggle `yaml:"transit_gateway"`
+
+	// RegistryCOS controls the IBM Cloud Object Storage bucket that backs a
+	// mirror registry. Set Create=false when the bucket already exists, or when
+	// the mirror is an external registry (Artifactory, Harbor) that needs none.
+	RegistryCOS ResourceToggle `yaml:"registry_cos"`
+
+	// CertManager controls whether cert-manager is INSTALLED or adopted. Set
+	// Create=false to adopt one the cluster already runs — an OpenShift estate
+	// usually installs it as a day-1 add-on, and `bnk up` otherwise fails with
+	// `namespaces "cert-manager" already exists`. Adopting also means `bnk down`
+	// cannot delete it, or the certificates it has issued.
+	CertManager ResourceToggle `yaml:"cert_manager"`
+
+	// BNK controls whether the BIG-IP Next for Kubernetes install runs at all.
+	// Create=false leaves the cluster built but empty — useful for staging the
+	// infrastructure ahead of the entitlement.
+	BNK ResourceToggle `yaml:"bnk"`
+
+	// TGWJumphost controls the optional testing jumphost in the client VPC.
+	// Defaults OFF, as the `init` interview does. `roksbnkctl test` runs its
+	// probes FROM a jumphost, so the testing phase provisions nothing without it.
+	TGWJumphost ResourceToggle `yaml:"tgw_jumphost"`
+
+	// ClusterJumphosts controls the per-cluster jumphosts. Defaults OFF.
 	ClusterJumphosts ResourceToggle `yaml:"cluster_jumphosts"`
-	ClientVPC        ResourceToggle `yaml:"client_vpc"`
+
+	// ClientVPC controls the testing client VPC that the jumphost lives in.
+	// Defaults OFF; it consumes a transit-gateway connection. Create=false +
+	// Existing=<name> adopts one instead.
+	ClientVPC ResourceToggle `yaml:"client_vpc"`
 	// ClusterVPC controls the ROKS cluster's OWN VPC. Create=true (default)
 	// provisions a new one (named from the prefix); Create=false + Existing=<vpc-id>
 	// brings your own — rendered as use_existing_cluster_vpc + existing_cluster_vpc_id.
@@ -414,8 +553,25 @@ var DefaultBNKNetworkZones = []BNKZoneCfg{
 }
 
 type BNKCfg struct {
+	// CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium,
+	// Large or Max. It decides how much TMM asks for, INCLUDING hugepages — Tiny
+	// requests none, Small requests 4Gi of hugepages-2Mi, and a stock ROKS worker
+	// reports zero, so anything above Tiny needs bnk.hugepages to allocate them
+	// first or the TMM pods stay Pending. See Appendix C for the sizing table.
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
-	FARRepoURL      string `yaml:"far_repo_url,omitempty"`
+
+	// FARRepoURL is the F5 Artifact Repository charts are pulled from. Empty uses
+	// repo.f5.com. A disconnected cluster cannot reach it — configure `registry`
+	// with a mirror instead, and this becomes the source that mirror is filled
+	// FROM rather than what the cluster pulls from.
+	FARRepoURL string `yaml:"far_repo_url,omitempty"`
+
+	// ManifestVersion pins the BNK release, e.g. "2.4.0-EA". This is the single
+	// field that selects the product line: a 2.4 version renders the Infra +
+	// GatewaySettings model and sets USE_GATEWAY_SETTINGS, while a 2.3 version
+	// renders cloud-network-mapping and the F5SPK* CRs. There is no separate
+	// `line` field and no override — the version IS the selector, so that the
+	// rendered model can never disagree with the manifest being installed.
 	ManifestVersion string `yaml:"manifest_version,omitempty"`
 	// FarAuthFile is the FAR auth tarball's filename in the orchestration COS
 	// bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry`
@@ -445,8 +601,8 @@ type BNKCfg struct {
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
 	// these for multi-tenant clusters or to avoid namespace collisions.
-	FLONamespace      string `yaml:"flo_namespace,omitempty"`
-	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty"`
+	FLONamespace      string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
+	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
 	// (#170).
@@ -464,7 +620,109 @@ type BNKCfg struct {
 	//
 	// Ignored on 2.3, where the sweep always runs: there the crd-installer does
 	// force the CRDs and is blocked without it.
-	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty"`
+	GatewayAPIMTLS bool `yaml:"gateway_api_mtls,omitempty" line:"2.4"`
+
+	// ── BNK 2.4 conformance with F5's reference CNEInstance ──────────────────
+	//
+	// Defaults are F5's reference values from the live 2.4 capture, not
+	// invented. All of these are emitted on 2.4 only; 2.3 renders exactly as it
+	// did before.
+
+	// TMMReplicas is the number of f5-tmm data-plane replicas. Zero means the
+	// reference default (3).
+	TMMReplicas int `yaml:"tmm_replicas,omitempty" line:"2.4" default:"3"`
+
+	// WatchNamespaces are the namespaces the CNE controller watches. Empty means
+	// the reference default (["All"]).
+	WatchNamespaces []string `yaml:"watch_namespaces,omitempty" line:"2.4" default:"All"`
+
+	// TMMAntiAffinity requires f5-tmm pods onto different nodes. This is what
+	// REPLACED the node-labeler on 2.4: the labeler was removed as unnecessary,
+	// and placement is the mechanism that took over.
+	TMMAntiAffinity *bool `yaml:"tmm_anti_affinity,omitempty" line:"2.4" default:"true"`
+
+	// TMMAntiAffinityTopologyKey is the node label the anti-affinity rule spreads
+	// across — the IBM ROKS per-node label. Surfaced rather than hard-coded so a
+	// cluster labelling its topology differently stays configurable.
+	TMMAntiAffinityTopologyKey string `yaml:"tmm_anti_affinity_topology_key,omitempty" line:"2.4" default:"kubernetes.io/hostname"`
+
+	// TMMZoneSpread spreads f5-tmm pods across zones.
+	TMMZoneSpread *bool `yaml:"tmm_zone_spread,omitempty" line:"2.4" default:"true"`
+
+	// TMMZoneTopologyKey is the IBM ROKS zone label the spread constraint uses.
+	TMMZoneTopologyKey string `yaml:"tmm_zone_topology_key,omitempty" line:"2.4" default:"topology.kubernetes.io/zone"`
+
+	// TMMZoneMaxSkew is maxSkew for the zone topology-spread constraint.
+	TMMZoneMaxSkew int `yaml:"tmm_zone_max_skew,omitempty" line:"2.4" default:"1"`
+
+	// TMMZoneWhenUnsatisfiable is DoNotSchedule or ScheduleAnyway.
+	TMMZoneWhenUnsatisfiable string `yaml:"tmm_zone_when_unsatisfiable,omitempty" line:"2.4" default:"DoNotSchedule"`
+
+	// TMMPodLabel is the `app` label value the placement rules select TMM by.
+	TMMPodLabel string `yaml:"tmm_pod_label,omitempty" line:"2.4" default:"f5-tmm"`
+
+	// TMMRollingUpdate pins TMM's rolling update to maxSurge 0 / maxUnavailable 1
+	// — the same shape as the cwc Multi-Attach deadlock, where an unconstrained
+	// rolling update on a single-attach resource wedges.
+	TMMRollingUpdate *bool `yaml:"tmm_rolling_update,omitempty" line:"2.4" default:"true"`
+
+	// ExternalBigIP enables the external BIG-IP controller.
+	ExternalBigIP *bool `yaml:"external_bigip,omitempty" line:"2.4" default:"false"`
+
+	// ExternalBigIPLoginSecret holds the external BIG-IP credentials.
+	ExternalBigIPLoginSecret string `yaml:"external_bigip_login_secret,omitempty" line:"2.4" default:"f5-bigip-ctlr-login"`
+
+	// ClusterIdentifier is passed to the external BIG-IP controller. Empty derives
+	// from the cluster name.
+	ClusterIdentifier string `yaml:"cluster_identifier,omitempty" line:"2.4" default:""`
+
+	// GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. roksbnkctl
+	// previously set this nowhere, so the controller ran on whatever the operator
+	// defaulted to (v1.4.1 on the verified cluster) while F5's reference pins
+	// 1.5.0 — which the 2.4 EA guide requires for mTLS.
+	GatewayAPIVersion string `yaml:"gateway_api_version,omitempty" line:"2.4" default:"1.5.0"`
+
+	// DemoMode sets advanced.demoMode.enabled. Nil means the LINE default: true
+	// on 2.3, which is what has always shipped, and false on 2.4, matching the
+	// reference. Demo mode was being enabled on every install, which is not
+	// something a customer deployment should carry.
+	DemoMode *bool `yaml:"demo_mode,omitempty" default:"false on 2.4, true on 2.3"`
+
+	// TCPSettings overrides fields on the data-plane F5BigTcpSetting CR.
+	//
+	// A flat map rather than 54 config fields: the CR has 54 fields across bool,
+	// int and string, and enumerating them would be 54 rows nobody reads while
+	// still going stale the moment F5 adds one. Values are text because a config
+	// file and an environment variable can only carry text; they are coerced to
+	// the CR's types on render.
+	//
+	// Empty writes NO CR. The product manages its own default TCP profile, and
+	// emitting an empty one would fight it.
+	// WholeCluster is spec.wholeCluster. Nil means the LINE default: true on 2.3,
+	// false on 2.4 to match F5's reference.
+	//
+	// It moves WITH watch_namespaces and cannot be set independently of it: the
+	// product validates the pair and rejects wholeCluster=true alongside
+	// watchNamespaces=["All"] as an invalid product configuration, because that
+	// says "watch everything" twice in two contradictory ways.
+	WholeCluster *bool `yaml:"whole_cluster,omitempty" default:"false on 2.4, true on 2.3"`
+
+	// Hugepages optionally allocates hugepages on the worker pool via the
+	// OpenShift Node Tuning Operator.
+	//
+	// OFF by default, deliberately. Allocating hugepages changes the kernel
+	// command line, which means the Machine Config Operator DRAINS AND REBOOTS
+	// every matching worker, one at a time. That is not something to do because
+	// a default said so — a cluster that does not need it should never be
+	// rebooted for it. With it off, a deploymentSize that needs hugepages fails
+	// fast with a diagnosis naming this setting.
+	Hugepages *HugepagesCfg `yaml:"hugepages,omitempty"`
+
+	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
+
+	// TCPSettingsName is the F5BigTcpSetting to write. F5's reference cluster
+	// carries a hand-applied `sys-default-tcp`.
+	TCPSettingsName string `yaml:"tcp_settings_name,omitempty" default:"sys-default-tcp"`
 
 	// Advanced carries per-component environment passthrough for the 2.4
 	// CNEInstance's advanced.<component>.env[] lists (#175).
@@ -508,7 +766,7 @@ type BNKCfg struct {
 	// the `flp` phase to be up (roksbnkctl flp up) so the BNK install can point at
 	// the in-cluster F5 License Proxy. Empty → terraform default ("connected") →
 	// the JWT/connected path is unchanged. Rendered as license_mode.
-	LicenseMode string `yaml:"license_mode,omitempty"`
+	LicenseMode string `yaml:"license_mode,omitempty" default:"connected"`
 
 	// FLP holds settings for the optional F5 License Proxy phase. nil → FLP is not
 	// deployed (and license_mode must not be f5licenseproxy). The proxy's root CA
@@ -759,13 +1017,25 @@ type BNKGTMCfg struct {
 // encryption — like ibmcloud.api_key_b64); the raw value is rendered to
 // terraform.tfvars as bigip_password at apply time.
 type BNKCISCfg struct {
-	BigIPURL         string `yaml:"bigip_url,omitempty"`
-	BigIPUsername    string `yaml:"bigip_username,omitempty"`
+	// BigIPURL is the management address of the classic BIG-IP that the Container
+	// Ingress Services controller configures, e.g. "https://10.1.1.5". Empty
+	// disables CIS; BNK's own data plane does not need it.
+	BigIPURL string `yaml:"bigip_url,omitempty"`
+
+	// BigIPUsername is the account CIS authenticates to that BIG-IP as.
+	BigIPUsername string `yaml:"bigip_username,omitempty"`
+
+	// BigIPPasswordB64 is that account's password, base64-encoded — obfuscation,
+	// not encryption. Plaintext passwords in config.yaml are rejected at load.
 	BigIPPasswordB64 string `yaml:"bigip_password_b64,omitempty"`
 }
 
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 type BNKNetworkCfg struct {
+	// Zones is the per-availability-zone network mapping, in zone order — one
+	// entry per zone the cluster spans. Empty takes DefaultBNKNetworkZones, whose
+	// addressing is arbitrary but self-consistent; override it when any of those
+	// ranges collides with something the cluster can already route to.
 	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
 	// VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to
 	// its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2
@@ -823,6 +1093,8 @@ type StateS3Cfg struct {
 }
 
 type GatewayCfg struct {
+	// AppNamespace is the namespace the example application and its Gateway
+	// resources are created in. Empty takes the terraform default.
 	AppNamespace string `yaml:"app_namespace,omitempty"`
 
 	// ClassName is the GatewayClass name. Empty → the terraform default
@@ -837,12 +1109,29 @@ type GatewayCfg struct {
 	// programmed, apply succeeds).
 	ControllerName string `yaml:"controller_name,omitempty"`
 
-	BackendService     string   `yaml:"backend_service,omitempty"`
-	BackendPort        int      `yaml:"backend_port,omitempty"`
-	EgressMode         string   `yaml:"egress_mode,omitempty"` // snatpool | automap | both
-	ClientSubnetLocal  []string `yaml:"client_subnet_local,omitempty"`
+	// BackendService is the Kubernetes Service the example HTTPRoute forwards to.
+	BackendService string `yaml:"backend_service,omitempty"`
+
+	// BackendPort is the port on that Service.
+	BackendPort int `yaml:"backend_port,omitempty"`
+
+	// EgressMode selects how return traffic is source-addressed: "snatpool",
+	// "automap", or "both".
+	EgressMode string `yaml:"egress_mode,omitempty"`
+
+	// ClientSubnetLocal lists client CIDRs reachable on the same VPC as the
+	// cluster — routed directly rather than over the transit gateway.
+	ClientSubnetLocal []string `yaml:"client_subnet_local,omitempty"`
+
+	// ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway,
+	// e.g. the testing client VPC. Getting these wrong does not fail the apply:
+	// traffic simply never returns.
 	ClientSubnetRemote []string `yaml:"client_subnet_remote,omitempty"`
-	VXLANPort          int      `yaml:"vxlan_port,omitempty"`
+
+	// VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.
+	// Empty takes the terraform default; change it only if something else in the
+	// VPC already claims that port.
+	VXLANPort int `yaml:"vxlan_port,omitempty"`
 
 	// RouteExamples names extra route kinds to create WORKING examples of,
 	// alongside the HTTPRoute the gateway phase already creates. Empty (the
@@ -893,7 +1182,15 @@ type RegistryCfg struct {
 	// encryption (it dodges rejectPlaintextSecrets) — chmod 600, never commit.
 	// Both empty → anonymous push/pull. Templatable from the environment via
 	// `init --override-from-env` (ROKSBNKCTL_GENERIC_PASSWORD).
-	GenericUsername    string `yaml:"generic_username,omitempty"`
+	GenericUsername string `yaml:"generic_username,omitempty"`
+
+	// GenericPasswordB64 is that user's password or access token,
+	// base64-encoded — obfuscation, not encryption. REQUIRED whenever
+	// GenericUsername is set: the chart pull otherwise falls through to the
+	// literal username "unused" with the cluster's kube token, which is correct
+	// only for the in-cluster OpenShift registry, and an external registry
+	// answers `401: Bad Credentials`. `bnk up` refuses up front rather than
+	// discovering this part-way through an apply.
 	GenericPasswordB64 string `yaml:"generic_password_b64,omitempty"`
 
 	// GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the
@@ -954,18 +1251,46 @@ func (r *RegistryCfg) IncludeDepsOrDefault() bool {
 // BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field
 // order/names match the terraform cneinstance_network_zones object.
 type BNKZoneCfg struct {
-	ExtVLANCIDR    string `yaml:"ext_vlan_cidr"`
-	IntVLANCIDR    string `yaml:"int_vlan_cidr"`
-	IntSNATCIDR    string `yaml:"int_snat_cidr"`
-	IntVIPCIDR     string `yaml:"int_vip_cidr"`
+	// ExtVLANCIDR is the zone's EXTERNAL VLAN — the client side of the data
+	// plane, where traffic arrives. Overlay addressing internal to BNK: it does
+	// not have to exist in the VPC, but it must not collide with anything the
+	// cluster can route to.
+	ExtVLANCIDR string `yaml:"ext_vlan_cidr"`
+
+	// IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches
+	// the workloads it fronts.
+	IntVLANCIDR string `yaml:"int_vlan_cidr"`
+
+	// IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the
+	// return traffic comes back through TMM rather than routing around it.
+	IntSNATCIDR string `yaml:"int_snat_cidr"`
+
+	// IntVIPCIDR is the range virtual servers are allocated from on the internal
+	// side.
+	IntVIPCIDR string `yaml:"int_vip_cidr"`
+
+	// ExternalSelfIP is TMM's own address on the external VLAN. Must sit inside
+	// ExtVLANCIDR.
 	ExternalSelfIP string `yaml:"external_selfip"`
+
+	// InternalSelfIP is TMM's own address on the internal VLAN. Must sit inside
+	// IntVLANCIDR.
 	InternalSelfIP string `yaml:"internal_selfip"`
 }
 
 type TestCfg struct {
-	Throughput   ThroughputCfg   `yaml:"throughput,omitempty"`
+	// Throughput configures the iperf3 bandwidth probe.
+	Throughput ThroughputCfg `yaml:"throughput,omitempty"`
+
+	// Connectivity configures the reachability probes — the hosts `roksbnkctl
+	// test` tries to reach, and from where.
 	Connectivity ConnectivityCfg `yaml:"connectivity,omitempty"`
-	DNS          DNSCfg          `yaml:"dns,omitempty"`
+
+	// DNS configures the name-resolution probes, including which resolvers to
+	// ask. A disconnected cluster commonly resolves through its own forwarders,
+	// and a probe against a public resolver would report a failure that says
+	// nothing about the estate.
+	DNS DNSCfg `yaml:"dns,omitempty"`
 }
 
 // DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe
@@ -989,10 +1314,10 @@ type DNSCfg struct {
 }
 
 type ThroughputCfg struct {
-	Image       string `yaml:"image,omitempty"`        // default: networkstatic/iperf3:latest
-	Duration    int    `yaml:"duration,omitempty"`     // seconds; default 30
-	Streams     int    `yaml:"streams,omitempty"`      // parallel; default 8
-	DefaultMode string `yaml:"default_mode,omitempty"` // north-south | east-west
+	Image       string `yaml:"image,omitempty" default:"networkstatic/iperf3:latest"` // default: networkstatic/iperf3:latest
+	Duration    int    `yaml:"duration,omitempty" default:"30"`                       // seconds; default 30
+	Streams     int    `yaml:"streams,omitempty" default:"8"`                         // parallel; default 8
+	DefaultMode string `yaml:"default_mode,omitempty" default:"north-south"`          // north-south | east-west
 }
 
 type ConnectivityCfg struct {
@@ -1014,10 +1339,22 @@ type ConnectivityCfg struct {
 //
 // An empty Type (legacy / forgot-to-set) is treated as embedded.
 type TFSourceCfg struct {
-	Type string `yaml:"type"` // embedded | github | local
+	// Type selects where the Terraform comes from: "embedded" (the tree compiled
+	// into this binary — the default, and the only one guaranteed to match it),
+	// "github" (a released tree), or "local" (a path on disk, for testing a fork).
+	Type string `yaml:"type"`
+
+	// Repo is the owner/name to fetch from when Type is "github".
 	Repo string `yaml:"repo,omitempty"`
-	Ref  string `yaml:"ref,omitempty"`
-	Path string `yaml:"path,omitempty"` // populated for type=local
+
+	// Ref is the tag, branch or commit to fetch when Type is "github". Pin it to
+	// a tag: a branch re-resolves on every run, so two applies days apart can
+	// deploy different infrastructure from identical config.
+	Ref string `yaml:"ref,omitempty"`
+
+	// Path is the local directory holding the Terraform tree when Type is
+	// "local".
+	Path string `yaml:"path,omitempty"`
 }
 
 // COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR
@@ -1028,10 +1365,20 @@ type TFSourceCfg struct {
 // ibmcloud_cos_bucket_region) AND by the `registry` FAR-file resolver, so a
 // customer-owned COS bucket is used consistently across both.
 type COSCfg struct {
-	Instance string      `yaml:"instance,omitempty"`
-	Bucket   string      `yaml:"bucket,omitempty"`
-	Region   string      `yaml:"region,omitempty"`
-	Upload   []COSUpload `yaml:"upload,omitempty"`
+	// Instance is the IBM Cloud Object Storage service instance holding the
+	// bucket.
+	Instance string `yaml:"instance,omitempty"`
+
+	// Bucket is the bucket the FAR service-account credential is read from, for
+	// estates that stage it centrally rather than passing a local file.
+	Bucket string `yaml:"bucket,omitempty"`
+
+	// Region is the bucket's region, which need not match ibmcloud.region.
+	Region string `yaml:"region,omitempty"`
+
+	// Upload lists local files to place into that bucket before the phases that
+	// read them run.
+	Upload []COSUpload `yaml:"upload,omitempty"`
 }
 
 type COSUpload struct {

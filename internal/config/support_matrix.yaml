@@ -29,6 +29,25 @@ lines:
   #   Result: CNEInstance 18/18 conditions True, f5-tmm x3 at 5/5 Running,
   #   bnk-license Active.
   #
+  #   RE-VERIFIED 2026-08-23 against a cluster reproducing F5's approved
+  #   reference (staging-small-8c-20g): 6 x cx3d.8x20, OCP 4.21, deploymentSize
+  #   Tiny, tmmReplicas 3, wholeCluster false with watchNamespaces ["All"],
+  #   reference pod placement, TMM_IGNORE_GATEWAYS + DISABLE_HT +
+  #   ENABLE_K8S_ROUTES, GATEWAY_API_VERSION 1.5.0, demoMode off.
+  #
+  #   FIVE consecutive clean cluster-lifecycle CLI demo runs, each a cold start:
+  #   cluster up, bnk up, testing up + test, then bnk down + bnk up. Every
+  #   world-changing command status-checked — an earlier sequence of five
+  #   "passes" was discarded once the demos were made to fail on a failed phase.
+  #
+  #   The teardown namespace repair fired in ALL FIVE runs and in every
+  #   teardown between them, so the 2.4 finalizer deadlock is not intermittent:
+  #   without that repair a 2.4 cluster cannot be reinstalled into at all.
+  #
+  #   NOT covered by these five: the CI demo (docker-driven, needs its own
+  #   five), mTLS, multi-NIC, disconnected licensing, EgressGateway CRs, and the
+  #   contract boundary.
+  #
   #   The GATEWAY phase has since been exercised too, on the same cluster:
   #   `gateway up` applies Infra + GatewaySettings and both reach Accepted,
   #   ResolvedRefs and Programmed = True, with the CNEInstance still 18/18 and

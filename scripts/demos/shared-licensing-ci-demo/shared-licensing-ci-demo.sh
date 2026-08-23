@@ -64,7 +64,7 @@ REGISTRY_DOMAIN="${REGISTRY_DOMAIN:-}"                 # the private registry ho
 REGISTRY_ADMIN_PASSWORD="${REGISTRY_ADMIN_PASSWORD:-}" # its admin password
 REGISTRY_PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"
 
-RUNNER_TAG="${RUNNER_TAG:-v1.32.0}"
+RUNNER_TAG="${RUNNER_TAG:-v1.52.0}"
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 SVC_WS="${SVC_WS:-ci-svc}"                 # job 1's workspace — owns the proxy
 APP_WS="${APP_WS:-ci-app}"                 # job 2's workspace — owns BNK
@@ -131,7 +131,7 @@ teardown(){
   say "The private registry keeps its mirrored artifacts — it was built off-camera and is shared."
   say "To empty it too:  docker run --rm -v ${WORK}:/work --env-file <svc env> ${RUNNER} -w ${SVC_WS} registry delete --force"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — SHARED LICENSING AS A CI PIPELINE"

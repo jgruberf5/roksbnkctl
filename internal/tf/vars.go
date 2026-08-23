@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -466,6 +467,9 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 	if strings.TrimSpace(c.VPCCIDR) != "" {
 		fmt.Fprintf(w, "cluster_vpc_cidr = %q\n", strings.TrimSpace(c.VPCCIDR))
 	}
+	if c.WorkerFlavor != "" {
+		fmt.Fprintf(w, "roks_worker_flavor = %q\n", c.WorkerFlavor)
+	}
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.
@@ -482,6 +486,8 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	renderBNKLine(w, ws)
 	renderBNKAdvancedEnv(w, ws)
+	renderBNKTCPSettings(w, ws)
+	renderBNKHugepages(w, ws)
 	renderBNKNamespaces(w, ws)
 	renderBNKTrustedProfile(w, ws)
 	if err := renderBNKGTM(w, ws); err != nil {
@@ -634,6 +640,7 @@ func renderBNKCOS(w io.Writer, ws *config.Workspace) {
 // the modules' coalesce() lands on when the mirror record is absent or
 // partial, so it must render regardless of what the mirror section decides.
 func renderBNKDeployment(w io.Writer, ws *config.Workspace) {
+	renderBNK24Conformance(w, ws)
 	if ws.BNK.CNEInstanceSize != "" {
 		fmt.Fprintf(w, "cneinstance_deployment_size = %q\n", ws.BNK.CNEInstanceSize)
 	}
@@ -955,4 +962,133 @@ func renderBNKAdvancedEnv(w io.Writer, ws *config.Workspace) {
 		return
 	}
 	fmt.Fprint(w, b.String())
+}
+
+// renderBNK24Conformance emits the BNK 2.4 CNEInstance settings that bring this
+// tool's spec in line with F5's reference: TMM placement, replica count, watched
+// namespaces, the external BIG-IP controller, the Gateway API version, and demo
+// mode.
+//
+// Every one of these renders ONLY when set. An unset field emits nothing, the
+// terraform default (F5's reference value) applies, and a 2.3 workspace's tfvars
+// are byte-identical to what they were — which is the property the whole
+// dual-line build rests on.
+//
+// The terraform side is 2.4-gated internally, so a 2.3 workspace that sets one
+// of these renders the variable and terraform ignores it. That is deliberate:
+// refusing it here would mean a second place that has to know which line a
+// field belongs to, and the two would eventually disagree.
+func renderBNK24Conformance(w io.Writer, ws *config.Workspace) {
+	b := ws.BNK
+
+	if b.TMMReplicas != 0 {
+		fmt.Fprintf(w, "cneinstance_tmm_replicas = %d\n", b.TMMReplicas)
+	}
+	if len(b.WatchNamespaces) > 0 {
+		quoted := make([]string, 0, len(b.WatchNamespaces))
+		for _, n := range b.WatchNamespaces {
+			quoted = append(quoted, fmt.Sprintf("%q", n))
+		}
+		fmt.Fprintf(w, "cneinstance_watch_namespaces = [%s]\n", strings.Join(quoted, ", "))
+	}
+	if b.TMMAntiAffinity != nil {
+		fmt.Fprintf(w, "cneinstance_tmm_anti_affinity = %t\n", *b.TMMAntiAffinity)
+	}
+	if b.TMMAntiAffinityTopologyKey != "" {
+		fmt.Fprintf(w, "cneinstance_tmm_anti_affinity_topology_key = %q\n", b.TMMAntiAffinityTopologyKey)
+	}
+	if b.TMMZoneSpread != nil {
+		fmt.Fprintf(w, "cneinstance_tmm_zone_spread = %t\n", *b.TMMZoneSpread)
+	}
+	if b.TMMZoneTopologyKey != "" {
+		fmt.Fprintf(w, "cneinstance_tmm_zone_topology_key = %q\n", b.TMMZoneTopologyKey)
+	}
+	if b.TMMZoneMaxSkew != 0 {
+		fmt.Fprintf(w, "cneinstance_tmm_zone_max_skew = %d\n", b.TMMZoneMaxSkew)
+	}
+	if b.TMMZoneWhenUnsatisfiable != "" {
+		fmt.Fprintf(w, "cneinstance_tmm_zone_when_unsatisfiable = %q\n", b.TMMZoneWhenUnsatisfiable)
+	}
+	if b.TMMPodLabel != "" {
+		fmt.Fprintf(w, "cneinstance_tmm_pod_label = %q\n", b.TMMPodLabel)
+	}
+	if b.TMMRollingUpdate != nil {
+		fmt.Fprintf(w, "cneinstance_tmm_rolling_update = %t\n", *b.TMMRollingUpdate)
+	}
+	if b.ExternalBigIP != nil {
+		fmt.Fprintf(w, "cneinstance_external_bigip = %t\n", *b.ExternalBigIP)
+	}
+	if b.ExternalBigIPLoginSecret != "" {
+		fmt.Fprintf(w, "cneinstance_external_bigip_login_secret = %q\n", b.ExternalBigIPLoginSecret)
+	}
+	if b.ClusterIdentifier != "" {
+		fmt.Fprintf(w, "cneinstance_cluster_identifier = %q\n", b.ClusterIdentifier)
+	}
+	if b.GatewayAPIVersion != "" {
+		fmt.Fprintf(w, "cneinstance_gateway_api_version = %q\n", b.GatewayAPIVersion)
+	}
+	// demo_mode is a string on the terraform side precisely so "unset" is
+	// distinguishable from "false": unset takes the LINE default, and on 2.3 that
+	// default is true.
+	if b.DemoMode != nil {
+		fmt.Fprintf(w, "cneinstance_demo_mode = %q\n", strconv.FormatBool(*b.DemoMode))
+	}
+	if b.WholeCluster != nil {
+		fmt.Fprintf(w, "cneinstance_whole_cluster_override = %q\n", strconv.FormatBool(*b.WholeCluster))
+	}
+}
+
+// renderBNKTCPSettings emits the F5BigTcpSetting overrides.
+//
+// Nothing renders when unset, so a workspace that does not touch TCP tuning
+// plans exactly as it did before — and terraform writes no CR, leaving the
+// product's own default profile alone.
+func renderBNKTCPSettings(w io.Writer, ws *config.Workspace) {
+	if ws == nil {
+		return
+	}
+	if n := ws.BNK.TCPSettingsName; n != "" {
+		fmt.Fprintf(w, "cneinstance_tcp_settings_name = %q\n", n)
+	}
+	if len(ws.BNK.TCPSettings) == 0 {
+		return
+	}
+	names := make([]string, 0, len(ws.BNK.TCPSettings))
+	for k := range ws.BNK.TCPSettings {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString("cneinstance_tcp_settings = {\n")
+	for _, k := range names {
+		fmt.Fprintf(&b, "  %q = %q\n", k, ws.BNK.TCPSettings[k])
+	}
+	b.WriteString("}\n")
+	fmt.Fprint(w, b.String())
+}
+
+// renderBNKHugepages emits the worker-pool hugepage allocation.
+//
+// Nothing renders when unset, so no Tuned profile is written and no worker is
+// rebooted — which is the point: the default must never trigger a rolling
+// reboot of the pool.
+func renderBNKHugepages(w io.Writer, ws *config.Workspace) {
+	h := ws.BNK.Hugepages
+	if h == nil {
+		return
+	}
+	fmt.Fprintf(w, "cneinstance_hugepages = %t\n", h.Enabled)
+	if h.Size != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_size = %q\n", h.Size)
+	}
+	if h.Count != 0 {
+		fmt.Fprintf(w, "cneinstance_hugepages_count = %d\n", h.Count)
+	}
+	if h.NodeRole != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_node_role = %q\n", h.NodeRole)
+	}
+	if h.ProfileName != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_profile_name = %q\n", h.ProfileName)
+	}
 }

@@ -163,3 +163,51 @@ func canonicalAdvancedComponent(seg string) string {
 	}
 	return strings.ToLower(seg)
 }
+
+// ── F5BigTcpSetting passthrough ─────────────────────────────────────────────
+//
+//	ROKSBNKCTL_BNK_TCP_<FIELD>=<value>  → bnk.tcp_settings.<field>
+//
+// The field name keeps the CR's own camelCase where the caller supplies it;
+// an environment variable cannot carry case reliably, so the suffix is used
+// verbatim after the prefix. ROKSBNKCTL_BNK_TCP_idleTimeout and
+// ROKSBNKCTL_BNK_TCP_IDLETIMEOUT are therefore different fields — the CR is
+// case-sensitive and guessing a mapping would silently write a field the CR
+// ignores.
+const tcpSettingPrefix = "ROKSBNKCTL_BNK_TCP_"
+
+// TCPSettingOverrideNames reports what is SET in the environment, for the
+// surface guard — the field set belongs to the product, so it cannot be
+// enumerated ahead of time.
+func TCPSettingOverrideNames() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		if name := kv[:i]; strings.HasPrefix(name, tcpSettingPrefix) && len(name) > len(tcpSettingPrefix) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// OverrideTCPSettingsFromEnv fills bnk.tcp_settings from the computed family.
+func OverrideTCPSettingsFromEnv(ws *Workspace) []string {
+	var applied []string
+	for _, name := range TCPSettingOverrideNames() {
+		field := strings.TrimPrefix(name, tcpSettingPrefix)
+		v := envValue(name)
+		if field == "" || v == "" {
+			continue
+		}
+		if ws.BNK.TCPSettings == nil {
+			ws.BNK.TCPSettings = map[string]string{}
+		}
+		ws.BNK.TCPSettings[field] = v
+		applied = append(applied, fmt.Sprintf("bnk.tcp_settings.%s (%s)", field, name))
+	}
+	return applied
+}

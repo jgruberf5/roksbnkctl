@@ -1,5 +1,10 @@
 # Workspace config (config.yaml)
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 This chapter is the field-by-field reference for the per-workspace `config.yaml`. If you've read [Chapter 6 — Workspaces](./06-workspaces.md) you've seen the on-disk layout; this chapter zooms in on the YAML file that drives everything else (`init`, `up`, `down`, `cluster up`, the test suite, the SSH targets, the new execution backends).
 
 You don't usually edit this file by hand. `roksbnkctl init` generates it interactively; later runs read it. But because every other knob in the tool reads from here, it's worth knowing what every field means and what defaults apply when you leave one out.

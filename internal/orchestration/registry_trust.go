@@ -68,7 +68,12 @@ func ensureRegistryCATrust(ctx context.Context, cctx *config.Context, tfws *tf.W
 	// The licence proxy, when one is configured. Not Required: licensing failing later
 	// is bad, but it is recoverable and visible, whereas a wrong FLP endpoint is often
 	// deliberate during staged bring-up. Report it loudly instead of blocking.
-	if ws := cctx.Workspace; ws != nil && ws.BNK.FLP.External != nil {
+	// BNK.FLP is a POINTER, so `ws != nil` does not make `ws.BNK.FLP.External`
+	// safe — it dereferences nil whenever no FLP is configured. That is the
+	// normal case for a mirror-only disconnected install: images come from the
+	// private registry while licensing still goes direct. `bnk up` panicked with
+	// a SIGSEGV before it applied anything.
+	if ws := cctx.Workspace; ws != nil && ws.BNK.FLP != nil && ws.BNK.FLP.External != nil {
 		if u := strings.TrimSpace(ws.BNK.FLP.External.URL); u != "" {
 			h, p := k8s.SplitHostPort(u, "8443")
 			targets = append(targets, k8s.ProbeTarget{Label: "F5 License Proxy", Host: h, Port: p})

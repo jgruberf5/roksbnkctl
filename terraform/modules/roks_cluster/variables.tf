@@ -200,3 +200,25 @@ variable "cluster_vpc_default_sg_inbound_cidrs" {
     error_message = "cluster_vpc_default_sg_inbound_cidrs entries must be CIDRs (a bare address is missing its prefix — write 203.0.113.7/32, not 203.0.113.7)."
   }
 }
+
+variable "roks_worker_flavor" {
+  description = <<-EOT
+    Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects.
+
+    The auto-select only considers the bx2 family — its filter is
+    `^bx2-[0-9]+x[0-9]+$` — so any other profile family is unreachable without
+    naming it here. F5's approved reference cluster runs cx3d.8x20, which the
+    auto-select can never produce at any minimum.
+
+    The inner cluster module has always honoured this; nothing surfaced it, so no
+    config.yaml or environment override could reach it.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "bnk_line" {
+  description = "BNK release line (2.3 / 2.4), used to pick a VALIDATED default worker flavor per line."
+  type        = string
+  default     = "2.3"
+}

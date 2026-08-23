@@ -165,6 +165,9 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_TGW_JUMPHOST_CREATE` | `resources.tgw_jumphost.create` | bool — the optional testing jumphost. Defaults **off**, as the interview does. |
 | `ROKSBNKCTL_CLIENT_VPC_CREATE` | `resources.client_vpc.create` | bool — the testing client VPC. Defaults **off**; it consumes a Transit Gateway connection. |
 | `ROKSBNKCTL_CLIENT_VPC_NAME` | `resources.client_vpc.existing` | Adopt an existing client VPC instead of creating one — the env equivalent of the interview's *"Existing client VPC name"*. Required if you enable the jumphost without creating a VPC. |
+| `ROKSBNKCTL_CERT_MANAGER_CREATE` | `resources.cert_manager.create` | bool — set **`false`** to adopt the cert-manager the cluster already runs instead of installing one. An adopted customer cluster very often has one; without this, `bnk up` fails with `namespaces "cert-manager" already exists`, which names the collision but not the setting that resolves it. |
+| `ROKSBNKCTL_REGISTRY_COS_CREATE` | `resources.registry_cos.create` | bool — set `false` when the mirror registry's object storage already exists (or the registry is external, such as Artifactory or Harbor, and needs none). |
+| `ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE` | `resources.cluster_jumphosts.create` | bool — the per-cluster jumphosts. Defaults **off**. |
 | `ROKSBNKCTL_BIGIP_URL` | `bnk.cis.bigip_url` | verbatim |
 | `ROKSBNKCTL_BIGIP_USERNAME` | `bnk.cis.bigip_username` | verbatim |
 | `ROKSBNKCTL_BIGIP_PASSWORD` | `bnk.cis.bigip_password_b64` | raw, base64-encoded |

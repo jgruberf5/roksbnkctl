@@ -110,7 +110,7 @@ variable "openshift_cluster_version" {
     OCP silently (#178).
   EOT
   type        = string
-  default     = "4.20"
+  default     = "4.21"
 
   validation {
     # The suffix is appended by modules/roks_cluster/modules/cluster; supplying
@@ -465,9 +465,9 @@ variable "cneinstance_network_attachments" {
 # ============================================================
 
 variable "cneinstance_deployment_size" {
-  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here."
+  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here."
   type        = string
-  default     = "Small"
+  default     = ""
 }
 
 variable "cneinstance_gtm_url" {
@@ -1094,4 +1094,235 @@ variable "cneinstance_advanced_env" {
   EOT
   type        = map(map(string))
   default     = {}
+}
+
+# ── BNK 2.4 conformance with F5's reference CNEInstance ──────────────────────
+#
+# Everything below is emitted on 2.4 ONLY. The 2.3 spec is asserted
+# byte-identical to the previous release, so none of these may appear there.
+#
+# The defaults are F5's reference values, taken from the live 2.4 cluster
+# capture in /mnt/d/roksbnkctl-gap-2-3-to-2-4 — not invented. A field whose
+# default differs from the reference is a field that needs a reason.
+
+variable "cneinstance_tmm_replicas" {
+  description = "Number of f5-tmm data-plane replicas (2.4). Reference: 3."
+  type        = number
+  default     = 3
+}
+
+variable "cneinstance_watch_namespaces" {
+  description = "Namespaces the CNE controller watches (2.4). Reference: [\"All\"]."
+  type        = list(string)
+  default     = ["All"]
+}
+
+variable "cneinstance_tmm_anti_affinity" {
+  description = <<-EOT
+    Require f5-tmm pods onto DIFFERENT NODES (2.4).
+
+    On 2.4 this replaces the node-labeler: 2.4 removed the labeler (#171) and
+    `placement` is the mechanism that took over. Without it nothing stops two
+    TMMs landing on one node — which happened to work in verification only
+    because the scheduler spread them, not because anything required it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_tmm_zone_spread" {
+  description = "Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on."
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_tmm_rolling_update" {
+  description = <<-EOT
+    Pin TMM's rolling update to maxSurge 0 / maxUnavailable 1 (2.4).
+
+    Same shape as the cwc Multi-Attach deadlock: an unconstrained rolling update
+    on a workload holding a single-attach resource can wedge. Reference sets it.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "cneinstance_external_bigip" {
+  description = "Enable the external BIG-IP controller (2.4). Reference: true."
+  type        = bool
+  default     = false
+}
+
+variable "cneinstance_external_bigip_login_secret" {
+  description = "Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login."
+  type        = string
+  default     = "f5-bigip-ctlr-login"
+}
+
+variable "cneinstance_cluster_identifier" {
+  description = "CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name."
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_gateway_api_version" {
+  description = <<-EOT
+    GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0.
+
+    roksbnkctl previously set this nowhere, so the controller ran on whatever
+    the operator defaulted to — v1.4.1 on the verified cluster. The 2.4 EA guide
+    requires the 1.5 bundle for mTLS.
+  EOT
+  type        = string
+  default     = "1.5.0"
+}
+
+variable "cneinstance_demo_mode" {
+  description = <<-EOT
+    advanced.demoMode.enabled.
+
+    Empty string means "the line default": true on 2.3 (what has always
+    shipped) and FALSE on 2.4, matching F5's reference. Demo mode was being set
+    true on every install, which is not something a customer deployment should
+    carry. Set "true"/"false" to pin it explicitly.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "cneinstance_tmm_pod_label" {
+  description = "Value of the `app` label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm."
+  type        = string
+  default     = "f5-tmm"
+}
+
+variable "cneinstance_tmm_anti_affinity_topology_key" {
+  description = <<-EOT
+    Node label the TMM anti-affinity rule spreads across (2.4).
+
+    The IBM ROKS per-node label. Surfaced rather than hard-coded so a cluster
+    that labels its topology differently is still configurable — the assumption
+    the node-labeler used to bake in.
+  EOT
+  type        = string
+  default     = "kubernetes.io/hostname"
+}
+
+variable "cneinstance_tmm_zone_topology_key" {
+  description = "Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone."
+  type        = string
+  default     = "topology.kubernetes.io/zone"
+}
+
+variable "cneinstance_tmm_zone_max_skew" {
+  description = "maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1."
+  type        = number
+  default     = 1
+}
+
+variable "cneinstance_tmm_zone_when_unsatisfiable" {
+  description = "whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule."
+  type        = string
+  default     = "DoNotSchedule"
+  validation {
+    condition     = contains(["DoNotSchedule", "ScheduleAnyway"], var.cneinstance_tmm_zone_when_unsatisfiable)
+    error_message = "cneinstance_tmm_zone_when_unsatisfiable must be DoNotSchedule or ScheduleAnyway."
+  }
+}
+
+variable "cneinstance_tcp_settings" {
+  description = <<-EOT
+    F5BigTcpSetting field overrides, as a flat map of field name to value.
+
+    The CR has 54 fields across bool, int and string. Surfacing each as its own
+    config field would be 54 fields nobody reads; a map keeps the whole surface
+    reachable and lets F5 add fields between releases without a code change here.
+
+    Values are strings and coerced on the way out: "1500" renders as a number,
+    "true" as a bool, anything else as a string. That is because a config file
+    and an environment variable can only carry text, while the CR is typed.
+
+    Empty renders NO CR at all. That is deliberate — the product creates its own
+    default TCP profile, and emitting an empty one would fight it.
+  EOT
+  type        = map(string)
+  default     = {}
+}
+
+variable "cneinstance_tcp_settings_name" {
+  description = "Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp."
+  type        = string
+  default     = "sys-default-tcp"
+}
+
+variable "cneinstance_whole_cluster_override" {
+  description = <<-EOT
+    spec.wholeCluster, as a tri-state.
+
+    Empty means the LINE default: true on 2.3, which is what has always shipped,
+    and FALSE on 2.4, matching F5's reference. "true"/"false" pins it.
+
+    This has to move with watchNamespaces. The two are validated together by the
+    product — `wholeCluster: true` with `watchNamespaces: ["All"]` is rejected as
+    "Invalid product configuration, please check WholeCluster, WatchNamespaces
+    and GatewayAPI settings", because saying "watch everything" twice in two
+    different ways is a contradiction rather than emphasis.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "roks_worker_flavor" {
+  description = <<-EOT
+    Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects.
+
+    The auto-select only considers the bx2 family — its filter is
+    `^bx2-[0-9]+x[0-9]+$` — so any other profile family is unreachable without
+    naming it here. F5's approved reference cluster runs cx3d.8x20, which the
+    auto-select can never produce at any minimum.
+
+    The inner cluster module has always honoured this; nothing surfaced it, so no
+    config.yaml or environment override could reach it.
+  EOT
+  type        = string
+  default     = ""
+}
+
+# ── hugepages on the worker pool ─────────────────────────────────────────────
+
+variable "cneinstance_hugepages" {
+  description = <<-EOT
+    Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator.
+
+    OFF by default. Turning it on sets a bootloader kernel argument, which makes
+    the Machine Config Operator DRAIN AND REBOOT every matching worker, one at a
+    time. That is a maintenance event, not a configuration change, and is not
+    something a default should decide.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "cneinstance_hugepages_size" {
+  description = "Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size."
+  type        = string
+  default     = "2M"
+}
+
+variable "cneinstance_hugepages_count" {
+  description = "Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request."
+  type        = number
+  default     = 2048
+}
+
+variable "cneinstance_hugepages_node_role" {
+  description = "machineconfiguration.openshift.io/role the Tuned profile applies to."
+  type        = string
+  default     = "worker"
+}
+
+variable "cneinstance_hugepages_profile_name" {
+  description = "Name of the Tuned profile and CR."
+  type        = string
+  default     = "bnk-hugepages"
 }

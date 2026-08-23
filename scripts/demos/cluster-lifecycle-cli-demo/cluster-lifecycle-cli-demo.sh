@@ -68,10 +68,10 @@ teardown(){
   secret "$IBMCLOUD_API_KEY" "${FORGE_PASS:-}"
   banner "TEARDOWN — cluster-lifecycle CLI demo"
   say "One 'down' removes every phase of workspace '${WS}' — testing, BNK, and the cluster itself."
-  run "$ROKSBNKCTL_BIN" -w "$WS" down --auto
+  must "$ROKSBNKCTL_BIN" -w "$WS" down --auto
   ok "teardown complete — cluster ${CLUSTER_NAME} and every phase of workspace '${WS}' are gone"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # Source .env when EITHER the API key or the Forge credentials are missing.
 # Keying only on IBMCLOUD_API_KEY meant that exporting the key in your shell made
@@ -106,7 +106,7 @@ The story, in six phases:
   4. ${B}bnk up${N} — BIG-IP Next for Kubernetes + its licence.
   5. ${B}testing up${N} + ${B}test${N} — jump hosts, then the probes.
   6. ${B}bnk down${N} then ${B}bnk up${N} — swap BNK, the cluster never moves.
-Then the demo STOPS, leaving everything up so you can explore. `teardown` removes it.
+Then the demo STOPS, leaving everything up so you can explore. \`teardown\` removes it.
 EOF
 # These demos are RECORDED: register every credential so banner/say/ok/show and
 # show_file mask it (and its base64 form) as ***REDACTED*** before it hits the screen.
@@ -144,8 +144,8 @@ cluster:
   workers_per_zone: ${WORKERS_PER_ZONE}
 resources:
   # The testing phase provisions ONLY these toggles, and they now default OFF
-  # (matching the `init` interview). Phase 5/6 runs `testing up` + `test`, and
-  # `test` runs its probes FROM a jumphost — so the demo must ask for one
+  # (matching the \`init\` interview). Phase 5/6 runs \`testing up\` + \`test\`, and
+  # \`test\` runs its probes FROM a jumphost — so the demo must ask for one
   # explicitly or the testing phase provisions nothing.
   tgw_jumphost: { create: true }
   client_vpc:   { create: true }   # the jumphost lives in it
@@ -154,7 +154,7 @@ bnk:
   far_repo_url: ${FAR_REPO_URL}
 YAML
 show_file "$SEED"
-run "$ROKSBNKCTL_BIN" -w "$WS" init --config-file "$SEED" --override-from-env
+must "$ROKSBNKCTL_BIN" -w "$WS" init --config-file "$SEED" --override-from-env
 ok "workspace '$WS' seeded — nothing provisioned yet"
 endphase P1
 
@@ -163,7 +163,7 @@ pause; phase P2 "PHASE 2/6  —  cluster up: build the ROKS cluster"   # LONG
 say "A full hands-off build would just be 'roksbnkctl up'. Here we drive each phase on its own,"
 say "starting with the cluster: VPC, subnets, gateways, and ${WORKERS_PER_ZONE} worker(s) per zone across 3 AZs."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" cluster up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" cluster up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" cluster config
 ok "ROKS cluster '$CLUSTER_NAME' is up"
@@ -189,7 +189,7 @@ pause; phase P4 "PHASE 4/6  —  bnk up: install BIG-IP Next for Kubernetes"   #
 say "The BNK phase installs BIG-IP Next for Kubernetes ${BNK_VERSION} and its licence onto the"
 say "cluster from phase 2 — cert-manager, the operators, the CNEInstance and the dataplane."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 run "$ROKSBNKCTL_BIN" -w "$WS" k get licenses.k8s.f5net.com -A
@@ -201,12 +201,12 @@ pause; phase P5 "PHASE 5/6  —  testing up + test: the probe framework"   # LON
 say "The testing phase stands up the jump host(s) the connectivity / DNS / throughput probes run"
 say "from. It is its own phase, so it builds and tears down independently of BNK."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" testing up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" testing up --auto
 end_long
 for h in $TEST_HOSTS; do
-  run "$ROKSBNKCTL_BIN" -w "$WS" test hosts add "$h"
+  must "$ROKSBNKCTL_BIN" -w "$WS" test hosts add "$h"
 done
-run "$ROKSBNKCTL_BIN" -w "$WS" test
+must "$ROKSBNKCTL_BIN" -w "$WS" test
 ok "probes ran against: $TEST_HOSTS"
 endphase P5
 
@@ -215,7 +215,7 @@ pause; phase P6 "PHASE 6/6  —  bnk down then bnk up: swap BNK, keep the cluste
 say "Down JUST the BNK phase. The cluster and the testing framework keep running — this phase"
 say "independence is the whole point of the demo."
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk down --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk down --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 WS_CONFIG="${ROKSBNKCTL_HOME:-$HOME/.roksbnkctl}/$WS/config.yaml"
@@ -229,7 +229,7 @@ else
   say "bnk.manifest_version in the workspace config first — set BNK_VERSION_REBUILD to see that here."
 fi
 begin_long
-run "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
+must "$ROKSBNKCTL_BIN" -w "$WS" bnk up --auto
 end_long
 run "$ROKSBNKCTL_BIN" -w "$WS" k get pods -n f5-bnk
 ok "BNK removed and reinstalled — no re-provisioning, the cluster never moved"

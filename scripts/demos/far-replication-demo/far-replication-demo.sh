@@ -87,7 +87,7 @@ teardown(){
   fi
   ok "teardown complete — the registry host itself was left untouched (this demo never built it)"
 }
-[[ "${1:-}" == "teardown" ]] && { teardown; exit 0; }
+[[ "${1:-}" == "teardown" ]] && { teardown; exit $?; }
 
 # ============================ Phase 0: preflight =============================
 banner "roksbnkctl — MIRROR THE F5 ARTIFACT REPOSITORY INTO A PRIVATE REGISTRY"

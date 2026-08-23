@@ -1,5 +1,10 @@
 # Execution backends: local, docker, k8s, ssh
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 `roksbnkctl` runs a handful of external tools as part of its job — `ibmcloud`, `terraform`, `iperf3`, eventually `dig`-equivalents and others. By default each tool runs as a child process on your laptop. That's fine for some tools and wrong for others: `iperf3` from your laptop measures your laptop's internet uplink, not the cluster's bandwidth. Likewise, **terraform via docker** (the `--backend docker` mode covered below) lets you pin a frozen tool version for CI reproducibility without installing it on the host.
 
 The execution-backend system lets you pick **where** each tool runs without changing the surface command. The same `roksbnkctl ibmcloud ks cluster ls` invocation can run as a local process, inside a vendored container, inside the cluster, or on a remote SSH host — selected by a flag or a per-tool default in your workspace config.

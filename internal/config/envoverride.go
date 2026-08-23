@@ -35,11 +35,38 @@ import (
 //	ROKSBNKCTL_CLUSTER_NAME         → cluster.name
 //	ROKSBNKCTL_CLUSTER_CREATE       → cluster.create (bool: true/false/1/0)
 //	ROKSBNKCTL_CNEINSTANCE_SIZE     → bnk.cneinstance_size (Tiny/Small/Medium/…;
+//	ROKSBNKCTL_WORKER_FLAVOR        → cluster.worker_flavor (exact profile, e.g.
+//	                                  cx3d.8x20; empty auto-selects from bx2 only)
 //	                                  the legal set is a property of the manifest,
 //	                                  so it is deliberately not validated here)
 //	ROKSBNKCTL_GATEWAY_API_MTLS     → bnk.gateway_api_mtls (bool) — install the
 //	                                  Gateway API bundle 2.4 needs for mTLS; off by
 //	                                  default, ignored on 2.3
+//
+// BNK 2.4 conformance with F5's reference CNEInstance. All 2.4-only; unset means
+// the terraform default, which is F5's reference value.
+//
+//	ROKSBNKCTL_TMM_REPLICAS                    → bnk.tmm_replicas (int)
+//	ROKSBNKCTL_WATCH_NAMESPACES                → bnk.watch_namespaces (comma-separated)
+//	ROKSBNKCTL_TMM_ANTI_AFFINITY               → bnk.tmm_anti_affinity (bool)
+//	ROKSBNKCTL_TMM_ANTI_AFFINITY_TOPOLOGY_KEY  → bnk.tmm_anti_affinity_topology_key
+//	ROKSBNKCTL_TMM_ZONE_SPREAD                 → bnk.tmm_zone_spread (bool)
+//	ROKSBNKCTL_TMM_ZONE_TOPOLOGY_KEY           → bnk.tmm_zone_topology_key
+//	ROKSBNKCTL_TMM_ZONE_MAX_SKEW               → bnk.tmm_zone_max_skew (int)
+//	ROKSBNKCTL_TMM_ZONE_WHEN_UNSATISFIABLE     → bnk.tmm_zone_when_unsatisfiable
+//	ROKSBNKCTL_TMM_POD_LABEL                   → bnk.tmm_pod_label
+//	ROKSBNKCTL_TMM_ROLLING_UPDATE              → bnk.tmm_rolling_update (bool)
+//	ROKSBNKCTL_EXTERNAL_BIGIP                  → bnk.external_bigip (bool)
+//	ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET     → bnk.external_bigip_login_secret
+//	ROKSBNKCTL_CLUSTER_IDENTIFIER              → bnk.cluster_identifier
+//	ROKSBNKCTL_GATEWAY_API_VERSION             → bnk.gateway_api_version
+//	ROKSBNKCTL_DEMO_MODE                       → bnk.demo_mode (bool)
+//	ROKSBNKCTL_WHOLE_CLUSTER                   → bnk.whole_cluster (bool)
+//	ROKSBNKCTL_HUGEPAGES                       → bnk.hugepages.enabled (bool) —
+//	                                             allocates hugepages on the worker
+//	                                             pool. REBOOTS WORKERS.
+//	ROKSBNKCTL_HUGEPAGES_SIZE                  → bnk.hugepages.size (2M / 1G)
+//	ROKSBNKCTL_HUGEPAGES_COUNT                 → bnk.hugepages.count (per node)
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
@@ -58,6 +85,12 @@ import (
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_TESTING_VPC_NAME     → resources.testing_client_vpc_name (name the created testing client VPC)
 //	ROKSBNKCTL_TRANSIT_GATEWAY_NAME → resources.transit_gateway.existing (create:false — adopt a shared TGW by name or id)
+//	ROKSBNKCTL_CERT_MANAGER_CREATE  → resources.cert_manager.create (bool) — set
+//	                                  false to ADOPT a cert-manager the cluster
+//	                                  already runs, which an adopted cluster very
+//	                                  often does
+//	ROKSBNKCTL_REGISTRY_COS_CREATE  → resources.registry_cos.create (bool)
+//	ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE → resources.cluster_jumphosts.create (bool)
 //	ROKSBNKCTL_BNKFORGE_CA_B64      → bnkforge.ca_b64 (PEM CA pinning the Forge server)
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
@@ -143,6 +176,131 @@ func OverrideFromEnv(ws *Workspace) []string {
 			applied = append(applied, "bnk.gateway_api_mtls (ROKSBNKCTL_GATEWAY_API_MTLS)")
 		}
 	}
+	// ── BNK 2.4 conformance with F5's reference CNEInstance ──────────────────
+	//
+	// Each is unset-by-default: nothing renders unless the operator asks, and the
+	// terraform default (F5's reference value) applies otherwise.
+	for _, o := range []struct {
+		env string
+		set func(string)
+	}{
+		{"ROKSBNKCTL_TMM_ANTI_AFFINITY_TOPOLOGY_KEY", func(v string) { ws.BNK.TMMAntiAffinityTopologyKey = v }},
+		{"ROKSBNKCTL_TMM_ZONE_TOPOLOGY_KEY", func(v string) { ws.BNK.TMMZoneTopologyKey = v }},
+		{"ROKSBNKCTL_TMM_ZONE_WHEN_UNSATISFIABLE", func(v string) { ws.BNK.TMMZoneWhenUnsatisfiable = v }},
+		{"ROKSBNKCTL_TMM_POD_LABEL", func(v string) { ws.BNK.TMMPodLabel = v }},
+		{"ROKSBNKCTL_HUGEPAGES_SIZE", func(v string) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Size = v
+		}},
+		{"ROKSBNKCTL_HUGEPAGES_SIZE", func(v string) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Size = v
+		}},
+		{"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET", func(v string) { ws.BNK.ExternalBigIPLoginSecret = v }},
+		{"ROKSBNKCTL_CLUSTER_IDENTIFIER", func(v string) { ws.BNK.ClusterIdentifier = v }},
+		{"ROKSBNKCTL_GATEWAY_API_VERSION", func(v string) { ws.BNK.GatewayAPIVersion = v }},
+	} {
+		if v := envValue(o.env); v != "" {
+			o.set(v)
+			applied = append(applied, strings.ToLower(strings.TrimPrefix(o.env, "ROKSBNKCTL_"))+" ("+o.env+")")
+		}
+	}
+	for _, o := range []struct {
+		env string
+		set func(int)
+	}{
+		{"ROKSBNKCTL_TMM_REPLICAS", func(n int) { ws.BNK.TMMReplicas = n }},
+		{"ROKSBNKCTL_TMM_ZONE_MAX_SKEW", func(n int) { ws.BNK.TMMZoneMaxSkew = n }},
+		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Count = n
+		}},
+		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Count = n
+		}},
+	} {
+		if v := envValue(o.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				o.set(n)
+				applied = append(applied, strings.ToLower(strings.TrimPrefix(o.env, "ROKSBNKCTL_"))+" ("+o.env+")")
+			}
+		}
+	}
+	// Pointer-valued, so "explicitly false" is distinguishable from "unset" —
+	// which matters most for demo_mode, where unset means the LINE default and
+	// that default is true on 2.3.
+	for _, o := range []struct {
+		env string
+		set func(*bool)
+	}{
+		{"ROKSBNKCTL_TMM_ANTI_AFFINITY", func(b *bool) { ws.BNK.TMMAntiAffinity = b }},
+		{"ROKSBNKCTL_TMM_ZONE_SPREAD", func(b *bool) { ws.BNK.TMMZoneSpread = b }},
+		{"ROKSBNKCTL_TMM_ROLLING_UPDATE", func(b *bool) { ws.BNK.TMMRollingUpdate = b }},
+		{"ROKSBNKCTL_EXTERNAL_BIGIP", func(b *bool) { ws.BNK.ExternalBigIP = b }},
+		{"ROKSBNKCTL_DEMO_MODE", func(b *bool) { ws.BNK.DemoMode = b }},
+		{"ROKSBNKCTL_WHOLE_CLUSTER", func(b *bool) { ws.BNK.WholeCluster = b }},
+		{"ROKSBNKCTL_HUGEPAGES", func(b *bool) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Enabled = *b
+		}},
+	} {
+		if v := envValue(o.env); v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				o.set(&b)
+				applied = append(applied, strings.ToLower(strings.TrimPrefix(o.env, "ROKSBNKCTL_"))+" ("+o.env+")")
+			}
+		}
+	}
+	// Adopt-what-exists toggles. An adopted customer cluster very often already
+	// runs cert-manager, and without a way to say so from the environment the CI
+	// path — which takes its whole configuration from -e variables — cannot
+	// install onto one at all.
+	for _, o := range []struct {
+		env, path string
+		set       func(bool)
+	}{
+		{"ROKSBNKCTL_CERT_MANAGER_CREATE", "resources.cert_manager.create", func(b bool) { ws.Resources.CertManager.Create = b }},
+		{"ROKSBNKCTL_REGISTRY_COS_CREATE", "resources.registry_cos.create", func(b bool) { ws.Resources.RegistryCOS.Create = b }},
+		{"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE", "resources.cluster_jumphosts.create", func(b bool) { ws.Resources.ClusterJumphosts.Create = b }},
+	} {
+		if v := envValue(o.env); v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				// env-only init starts from an empty Workspace, so Resources
+				// is nil here far more often than on the file-loaded path.
+				if ws.Resources == nil {
+					ws.Resources = &ResourcesCfg{}
+				}
+				o.set(b)
+				applied = append(applied, o.path+" ("+o.env+")")
+			}
+		}
+	}
+
+	if v := envValue("ROKSBNKCTL_WATCH_NAMESPACES"); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				out = append(out, t)
+			}
+		}
+		if len(out) > 0 {
+			ws.BNK.WatchNamespaces = out
+			applied = append(applied, "bnk.watch_namespaces (ROKSBNKCTL_WATCH_NAMESPACES)")
+		}
+	}
+
 	if v := envValue("ROKSBNKCTL_WORKERS_PER_ZONE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			ws.Cluster.WorkersPerZone = n
@@ -300,6 +458,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 	applied = append(applied, overrideNetworkZonesFromEnv(ws)...)
 	// Per-component env passthrough for the 2.4 CNEInstance (#175).
 	applied = append(applied, OverrideAdvancedEnvFromEnv(ws)...)
+	applied = append(applied, OverrideTCPSettingsFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
@@ -682,6 +841,7 @@ var stringOverrides = []stringOverride{
 	// already; without a matching override it cannot reach a blueprint, because
 	// `init --non-interactive` builds config.yaml from the environment alone.
 	{"ROKSBNKCTL_CNEINSTANCE_SIZE", "bnk.cneinstance_size", func(ws *Workspace, v string) { ws.BNK.CNEInstanceSize = v }},
+	{"ROKSBNKCTL_WORKER_FLAVOR", "cluster.worker_flavor", func(ws *Workspace, v string) { ws.Cluster.WorkerFlavor = v }},
 	{"ROKSBNKCTL_FLO_NAMESPACE", "bnk.flo_namespace", func(ws *Workspace, v string) { ws.BNK.FLONamespace = v }},
 	{"ROKSBNKCTL_FLO_UTILS_NAMESPACE", "bnk.flo_utils_namespace", func(ws *Workspace, v string) { ws.BNK.FLOUtilsNamespace = v }},
 	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
@@ -776,6 +936,29 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_FAR_AUTH_FILE",
 	"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE",
 	"ROKSBNKCTL_GATEWAY_API_MTLS",
+	// BNK 2.4 conformance with F5's reference CNEInstance.
+	"ROKSBNKCTL_CLUSTER_IDENTIFIER",
+	"ROKSBNKCTL_DEMO_MODE",
+	"ROKSBNKCTL_WHOLE_CLUSTER",
+	"ROKSBNKCTL_CERT_MANAGER_CREATE",
+	"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE",
+	"ROKSBNKCTL_REGISTRY_COS_CREATE",
+	"ROKSBNKCTL_HUGEPAGES",
+	"ROKSBNKCTL_HUGEPAGES_COUNT",
+	"ROKSBNKCTL_HUGEPAGES_SIZE",
+	"ROKSBNKCTL_EXTERNAL_BIGIP",
+	"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET",
+	"ROKSBNKCTL_GATEWAY_API_VERSION",
+	"ROKSBNKCTL_TMM_ANTI_AFFINITY",
+	"ROKSBNKCTL_TMM_ANTI_AFFINITY_TOPOLOGY_KEY",
+	"ROKSBNKCTL_TMM_POD_LABEL",
+	"ROKSBNKCTL_TMM_REPLICAS",
+	"ROKSBNKCTL_TMM_ROLLING_UPDATE",
+	"ROKSBNKCTL_TMM_ZONE_MAX_SKEW",
+	"ROKSBNKCTL_TMM_ZONE_SPREAD",
+	"ROKSBNKCTL_TMM_ZONE_TOPOLOGY_KEY",
+	"ROKSBNKCTL_TMM_ZONE_WHEN_UNSATISFIABLE",
+	"ROKSBNKCTL_WATCH_NAMESPACES",
 	"ROKSBNKCTL_FLP_MODE",
 	"ROKSBNKCTL_FLP_NAMESPACE",
 	"ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB",

@@ -4,6 +4,199 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Added
+
+- **56 of the reference's blank descriptions filled** (#181): every top-level
+  config section, the seven `resources.*` create/adopt toggles, the six per-zone
+  network-mapping fields, and the `cluster`, `bnk`, `ibmcloud`, `tf_source`,
+  `test` and `gateway` blocks, the registry credentials and the COS block. 75 → 19, and the ratchet ceiling moves down with
+  each step.
+
+  These were chosen by what a wrong answer costs, not by what was quickest. Some
+  examples: `bnk.manifest_version` is the single field that selects the 2.3 or
+  2.4 model, and had no description at all; `resources.cert_manager` now says
+  why you would set `create: false`, what fails if you do not, and that adopting
+  also protects the customer's cert-manager from `bnk down`;
+  `gateway.client_subnet_remote` records that getting it wrong does not fail the
+  apply — traffic simply never returns; and `tf_source.ref` records that pinning
+  a branch lets two applies days apart deploy different infrastructure from
+  identical config.
+
+- **The undocumented-field ratchet was grading the wrong column** (#181). It
+  hard-coded column index 5 and read `required`, which is never blank — so it
+  reported **0 undocumented fields out of 215** and had been passing vacuously
+  ever since the table gained a `default` column. The true figure is **75 of
+  215**. It now finds `description` from the header row and refuses to run at
+  all if it cannot, so the next column added cannot blind it again.
+
+- **A mirror we could never authenticate to is refused before the apply, not
+  fifteen minutes into it.** The chart pull picks its credential by falling
+  through a chain whose last arm uses the literal username `unused` with the
+  cluster's kube token. That arm is right for the in-cluster OpenShift registry
+  and never right for an external one, so a `generic` registry configured with a
+  username but no password reached Artifactory as `unused` and was answered
+  `401: Bad Credentials` — after flo was installed and IAM trusted profiles were
+  created, naming neither the missing setting nor the file it lives in.
+
+  `bnk up` now refuses at the start, naming both
+  `registry.generic_password_b64` and `ROKSBNKCTL_GENERIC_PASSWORD`. The rule is
+  narrow — a username with no password — so anonymous mirrors and the in-cluster
+  registry path, which set neither, are untouched.
+
+- **`resources.cert_manager: {create: false}` now actually skips cert-manager.**
+  It never did. `install_cert_manager` was declared in `variables.tf`, rendered
+  into `terraform.tfvars` by the Go side, and carried in
+  `terraform.tfvars.example` — and **no terraform anywhere read it**. The module
+  was gated on `deploy_cert_manager`, an unrelated internal bnk-phase override,
+  so the operator's setting was inert and `bnk up` created the namespace
+  regardless. On an adopted cluster that already ran cert-manager the apply died
+  on `namespaces "cert-manager" already exists` with no way to proceed.
+
+  Verified by evaluated plan rather than `validate`, in both directions: 35
+  resources with `install_cert_manager=true` including all three cert-manager
+  resources, 32 with `false` and none of them.
+
+  Gating it also means the inner module's destroy provisioner —
+  `kubectl delete namespace cert-manager` — is `count=0` when adopting, so
+  `bnk down` can no longer delete a cert-manager we did not install, or the
+  certificates it had issued.
+
+  This is the second setting found inert end to end, after
+  `cneinstance_advanced_env`. `TestEveryRootVariableIsRead` now fails the build
+  for any root variable no terraform reads, which catches the class on the commit
+  that introduces it. It found exactly one deliberate exception —
+  `cluster_network_mode`, whose HCL copy exists only for its validation block —
+  which is recorded with its reason.
+
+- **Adopting a cluster that already has cert-manager is now expressible from CI**
+  (#186). `resources.cert_manager`, `resources.registry_cos` and
+  `resources.cluster_jumphosts` had no environment override, so a container-driven
+  install — which takes its entire configuration from `-e` variables, having no
+  shell in which to write a `config.yaml` — could say "adopt this cluster" but not
+  "adopt what is already *on* it". The install stopped at
+  `namespaces "cert-manager" already exists`, a message that names the collision
+  but not the setting that clears it.
+
+  This is the customer-shaped path: an existing transit gateway, VPC and ROKS
+  cluster, with OpenShift's cert-manager add-on already present. Adds
+  `ROKSBNKCTL_CERT_MANAGER_CREATE`, `ROKSBNKCTL_REGISTRY_COS_CREATE` and
+  `ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE` across all five layers.
+
+  Two defects were found while testing the change rather than after it. The new
+  overrides dereferenced `ws.Resources` with no nil guard, which is a **SIGSEGV**
+  on exactly the env-only path they exist for, where nothing has populated it.
+  And `TestRunInitFromEnv_AdvancedFields` read the ambient environment: an
+  operator with any `ROKSBNKCTL_*` exported in their own shell — which is the
+  normal state while driving an install — got a failure unrelated to their
+  change. Both are covered by tests that reproduce them.
+
+- **BNK 2.4 now conforms to F5's reference CNEInstance.** Comparing our rendered
+  spec against F5's own live 2.4 capture found four keys we never emitted at all:
+  `tmmReplicas`, `watchNamespaces`, `placement` and `externalBigip`.
+
+  `placement` is the important one. 2.4 removed the node-labeler and pod
+  placement is the mechanism that replaced it — but nothing added the
+  replacement, so 2.4 shipped with **neither**. TMM landing one-per-node and
+  spread across zones was the scheduler's discretion rather than a requirement;
+  verification passed because the scheduler happened to spread them.
+
+  Also now emitted on 2.4: the three TMM settings F5 sets and we did not
+  (`TMM_IGNORE_GATEWAYS`, `DISABLE_HT` to keep hyperthread siblings off TMM's
+  pinned cores, `ENABLE_K8S_ROUTES`), the TMM rolling-update policy
+  (`maxSurge 0 / maxUnavailable 1` — the same shape as the cwc Multi-Attach
+  deadlock), and `GATEWAY_API_VERSION`, which was set **nowhere**.
+
+  A caveat on that last one, verified on a live 2.4 cluster rather than assumed:
+  the value now propagates correctly through both layers we can reach — the
+  CNEInstance carries `1.5.0` (byte-identical to F5's reference capture) and FLO
+  copies it onto the CNEController CR — but the controller **Deployment** F5's
+  operator then generates from that CR runs `v1.3.0` regardless. The last hop is
+  F5's to make. We emit what the reference emits; the running controller does not
+  yet reflect it, and no setting on our side changes that. Tracked in #185.
+
+  Every setting is a `config.yaml` field, a `ROKSBNKCTL_*` override, and a row in
+  the generated configuration reference with its line and default. The placement
+  topology keys are IBM ROKS node labels and are **settings, not constants** —
+  hard-coding them is the assumption the node-labeler baked in.
+
+  Defaults are F5's reference values, not invented ones, and a committed copy of
+  their reference spec is now a test fixture: drift from it fails.
+
+- **`cluster.worker_flavor`** now reaches terraform. The inner cluster module has
+  always honoured an explicit `worker_flavor`, but nothing surfaced it — no root
+  variable, no config field, no override — so it was unreachable, the same
+  declared-but-unwired shape as `cneinstance_advanced_env`.
+
+  It matters because the auto-select filters on `^bx2-[0-9]+x[0-9]+$`: **only the
+  bx2 family**. F5's approved reference cluster runs `cx3d.8x20`, which no
+  combination of vCPU and memory minimums can ever produce.
+
+- **`deploymentSize` defaults to `Tiny` on 2.4**, matching F5's reference and this
+  tool's own variable description — which said *"Tiny is what the BNK 2.4 install
+  guide uses"* while the code defaulted to `Small` on both lines.
+
+  Not cosmetic: `Small` makes TMM request 4Gi of `hugepages-2Mi`, and a stock
+  ROKS worker reports `hugepages-2Mi=0` — including F5's reference cluster, whose
+  TMM pods request none and run fine on `Tiny`. Demo mode had been hiding it by
+  dropping the hugepage request; turning demo mode off to conform exposed three
+  TMM pods Pending on *"Insufficient hugepages-2Mi"*. Two settings that each
+  looked right alone were wrong together. 2.3 keeps `Small`, and an explicit size
+  is honoured on either line.
+
+- **`bnk.whole_cluster`.** Conforms to the reference on 2.4 (`false`, paired with
+  `watchNamespaces: ["All"]`) and stays `true` on 2.3. The two move together
+  because the product validates them together: `wholeCluster: true` alongside
+  `watchNamespaces: ["All"]` is rejected outright as an invalid product
+  configuration, since it says "watch everything" twice in contradictory ways.
+
+- **`bnk.demo_mode`.** Demo mode was being enabled on every install, on both
+  lines. It now defaults to **false on 2.4**, matching the reference. It stays
+  true on 2.3 — that is what has shipped and been exercised there, and changing a
+  working line without a run to back it would be a guess.
+
+  2.3 rendering is asserted byte-identical to the previous release, verified by
+  rendering the pre-change module from git and diffing.
+
+### Fixed
+
+- **`bnk up` no longer panics on a mirror-only disconnected install.**
+  `registry_trust.go` read `ws.BNK.FLP.External` behind a `ws != nil` guard, but
+  `BNK.FLP` is itself a pointer — so a workspace that mirrors images to a private
+  registry while licensing still goes direct to F5 (the ordinary staged
+  bring-up) died with a SIGSEGV before applying anything. Every other site in the
+  tree checks `FLP == nil` or allocates first; this one read through it.
+
+- **A BNK namespace the 2.4 teardown strands is now freed.** On 2.4 the
+  CNEInstance deletion times out, its operator is removed anyway, and nothing is
+  left that could clear the finalizer — so the namespace sits in `Terminating`
+  forever and every later `bnk up` fails with *"unable to create new content in
+  namespace f5-bnk because it is being terminated"*. The cluster is permanently
+  unusable for a reinstall. `bnk down` now clears F5's finalizers after a
+  successful destroy, scoped to this workspace's own cluster, to namespaces
+  already terminating, to F5's own kinds — and it says what it did, because a
+  silent repair teaches nobody the bug is there. Seen twice on live 2.4
+  clusters.
+
+- **The lifecycle demos no longer report success over a failed phase.** They are
+  `set -uo pipefail` with no `-e`; `run` returned each command's status and no
+  call site looked at it. A `bnk up` that failed on every object was followed by
+  `✓ BNK removed and reinstalled` and `DEMO COMPLETE`, exit 0. A new `must`
+  helper dies on failure and is used for the commands that change the world;
+  informational commands keep plain `run`, where a non-zero is often just "not
+  there yet".
+
+- **The demos no longer execute their own comments.** Their `config.yaml`
+  heredocs are unquoted so `${REGION}` expands — which also made backticked
+  command names in the comments run. `` `init` `` is a real binary on some
+  hosts and it ran; the words vanished from the generated file, replaced by the
+  commands' empty output.
+
+- **Five stale runner-image pins**, up to twenty releases behind, including one
+  in a `.env.example` that overrides the script default the guard did check. The
+  guard now discovers every demo that pins a runner instead of naming one.
+
 ## v1.52.0 — 2026-08-21
 
 Groundwork for driving **BNK 2.4** from the same build that drives 2.3, plus the

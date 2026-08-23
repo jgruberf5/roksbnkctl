@@ -1,5 +1,10 @@
 # SSH targets
 
+> **Field specs live in [Chapter 28 — Configuration reference](./28-configuration-reference.md).**
+> That chapter is generated from the `Workspace` struct and checked by a test, so it cannot drift.
+> Tables here are for teaching and may be shortened over time; when they disagree with Chapter 28,
+> Chapter 28 is right.
+
 This chapter is the technical reference for the `targets:` system. Its companion is [Chapter 16 — The --on flag and SSH jumphosts](./16-on-flag-ssh-jumphosts.md), which is the user-facing prose for "how do I run a command on the jumphost". Chapter 16 introduces targets briefly; this chapter goes deeper into the schema, the key sources, the host-key trust model, the auto-discovery pipeline, and what the `ssh` execution backend layers on top of the lightweight `--on` flag.
 
 If you arrived here from Chapter 16 looking for "where do I learn the full surface", you're in the right place.
