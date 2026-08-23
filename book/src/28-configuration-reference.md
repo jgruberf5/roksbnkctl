@@ -71,9 +71,9 @@ BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `bigip_url` | `string` | 2.3 + 2.4 | — | no |  |
-| `bigip_username` | `string` | 2.3 + 2.4 | — | no |  |
-| `bigip_password_b64` | `string` | 2.3 + 2.4 | — | no |  |
+| `bigip_url` | `string` | 2.3 + 2.4 | — | no | BigIPURL is the management address of the classic BIG-IP that the Container Ingress Services controller configures, e.g. |
+| `bigip_username` | `string` | 2.3 + 2.4 | — | no | BigIPUsername is the account CIS authenticates to that BIG-IP as. |
+| `bigip_password_b64` | `string` | 2.3 + 2.4 | — | no | BigIPPasswordB64 is that account's password, base64-encoded — obfuscation, not encryption. |
 
 ## `BNKCertManagerCfg`
 
@@ -88,9 +88,9 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `cneinstance_size` | `string` | 2.3 + 2.4 | — | no |  |
-| `far_repo_url` | `string` | 2.3 + 2.4 | — | no |  |
-| `manifest_version` | `string` | 2.3 + 2.4 | — | no |  |
+| `cneinstance_size` | `string` | 2.3 + 2.4 | — | no | CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium, Large or Max. |
+| `far_repo_url` | `string` | 2.3 + 2.4 | — | no | FARRepoURL is the F5 Artifact Repository charts are pulled from. |
+| `manifest_version` | `string` | 2.3 + 2.4 | — | no | ManifestVersion pins the BNK release, e.g. |
 | `far_auth_file` | `string` | 2.3 + 2.4 | — | no | FarAuthFile is the FAR auth tarball's filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry` to resolve the FAR _json_key_base64 service account. |
 | `subscription_jwt_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTFile is the subscription/license JWT's filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar. |
 | `far_auth_local_file` | `string` | 2.3 + 2.4 | — | no | FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of COS objects. |
@@ -216,7 +216,7 @@ BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `zones` | `[]BNKZoneCfg` | 2.3 + 2.4 | — | no |  |
+| `zones` | `[]BNKZoneCfg` | 2.3 + 2.4 | — | no | Zones is the per-availability-zone network mapping, in zone order — one entry per zone the cluster spans. |
 | `vlan_prefixlen` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
 | `vlan_prefixlen_external` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
 | `vlan_prefixlen_internal` | `*int` | 2.3 + 2.4 | — | no |  |

@@ -547,8 +547,25 @@ var DefaultBNKNetworkZones = []BNKZoneCfg{
 }
 
 type BNKCfg struct {
+	// CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium,
+	// Large or Max. It decides how much TMM asks for, INCLUDING hugepages — Tiny
+	// requests none, Small requests 4Gi of hugepages-2Mi, and a stock ROKS worker
+	// reports zero, so anything above Tiny needs bnk.hugepages to allocate them
+	// first or the TMM pods stay Pending. See Appendix C for the sizing table.
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
-	FARRepoURL      string `yaml:"far_repo_url,omitempty"`
+
+	// FARRepoURL is the F5 Artifact Repository charts are pulled from. Empty uses
+	// repo.f5.com. A disconnected cluster cannot reach it — configure `registry`
+	// with a mirror instead, and this becomes the source that mirror is filled
+	// FROM rather than what the cluster pulls from.
+	FARRepoURL string `yaml:"far_repo_url,omitempty"`
+
+	// ManifestVersion pins the BNK release, e.g. "2.4.0-EA". This is the single
+	// field that selects the product line: a 2.4 version renders the Infra +
+	// GatewaySettings model and sets USE_GATEWAY_SETTINGS, while a 2.3 version
+	// renders cloud-network-mapping and the F5SPK* CRs. There is no separate
+	// `line` field and no override — the version IS the selector, so that the
+	// rendered model can never disagree with the manifest being installed.
 	ManifestVersion string `yaml:"manifest_version,omitempty"`
 	// FarAuthFile is the FAR auth tarball's filename in the orchestration COS
 	// bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry`
@@ -994,13 +1011,25 @@ type BNKGTMCfg struct {
 // encryption — like ibmcloud.api_key_b64); the raw value is rendered to
 // terraform.tfvars as bigip_password at apply time.
 type BNKCISCfg struct {
-	BigIPURL         string `yaml:"bigip_url,omitempty"`
-	BigIPUsername    string `yaml:"bigip_username,omitempty"`
+	// BigIPURL is the management address of the classic BIG-IP that the Container
+	// Ingress Services controller configures, e.g. "https://10.1.1.5". Empty
+	// disables CIS; BNK's own data plane does not need it.
+	BigIPURL string `yaml:"bigip_url,omitempty"`
+
+	// BigIPUsername is the account CIS authenticates to that BIG-IP as.
+	BigIPUsername string `yaml:"bigip_username,omitempty"`
+
+	// BigIPPasswordB64 is that account's password, base64-encoded — obfuscation,
+	// not encryption. Plaintext passwords in config.yaml are rejected at load.
 	BigIPPasswordB64 string `yaml:"bigip_password_b64,omitempty"`
 }
 
 // BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 type BNKNetworkCfg struct {
+	// Zones is the per-availability-zone network mapping, in zone order — one
+	// entry per zone the cluster spans. Empty takes DefaultBNKNetworkZones, whose
+	// addressing is arbitrary but self-consistent; override it when any of those
+	// ranges collides with something the cluster can already route to.
 	Zones []BNKZoneCfg `yaml:"zones,omitempty"`
 	// VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to
 	// its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2
