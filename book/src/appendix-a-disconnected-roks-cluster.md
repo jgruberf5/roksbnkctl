@@ -665,6 +665,13 @@ $ roksbnkctl -w bnkdisco bnk up --auto
 $ roksbnkctl -w bnkdisco bnk status
 ```
 
+> **An adopted cluster usually already runs cert-manager.** OpenShift estates commonly install it
+> as a day-1 add-on, and `bnk up` then stops with `namespaces "cert-manager" already exists`. That
+> message names the collision but not the fix: set `resources.cert_manager: { create: false }` to
+> adopt the one that is there. From CI, where there is no `config.yaml` to edit, the same thing is
+> `-e ROKSBNKCTL_CERT_MANAGER_CREATE=false`. Check with
+> `kubectl get ns cert-manager` before the first `bnk up` rather than after it.
+
 > **Check the addressing before attaching.** The existing cluster's VPC must be on the same global
 > gateway as Harbor **and its address prefixes must not overlap** the services VPC, or the gateway
 > blackholes one of them. `tgw connect` refuses a detectable overlap and names the conflicting
@@ -737,6 +744,14 @@ container module or an argv-only runner: no shell, no prompts, nowhere to stage 
 |---|---|
 | `bnk-env` **ConfigMap** | every non-secret `ROKSBNKCTL_*` setting — readable in the Argo UI and via `kubectl get cm bnk-env -o yaml` |
 | `bnk-secrets` **Secret** | `IBMCLOUD_API_KEY`, `ROKSBNKCTL_GENERIC_PASSWORD`, and friends — never rendered, logged or printed |
+
+Adoption is environment-only too. A cluster the customer already built usually already has some
+of what `bnk up` would otherwise create, and each of those is a `create` toggle:
+`ROKSBNKCTL_CERT_MANAGER_CREATE=false` (the common one — see
+[1D](#1d-existing-disconnected-cluster-cli)), `ROKSBNKCTL_REGISTRY_COS_CREATE=false` when the
+mirror is external, and `ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE`. Without these the CI path could
+express "adopt this cluster" but not "adopt what is *on* it", and topologies C and D would stop on
+a collision no environment variable could clear.
 
 Settings that *define* a topology — `ROKSBNKCTL_CLUSTER_CREATE`,
 `ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY`, `ROKSBNKCTL_LICENSE_MODE` — are pinned in the workflow YAML

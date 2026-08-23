@@ -85,6 +85,12 @@ import (
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_TESTING_VPC_NAME     → resources.testing_client_vpc_name (name the created testing client VPC)
 //	ROKSBNKCTL_TRANSIT_GATEWAY_NAME → resources.transit_gateway.existing (create:false — adopt a shared TGW by name or id)
+//	ROKSBNKCTL_CERT_MANAGER_CREATE  → resources.cert_manager.create (bool) — set
+//	                                  false to ADOPT a cert-manager the cluster
+//	                                  already runs, which an adopted cluster very
+//	                                  often does
+//	ROKSBNKCTL_REGISTRY_COS_CREATE  → resources.registry_cos.create (bool)
+//	ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE → resources.cluster_jumphosts.create (bool)
 //	ROKSBNKCTL_BNKFORGE_CA_B64      → bnkforge.ca_b64 (PEM CA pinning the Forge server)
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
@@ -256,6 +262,31 @@ func OverrideFromEnv(ws *Workspace) []string {
 			}
 		}
 	}
+	// Adopt-what-exists toggles. An adopted customer cluster very often already
+	// runs cert-manager, and without a way to say so from the environment the CI
+	// path — which takes its whole configuration from -e variables — cannot
+	// install onto one at all.
+	for _, o := range []struct {
+		env, path string
+		set       func(bool)
+	}{
+		{"ROKSBNKCTL_CERT_MANAGER_CREATE", "resources.cert_manager.create", func(b bool) { ws.Resources.CertManager.Create = b }},
+		{"ROKSBNKCTL_REGISTRY_COS_CREATE", "resources.registry_cos.create", func(b bool) { ws.Resources.RegistryCOS.Create = b }},
+		{"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE", "resources.cluster_jumphosts.create", func(b bool) { ws.Resources.ClusterJumphosts.Create = b }},
+	} {
+		if v := envValue(o.env); v != "" {
+			if b, err := strconv.ParseBool(v); err == nil {
+				// env-only init starts from an empty Workspace, so Resources
+				// is nil here far more often than on the file-loaded path.
+				if ws.Resources == nil {
+					ws.Resources = &ResourcesCfg{}
+				}
+				o.set(b)
+				applied = append(applied, o.path+" ("+o.env+")")
+			}
+		}
+	}
+
 	if v := envValue("ROKSBNKCTL_WATCH_NAMESPACES"); v != "" {
 		parts := strings.Split(v, ",")
 		out := make([]string, 0, len(parts))
@@ -909,6 +940,9 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_CLUSTER_IDENTIFIER",
 	"ROKSBNKCTL_DEMO_MODE",
 	"ROKSBNKCTL_WHOLE_CLUSTER",
+	"ROKSBNKCTL_CERT_MANAGER_CREATE",
+	"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE",
+	"ROKSBNKCTL_REGISTRY_COS_CREATE",
 	"ROKSBNKCTL_HUGEPAGES",
 	"ROKSBNKCTL_HUGEPAGES_COUNT",
 	"ROKSBNKCTL_HUGEPAGES_SIZE",

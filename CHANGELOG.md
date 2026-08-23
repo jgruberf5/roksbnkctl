@@ -8,6 +8,28 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **Adopting a cluster that already has cert-manager is now expressible from CI**
+  (#186). `resources.cert_manager`, `resources.registry_cos` and
+  `resources.cluster_jumphosts` had no environment override, so a container-driven
+  install — which takes its entire configuration from `-e` variables, having no
+  shell in which to write a `config.yaml` — could say "adopt this cluster" but not
+  "adopt what is already *on* it". The install stopped at
+  `namespaces "cert-manager" already exists`, a message that names the collision
+  but not the setting that clears it.
+
+  This is the customer-shaped path: an existing transit gateway, VPC and ROKS
+  cluster, with OpenShift's cert-manager add-on already present. Adds
+  `ROKSBNKCTL_CERT_MANAGER_CREATE`, `ROKSBNKCTL_REGISTRY_COS_CREATE` and
+  `ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE` across all five layers.
+
+  Two defects were found while testing the change rather than after it. The new
+  overrides dereferenced `ws.Resources` with no nil guard, which is a **SIGSEGV**
+  on exactly the env-only path they exist for, where nothing has populated it.
+  And `TestRunInitFromEnv_AdvancedFields` read the ambient environment: an
+  operator with any `ROKSBNKCTL_*` exported in their own shell — which is the
+  normal state while driving an install — got a failure unrelated to their
+  change. Both are covered by tests that reproduce them.
+
 - **BNK 2.4 now conforms to F5's reference CNEInstance.** Comparing our rendered
   spec against F5's own live 2.4 capture found four keys we never emitted at all:
   `tmmReplicas`, `watchNamespaces`, `placement` and `externalBigip`.

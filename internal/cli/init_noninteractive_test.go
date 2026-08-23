@@ -1,15 +1,35 @@
 package cli
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 )
 
+// isolateEnv blanks every ROKSBNKCTL_* variable the ambient shell happens to be
+// carrying. runInitFromEnv reads the real process environment, so without this
+// an operator who has exported an override in their own shell — say
+// ROKSBNKCTL_CERT_MANAGER_CREATE=false while driving a disconnected install —
+// sees these tests fail for a reason that has nothing to do with the code under
+// test. t.Setenv restores the originals at cleanup, and the override reader
+// treats an empty value as unset.
+func isolateEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "ROKSBNKCTL_") {
+			t.Setenv(k, "")
+		}
+	}
+	t.Setenv("IBMCLOUD_API_KEY", "")
+}
+
 // TestRunInitFromEnv pins the `--non-interactive` env-only init path: a workspace
 // config.yaml assembled purely from the ROKSBNKCTL_* / IBMCLOUD_API_KEY env vars,
 // no file, no prompt — the argv+env container-runner contract.
 func TestRunInitFromEnv(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	t.Setenv("IBMCLOUD_API_KEY", "test-api-key")
 	t.Setenv("ROKSBNKCTL_REGION", "eu-de")
@@ -52,6 +72,7 @@ func TestRunInitFromEnv(t *testing.T) {
 // adoption (without zeroing the other resource toggles), testing-VPC name, CIS
 // BIG-IP creds, and a full per-zone network mapping.
 func TestRunInitFromEnv_AdvancedFields(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	t.Setenv("IBMCLOUD_API_KEY", "k")
 	t.Setenv("ROKSBNKCTL_REGION", "eu-de")
@@ -113,6 +134,7 @@ func TestRunInitFromEnv_AdvancedFields(t *testing.T) {
 // TestRunInitFromEnv_MissingRequired pins that an incomplete env errors (not
 // prompts) — the non-interactive contract must fail fast, never hang.
 func TestRunInitFromEnv_MissingRequired(t *testing.T) {
+	isolateEnv(t)
 	t.Setenv(config.ROKSBNKCTLHomeEnv, t.TempDir())
 	t.Setenv("ROKSBNKCTL_REGION", "eu-de") // resource_group + prefix missing
 	cctx, err := config.New("forge")
