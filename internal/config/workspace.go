@@ -221,7 +221,13 @@ type TargetCfg struct {
 }
 
 type IBMCloudCfg struct {
-	Region        string `yaml:"region"`
+	// Region is the IBM Cloud region everything in this workspace is created in
+	// or adopted from, e.g. "us-east". The testing client can live elsewhere via
+	// resources.client_region.
+	Region string `yaml:"region"`
+
+	// ResourceGroup is the IBM Cloud resource group resources are placed in, and
+	// the one an adopted cluster is looked up in.
 	ResourceGroup string `yaml:"resource_group" default:"default"`
 	APIKeySource  string `yaml:"api_key_source,omitempty"` // env | keychain | config | prompt — see secrets.go
 
@@ -1246,9 +1252,18 @@ type BNKZoneCfg struct {
 }
 
 type TestCfg struct {
-	Throughput   ThroughputCfg   `yaml:"throughput,omitempty"`
+	// Throughput configures the iperf3 bandwidth probe.
+	Throughput ThroughputCfg `yaml:"throughput,omitempty"`
+
+	// Connectivity configures the reachability probes — the hosts `roksbnkctl
+	// test` tries to reach, and from where.
 	Connectivity ConnectivityCfg `yaml:"connectivity,omitempty"`
-	DNS          DNSCfg          `yaml:"dns,omitempty"`
+
+	// DNS configures the name-resolution probes, including which resolvers to
+	// ask. A disconnected cluster commonly resolves through its own forwarders,
+	// and a probe against a public resolver would report a failure that says
+	// nothing about the estate.
+	DNS DNSCfg `yaml:"dns,omitempty"`
 }
 
 // DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe
@@ -1297,10 +1312,22 @@ type ConnectivityCfg struct {
 //
 // An empty Type (legacy / forgot-to-set) is treated as embedded.
 type TFSourceCfg struct {
-	Type string `yaml:"type"` // embedded | github | local
+	// Type selects where the Terraform comes from: "embedded" (the tree compiled
+	// into this binary — the default, and the only one guaranteed to match it),
+	// "github" (a released tree), or "local" (a path on disk, for testing a fork).
+	Type string `yaml:"type"`
+
+	// Repo is the owner/name to fetch from when Type is "github".
 	Repo string `yaml:"repo,omitempty"`
-	Ref  string `yaml:"ref,omitempty"`
-	Path string `yaml:"path,omitempty"` // populated for type=local
+
+	// Ref is the tag, branch or commit to fetch when Type is "github". Pin it to
+	// a tag: a branch re-resolves on every run, so two applies days apart can
+	// deploy different infrastructure from identical config.
+	Ref string `yaml:"ref,omitempty"`
+
+	// Path is the local directory holding the Terraform tree when Type is
+	// "local".
+	Path string `yaml:"path,omitempty"`
 }
 
 // COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR

@@ -342,8 +342,8 @@ HugepagesCfg allocates hugepages on the worker pool through the OpenShift Node T
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `region` | `string` | 2.3 + 2.4 | — | yes |  |
-| `resource_group` | `string` | 2.3 + 2.4 | `default` | yes |  |
+| `region` | `string` | 2.3 + 2.4 | — | yes | Region is the IBM Cloud region everything in this workspace is created in or adopted from, e.g. |
+| `resource_group` | `string` | 2.3 + 2.4 | `default` | yes | ResourceGroup is the IBM Cloud resource group resources are placed in, and the one an adopted cluster is looked up in. |
 | `api_key_source` | `string` | 2.3 + 2.4 | — | no | env \| keychain \| config \| prompt — see secrets.go. |
 | `api_key_b64` | `string` | 2.3 + 2.4 | — | no | APIKeyB64 stores the API key base64-encoded inline in the workspace config. |
 
@@ -429,10 +429,10 @@ TFSourceCfg picks where Terraform's source tree comes from. Type drives which ot
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `type` | `string` | 2.3 + 2.4 | — | yes | embedded \| github \| local. |
-| `repo` | `string` | 2.3 + 2.4 | — | no |  |
-| `ref` | `string` | 2.3 + 2.4 | — | no |  |
-| `path` | `string` | 2.3 + 2.4 | — | no | populated for type=local. |
+| `type` | `string` | 2.3 + 2.4 | — | yes | Type selects where the Terraform comes from: "embedded" (the tree compiled into this binary — the default, and the only one guaranteed to match it), "github" (a released tree), or "local" (a path on disk, for testing a fork). |
+| `repo` | `string` | 2.3 + 2.4 | — | no | Repo is the owner/name to fetch from when Type is "github". |
+| `ref` | `string` | 2.3 + 2.4 | — | no | Ref is the tag, branch or commit to fetch when Type is "github". |
+| `path` | `string` | 2.3 + 2.4 | — | no | Path is the local directory holding the Terraform tree when Type is "local". |
 
 ## `TargetCfg`
 
@@ -450,9 +450,9 @@ TargetCfg is the on-disk shape of one entry under `targets:` in the workspace co
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `throughput` | `ThroughputCfg` | 2.3 + 2.4 | — | no |  |
-| `connectivity` | `ConnectivityCfg` | 2.3 + 2.4 | — | no |  |
-| `dns` | `DNSCfg` | 2.3 + 2.4 | — | no |  |
+| `throughput` | `ThroughputCfg` | 2.3 + 2.4 | — | no | Throughput configures the iperf3 bandwidth probe. |
+| `connectivity` | `ConnectivityCfg` | 2.3 + 2.4 | — | no | Connectivity configures the reachability probes — the hosts `roksbnkctl test` tries to reach, and from where. |
+| `dns` | `DNSCfg` | 2.3 + 2.4 | — | no | DNS configures the name-resolution probes, including which resolvers to ask. |
 
 ## `ThroughputCfg`
 
