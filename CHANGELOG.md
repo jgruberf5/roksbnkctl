@@ -8,10 +8,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
-- **51 of the reference's blank descriptions filled** (#181): every top-level
+- **56 of the reference's blank descriptions filled** (#181): every top-level
   config section, the seven `resources.*` create/adopt toggles, the six per-zone
   network-mapping fields, and the `cluster`, `bnk`, `ibmcloud`, `tf_source`,
-  `test` and `gateway` blocks. 75 → 24, and the ratchet ceiling moves down with
+  `test` and `gateway` blocks, the registry credentials and the COS block. 75 → 19, and the ratchet ceiling moves down with
   each step.
 
   These were chosen by what a wrong answer costs, not by what was quickest. Some

@@ -1182,7 +1182,15 @@ type RegistryCfg struct {
 	// encryption (it dodges rejectPlaintextSecrets) — chmod 600, never commit.
 	// Both empty → anonymous push/pull. Templatable from the environment via
 	// `init --override-from-env` (ROKSBNKCTL_GENERIC_PASSWORD).
-	GenericUsername    string `yaml:"generic_username,omitempty"`
+	GenericUsername string `yaml:"generic_username,omitempty"`
+
+	// GenericPasswordB64 is that user's password or access token,
+	// base64-encoded — obfuscation, not encryption. REQUIRED whenever
+	// GenericUsername is set: the chart pull otherwise falls through to the
+	// literal username "unused" with the cluster's kube token, which is correct
+	// only for the in-cluster OpenShift registry, and an external registry
+	// answers `401: Bad Credentials`. `bnk up` refuses up front rather than
+	// discovering this part-way through an apply.
 	GenericPasswordB64 string `yaml:"generic_password_b64,omitempty"`
 
 	// GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the
@@ -1357,10 +1365,20 @@ type TFSourceCfg struct {
 // ibmcloud_cos_bucket_region) AND by the `registry` FAR-file resolver, so a
 // customer-owned COS bucket is used consistently across both.
 type COSCfg struct {
-	Instance string      `yaml:"instance,omitempty"`
-	Bucket   string      `yaml:"bucket,omitempty"`
-	Region   string      `yaml:"region,omitempty"`
-	Upload   []COSUpload `yaml:"upload,omitempty"`
+	// Instance is the IBM Cloud Object Storage service instance holding the
+	// bucket.
+	Instance string `yaml:"instance,omitempty"`
+
+	// Bucket is the bucket the FAR service-account credential is read from, for
+	// estates that stage it centrally rather than passing a local file.
+	Bucket string `yaml:"bucket,omitempty"`
+
+	// Region is the bucket's region, which need not match ibmcloud.region.
+	Region string `yaml:"region,omitempty"`
+
+	// Upload lists local files to place into that bucket before the phases that
+	// read them run.
+	Upload []COSUpload `yaml:"upload,omitempty"`
 }
 
 type COSUpload struct {

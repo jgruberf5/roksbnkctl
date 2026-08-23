@@ -259,10 +259,10 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `instance` | `string` | 2.3 + 2.4 | — | no |  |
-| `bucket` | `string` | 2.3 + 2.4 | — | no |  |
-| `region` | `string` | 2.3 + 2.4 | — | no |  |
-| `upload` | `[]COSUpload` | 2.3 + 2.4 | — | no |  |
+| `instance` | `string` | 2.3 + 2.4 | — | no | Instance is the IBM Cloud Object Storage service instance holding the bucket. |
+| `bucket` | `string` | 2.3 + 2.4 | — | no | Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file. |
+| `region` | `string` | 2.3 + 2.4 | — | no | Region is the bucket's region, which need not match ibmcloud.region. |
+| `upload` | `[]COSUpload` | 2.3 + 2.4 | — | no | Upload lists local files to place into that bucket before the phases that read them run. |
 
 ## `COSUpload`
 
@@ -359,7 +359,7 @@ RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which tar
 | `generic_host` | `string` | 2.3 + 2.4 | — | no | GenericHost is the OCI registry host for target=generic (e.g. |
 | `generic_repo_prefix` | `string` | 2.3 + 2.4 | — | no | GenericRepoPrefix is the repository path artifacts nest under for target=generic (e.g. |
 | `generic_username` | `string` | 2.3 + 2.4 | — | no | GenericUsername / GenericPasswordB64 are the static basic-auth credential for target=generic (an Artifactory user + access token). |
-| `generic_password_b64` | `string` | 2.3 + 2.4 | — | no |  |
+| `generic_password_b64` | `string` | 2.3 + 2.4 | — | no | GenericPasswordB64 is that user's password or access token, base64-encoded — obfuscation, not encryption. |
 | `generic_ca_b64` | `string` | 2.3 + 2.4 | — | no | GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network. |
 | `generic_ca_sha256` | `string` | 2.3 + 2.4 | — | no | GenericCASHA256 pins the mirror's CA by SHA-256 (hex; a "sha256:" prefix and colons are accepted). |
 | `namespace` | `string` | 2.3 + 2.4 | — | no | Namespace is the mirror project the artifacts land in. |
