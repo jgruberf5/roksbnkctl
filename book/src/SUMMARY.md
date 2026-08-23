@@ -80,3 +80,4 @@
 
 - [A — The four cluster topologies, end to end](./appendix-a-disconnected-roks-cluster.md)
 - [B — Replicating FAR into a JFrog Artifactory](./appendix-b-artifactory-mirror.md)
+- [C — Single-NIC sizing](./appendix-c-single-nic-sizing.md)
