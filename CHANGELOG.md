@@ -70,6 +70,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **`bnk up` no longer panics on a mirror-only disconnected install.**
+  `registry_trust.go` read `ws.BNK.FLP.External` behind a `ws != nil` guard, but
+  `BNK.FLP` is itself a pointer — so a workspace that mirrors images to a private
+  registry while licensing still goes direct to F5 (the ordinary staged
+  bring-up) died with a SIGSEGV before applying anything. Every other site in the
+  tree checks `FLP == nil` or allocates first; this one read through it.
+
 - **A BNK namespace the 2.4 teardown strands is now freed.** On 2.4 the
   CNEInstance deletion times out, its operator is removed anyway, and nothing is
   left that could clear the finalizer — so the namespace sits in `Terminating`
