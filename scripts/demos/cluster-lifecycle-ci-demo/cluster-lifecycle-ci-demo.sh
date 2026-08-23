@@ -66,9 +66,22 @@ source "$HERE/../lib/demo-format.sh"
 #
 # By name, not by value, for the same reason the credentials are: the value never
 # appears in argv, so it cannot leak into a process list or a recording.
+# NOT every ROKSBNKCTL_* is a workspace override. Some configure the CLI's own
+# runtime and are HOST-specific — ROKSBNKCTL_HOME above all, which names a
+# directory on this machine. Forwarding it makes the container try to write to a
+# host path it cannot see:
+#
+#   saving workspace: creating /mnt/d/…/home/bnk24d: mkdir /mnt/d: permission denied
+#
+# The container sets its own ROKSBNKCTL_HOME to /work/.roksbnkctl, which is the
+# mounted volume and the whole point of the state volume. So the runtime
+# variables are skipped and the configuration overrides are forwarded.
 RUN_ENV=()
 while IFS='=' read -r _n _; do
-  case "$_n" in ROKSBNKCTL_*) RUN_ENV+=(-e "$_n") ;; esac
+  case "$_n" in
+    ROKSBNKCTL_HOME) ;;                       # host path; the container sets its own
+    ROKSBNKCTL_*)    RUN_ENV+=(-e "$_n") ;;
+  esac
 done < <(env)
 
 RUN=(docker run --rm -v "$WORK:/work"

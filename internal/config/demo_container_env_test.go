@@ -61,6 +61,31 @@ func TestContainerDemosForwardOverrides(t *testing.T) {
 		}
 	}
 
+	// Forwarding must not be blanket. ROKSBNKCTL_HOME names a directory on the
+	// HOST; pushing it into the container makes roksbnkctl try to write there and
+	// fail with "mkdir /mnt/d: permission denied", because the container sets its
+	// own ROKSBNKCTL_HOME to the mounted /work volume. A first version of the
+	// forwarding did exactly that and broke the pipeline at phase 2.
+	for _, f := range scripts {
+		b, rerr := os.ReadFile(f)
+		if rerr != nil {
+			continue
+		}
+		body := string(b)
+		// Only the scripts that actually BUILD a -e forward list from the
+		// environment. A script that merely mentions ROKSBNKCTL_* in prose, or
+		// sets specific ones by hand, is not doing the thing this checks.
+		if !dockerRun.MatchString(body) || !strings.Contains(body, `RUN_ENV+=(-e`) {
+			continue
+		}
+		rel, _ := filepath.Rel(root, f)
+		if !strings.Contains(body, "ROKSBNKCTL_HOME)") {
+			t.Errorf("%s forwards ROKSBNKCTL_* into a container without excluding ROKSBNKCTL_HOME.\n"+
+				"That variable names a HOST directory; the container sets its own to the mounted "+
+				"volume, and overriding it makes roksbnkctl write to a path it cannot see.", rel)
+		}
+	}
+
 	if checked == 0 {
 		t.Fatal("found no container-running demos; the glob or the docker-run match is wrong")
 	}
