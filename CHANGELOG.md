@@ -8,12 +8,21 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
-- **19 of the reference's blank descriptions filled** (#181): all twelve
-  top-level config sections — `ibmcloud`, `cluster`, `bnk`, `gateway`,
-  `registry`, `test`, `tf_source`, `cos`, `targets`, `state`, `bnkforge`,
-  `agent` — and the seven `resources.*` create/adopt toggles the six per-zone network-mapping fields, and the cluster, bnk, ibmcloud, tf_source, test and gateway blocks, which are the
-  adopt-versus-create semantics that made an adopted cluster impossible to
-  install onto. 75 → 24, and the ratchet ceiling moves with it.
+- **51 of the reference's blank descriptions filled** (#181): every top-level
+  config section, the seven `resources.*` create/adopt toggles, the six per-zone
+  network-mapping fields, and the `cluster`, `bnk`, `ibmcloud`, `tf_source`,
+  `test` and `gateway` blocks. 75 → 24, and the ratchet ceiling moves down with
+  each step.
+
+  These were chosen by what a wrong answer costs, not by what was quickest. Some
+  examples: `bnk.manifest_version` is the single field that selects the 2.3 or
+  2.4 model, and had no description at all; `resources.cert_manager` now says
+  why you would set `create: false`, what fails if you do not, and that adopting
+  also protects the customer's cert-manager from `bnk down`;
+  `gateway.client_subnet_remote` records that getting it wrong does not fail the
+  apply — traffic simply never returns; and `tf_source.ref` records that pinning
+  a branch lets two applies days apart deploy different infrastructure from
+  identical config.
 
 - **The undocumented-field ratchet was grading the wrong column** (#181). It
   hard-coded column index 5 and read `required`, which is never blank — so it
