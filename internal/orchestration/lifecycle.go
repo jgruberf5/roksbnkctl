@@ -378,6 +378,12 @@ func prepareBNKUp(ctx context.Context, in *LifecycleInputs) (bool, func(context.
 		return false, nil, nil
 	}
 	apply := func(actx context.Context) error {
+		// Cheapest precondition first: a mirror we could never authenticate to
+		// is knowable without touching the cluster, and failing here costs a
+		// second instead of fifteen minutes and a half-installed BNK.
+		if err := checkMirrorCredentials(cctx, w); err != nil {
+			return err
+		}
 		// Air-gap precondition: install the private registry's CA on every
 		// node before the apply's charts pull images, or the first pull fails
 		// x509 "unknown authority" and BNK stalls in ImagePullBackOff. No-op

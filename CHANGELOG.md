@@ -8,6 +8,20 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **A mirror we could never authenticate to is refused before the apply, not
+  fifteen minutes into it.** The chart pull picks its credential by falling
+  through a chain whose last arm uses the literal username `unused` with the
+  cluster's kube token. That arm is right for the in-cluster OpenShift registry
+  and never right for an external one, so a `generic` registry configured with a
+  username but no password reached Artifactory as `unused` and was answered
+  `401: Bad Credentials` — after flo was installed and IAM trusted profiles were
+  created, naming neither the missing setting nor the file it lives in.
+
+  `bnk up` now refuses at the start, naming both
+  `registry.generic_password_b64` and `ROKSBNKCTL_GENERIC_PASSWORD`. The rule is
+  narrow — a username with no password — so anonymous mirrors and the in-cluster
+  registry path, which set neither, are untouched.
+
 - **`resources.cert_manager: {create: false}` now actually skips cert-manager.**
   It never did. `install_cert_manager` was declared in `variables.tf`, rendered
   into `terraform.tfvars` by the Go side, and carried in
