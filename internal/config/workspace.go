@@ -1093,6 +1093,8 @@ type StateS3Cfg struct {
 }
 
 type GatewayCfg struct {
+	// AppNamespace is the namespace the example application and its Gateway
+	// resources are created in. Empty takes the terraform default.
 	AppNamespace string `yaml:"app_namespace,omitempty"`
 
 	// ClassName is the GatewayClass name. Empty → the terraform default
@@ -1107,12 +1109,29 @@ type GatewayCfg struct {
 	// programmed, apply succeeds).
 	ControllerName string `yaml:"controller_name,omitempty"`
 
-	BackendService     string   `yaml:"backend_service,omitempty"`
-	BackendPort        int      `yaml:"backend_port,omitempty"`
-	EgressMode         string   `yaml:"egress_mode,omitempty"` // snatpool | automap | both
-	ClientSubnetLocal  []string `yaml:"client_subnet_local,omitempty"`
+	// BackendService is the Kubernetes Service the example HTTPRoute forwards to.
+	BackendService string `yaml:"backend_service,omitempty"`
+
+	// BackendPort is the port on that Service.
+	BackendPort int `yaml:"backend_port,omitempty"`
+
+	// EgressMode selects how return traffic is source-addressed: "snatpool",
+	// "automap", or "both".
+	EgressMode string `yaml:"egress_mode,omitempty"`
+
+	// ClientSubnetLocal lists client CIDRs reachable on the same VPC as the
+	// cluster — routed directly rather than over the transit gateway.
+	ClientSubnetLocal []string `yaml:"client_subnet_local,omitempty"`
+
+	// ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway,
+	// e.g. the testing client VPC. Getting these wrong does not fail the apply:
+	// traffic simply never returns.
 	ClientSubnetRemote []string `yaml:"client_subnet_remote,omitempty"`
-	VXLANPort          int      `yaml:"vxlan_port,omitempty"`
+
+	// VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.
+	// Empty takes the terraform default; change it only if something else in the
+	// VPC already claims that port.
+	VXLANPort int `yaml:"vxlan_port,omitempty"`
 
 	// RouteExamples names extra route kinds to create WORKING examples of,
 	// alongside the HTTPRoute the gateway phase already creates. Empty (the

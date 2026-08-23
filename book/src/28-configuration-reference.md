@@ -314,15 +314,15 @@ ExecToolCfg is one entry under workspace.Exec — the chosen backend for a given
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `app_namespace` | `string` | 2.3 + 2.4 | — | no |  |
+| `app_namespace` | `string` | 2.3 + 2.4 | — | no | AppNamespace is the namespace the example application and its Gateway resources are created in. |
 | `class_name` | `string` | 2.3 + 2.4 | — | no | ClassName is the GatewayClass name. |
 | `controller_name` | `string` | 2.3 + 2.4 | — | no | ControllerName is the GatewayClass controllerName. |
-| `backend_service` | `string` | 2.3 + 2.4 | — | no |  |
-| `backend_port` | `int` | 2.3 + 2.4 | — | no |  |
-| `egress_mode` | `string` | 2.3 + 2.4 | — | no | snatpool \| automap \| both. |
-| `client_subnet_local` | `[]string` | 2.3 + 2.4 | — | no |  |
-| `client_subnet_remote` | `[]string` | 2.3 + 2.4 | — | no |  |
-| `vxlan_port` | `int` | 2.3 + 2.4 | — | no |  |
+| `backend_service` | `string` | 2.3 + 2.4 | — | no | BackendService is the Kubernetes Service the example HTTPRoute forwards to. |
+| `backend_port` | `int` | 2.3 + 2.4 | — | no | BackendPort is the port on that Service. |
+| `egress_mode` | `string` | 2.3 + 2.4 | — | no | EgressMode selects how return traffic is source-addressed: "snatpool", "automap", or "both". |
+| `client_subnet_local` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetLocal lists client CIDRs reachable on the same VPC as the cluster — routed directly rather than over the transit gateway. |
+| `client_subnet_remote` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. |
+| `vxlan_port` | `int` | 2.3 + 2.4 | — | no | VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes. |
 | `route_examples` | `[]string` | 2.3 + 2.4 | — | no | RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates. |
 | `l4_listener_port` | `int` | 2.3 + 2.4 | — | no | L4ListenerPort is the port for that TCP listener. |
 
