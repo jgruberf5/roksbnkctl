@@ -79,7 +79,11 @@ func TestDemoRunnerTagMatchesTheCurrentRelease(t *testing.T) {
 	pins := demoRunnerPins(t, root)
 	// The floor is the real count, not a token minimum. A loose floor let a
 	// broken regex still match six files and pass with a stale pin in place.
-	const wantFiles = 13
+	// 15 files pin a runner image today. The floor is what makes the discovery
+	// honest: a glob that silently stops matching would otherwise pass with
+	// nothing checked. Raise it when a demo is added — it was 13 while 15 files
+	// pinned, so the two newest could have lost their pin unnoticed.
+	const wantFiles = 15
 	if len(pins) < wantFiles {
 		t.Fatalf("found runner pins in %d files, expected at least %d.\n"+
 			"This test discovers its subjects, so finding fewer means the discovery broke — "+
