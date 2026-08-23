@@ -1271,3 +1271,19 @@ variable "cneinstance_whole_cluster_override" {
   type        = string
   default     = ""
 }
+
+variable "roks_worker_flavor" {
+  description = <<-EOT
+    Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects.
+
+    The auto-select only considers the bx2 family — its filter is
+    `^bx2-[0-9]+x[0-9]+$` — so any other profile family is unreachable without
+    naming it here. F5's approved reference cluster runs cx3d.8x20, which the
+    auto-select can never produce at any minimum.
+
+    The inner cluster module has always honoured this; nothing surfaced it, so no
+    config.yaml or environment override could reach it.
+  EOT
+  type        = string
+  default     = ""
+}

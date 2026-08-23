@@ -157,6 +157,7 @@ Source: `terraform/variables.tf`
 | `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
 | `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
 | `cneinstance_whole_cluster_override` | `string` | `""` | spec.wholeCluster, as a tri-state. | no |
+| `roks_worker_flavor` | `string` | `""` | Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects. | no |
 
 ## Module: `cert_manager`
 
@@ -474,6 +475,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `existing_cluster_subnet_ids` | `list(string)` | `[]` | Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves. | no |
 | `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0. | no |
 | `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0. | no |
+| `roks_worker_flavor` | `string` | `""` | Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects. | no |
 
 ## Module: `testing`
 

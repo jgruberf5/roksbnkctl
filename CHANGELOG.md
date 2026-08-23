@@ -33,6 +33,15 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Defaults are F5's reference values, not invented ones, and a committed copy of
   their reference spec is now a test fixture: drift from it fails.
 
+- **`cluster.worker_flavor`** now reaches terraform. The inner cluster module has
+  always honoured an explicit `worker_flavor`, but nothing surfaced it — no root
+  variable, no config field, no override — so it was unreachable, the same
+  declared-but-unwired shape as `cneinstance_advanced_env`.
+
+  It matters because the auto-select filters on `^bx2-[0-9]+x[0-9]+$`: **only the
+  bx2 family**. F5's approved reference cluster runs `cx3d.8x20`, which no
+  combination of vCPU and memory minimums can ever produce.
+
 - **`deploymentSize` defaults to `Tiny` on 2.4**, matching F5's reference and this
   tool's own variable description — which said *"Tiny is what the BNK 2.4 install
   guide uses"* while the code defaulted to `Small` on both lines.

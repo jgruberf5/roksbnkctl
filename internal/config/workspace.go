@@ -252,6 +252,14 @@ type ClusterCfg struct {
 	// (the cluster module picks the smallest bx2 profile meeting both minimums).
 	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
 	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
+	// WorkerFlavor names the worker profile exactly, e.g. "cx3d.8x20". Empty
+	// auto-selects from MinWorkerVCPUCount / MinWorkerMemoryGB.
+	//
+	// The auto-select only considers the bx2 family, so any other profile is
+	// unreachable without naming it here — F5's approved reference cluster runs
+	// cx3d.8x20, which no combination of minimums can produce.
+	WorkerFlavor string `yaml:"worker_flavor,omitempty"`
+
 	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty" default:"16"`
 	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
 }

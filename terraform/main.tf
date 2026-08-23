@@ -46,6 +46,7 @@ module "roks_cluster" {
   openshift_cluster_version         = var.openshift_cluster_version
   roks_workers_per_zone             = var.roks_workers_per_zone
   roks_min_worker_vcpu_count        = var.roks_min_worker_vcpu_count
+  roks_worker_flavor                = var.roks_worker_flavor
   roks_min_worker_memory_gb         = var.roks_min_worker_memory_gb
   roks_cos_instance_name            = var.roks_cos_instance_name
   roks_transit_gateway_name         = var.roks_transit_gateway_name

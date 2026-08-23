@@ -467,6 +467,9 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 	if strings.TrimSpace(c.VPCCIDR) != "" {
 		fmt.Fprintf(w, "cluster_vpc_cidr = %q\n", strings.TrimSpace(c.VPCCIDR))
 	}
+	if c.WorkerFlavor != "" {
+		fmt.Fprintf(w, "roks_worker_flavor = %q\n", c.WorkerFlavor)
+	}
 }
 
 // renderBNKFields emits the BNK tuning fields shared by both render modes.

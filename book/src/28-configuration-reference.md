@@ -282,7 +282,8 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 | `vpc_cidr` | `string` | 2.3 + 2.4 | — | no | VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18. |
 | `network_mode` | `string` | 2.3 + 2.4 | `single-nic` | no | NetworkMode selects how the cluster's worker nodes are attached: "single-nic" (the default, and today's only behaviour) or "multi-nic". |
 | `existing_subnet_ids` | `[]string` | 2.3 + 2.4 | — | no | ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per zone in zone order, instead of creating them (#61). |
-| `min_worker_vcpu_count` | `int` | 2.3 + 2.4 | `16` | no | MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select (the cluster module picks the smallest bx2 profile meeting both minimums). |
+| `worker_flavor` | `string` | 2.3 + 2.4 | — | no | MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select (the cluster module picks the smallest bx2 profile meeting both minimums). |
+| `min_worker_vcpu_count` | `int` | 2.3 + 2.4 | `16` | no |  |
 | `min_worker_memory_gb` | `int` | 2.3 + 2.4 | `64` | no |  |
 
 ## `ConnectivityCfg`
