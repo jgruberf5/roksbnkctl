@@ -239,10 +239,25 @@ type IBMCloudCfg struct {
 }
 
 type ClusterCfg struct {
-	Create           bool   `yaml:"create"`
-	Name             string `yaml:"name"`
+	// Create decides whether this workspace BUILDS the ROKS cluster or adopts one
+	// that already exists. false means adopt: Name must then match a cluster in
+	// the account, and `cluster register` takes it over without changing it.
+	// Adopting is the common case — most estates build clusters to their own
+	// standards and ask roksbnkctl only for BNK.
+	Create bool `yaml:"create"`
+
+	// Name is the ROKS cluster's name — the one to create, or the existing one to
+	// adopt when Create is false.
+	Name string `yaml:"name"`
+
+	// OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g.
+	// "4.20"). Empty takes IBM's current default, which moves over time — pin it
+	// when a run has to be reproducible. Ignored when adopting.
 	OpenShiftVersion string `yaml:"openshift_version,omitempty"`
-	WorkersPerZone   int    `yaml:"workers_per_zone,omitempty" default:"1"`
+
+	// WorkersPerZone is the worker count PER ZONE, not in total: ROKS spans three
+	// availability zones, so 2 here is a six-node cluster. Ignored when adopting.
+	WorkersPerZone int `yaml:"workers_per_zone,omitempty" default:"1"`
 
 	// PublicGateway controls whether the cluster subnets attach a public gateway
 	// for worker Internet egress. nil → the terraform default (true, current
@@ -292,20 +307,26 @@ type ClusterCfg struct {
 	// are read from the subnets themselves, not from the region default.
 	ExistingSubnetIDs []string `yaml:"existing_subnet_ids,omitempty"`
 
-	// MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select
-	// (the cluster module picks the smallest bx2 profile meeting both minimums).
-	// Rendered as roks_min_worker_vcpu_count / roks_min_worker_memory_gb; 0 (unset)
-	// leaves the terraform defaults (16 vCPU / 64 GB). Only meaningful when Create.
-	// WorkerFlavor names the worker profile exactly, e.g. "cx3d.8x20". Empty
+	// WorkerFlavor names the worker profile EXACTLY, e.g. "cx3d.8x20". Empty
 	// auto-selects from MinWorkerVCPUCount / MinWorkerMemoryGB.
 	//
 	// The auto-select only considers the bx2 family, so any other profile is
 	// unreachable without naming it here — F5's approved reference cluster runs
-	// cx3d.8x20, which no combination of minimums can produce.
+	// cx3d.8x20, which no combination of minimums can produce. Naming the flavor
+	// also pins the exact variant, where two profiles meeting the same minimums
+	// can differ in attributes nothing here tests.
 	WorkerFlavor string `yaml:"worker_flavor,omitempty"`
 
+	// MinWorkerVCPUCount is the vCPU floor for the worker-flavor auto-select: the
+	// cluster module picks the smallest bx2 profile meeting this and
+	// MinWorkerMemoryGB. Ignored when WorkerFlavor names a profile outright.
+	// Rendered as roks_min_worker_vcpu_count; 0 leaves the terraform default (16).
+	// Only meaningful when the cluster is created.
 	MinWorkerVCPUCount int `yaml:"min_worker_vcpu_count,omitempty" default:"16"`
-	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
+
+	// MinWorkerMemoryGB is the memory floor for the same auto-select. Rendered as
+	// roks_min_worker_memory_gb; 0 leaves the terraform default (64).
+	MinWorkerMemoryGB int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
 }
 
 // HugepagesCfg allocates hugepages on the worker pool through the OpenShift

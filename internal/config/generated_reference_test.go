@@ -68,8 +68,8 @@ func TestUndocumentedConfigFieldsDoNotGrow(t *testing.T) {
 		t.Skipf("chapter unreadable: %v", err)
 	}
 
-	// 50 rows carry no description today. The ratchet only ever goes DOWN.
-	const ceiling = 50
+	// 44 rows carry no description today. The ratchet only ever goes DOWN.
+	const ceiling = 44
 
 	lines := strings.Split(string(b), "\n")
 

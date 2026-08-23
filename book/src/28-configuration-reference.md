@@ -275,17 +275,17 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `create` | `bool` | 2.3 + 2.4 | — | yes |  |
-| `name` | `string` | 2.3 + 2.4 | — | yes |  |
-| `openshift_version` | `string` | 2.3 + 2.4 | — | no |  |
-| `workers_per_zone` | `int` | 2.3 + 2.4 | `1` | no |  |
+| `create` | `bool` | 2.3 + 2.4 | — | yes | Create decides whether this workspace BUILDS the ROKS cluster or adopts one that already exists. |
+| `name` | `string` | 2.3 + 2.4 | — | yes | Name is the ROKS cluster's name — the one to create, or the existing one to adopt when Create is false. |
+| `openshift_version` | `string` | 2.3 + 2.4 | — | no | OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g. |
+| `workers_per_zone` | `int` | 2.3 + 2.4 | `1` | no | WorkersPerZone is the worker count PER ZONE, not in total: ROKS spans three availability zones, so 2 here is a six-node cluster. |
 | `public_gateway` | `*bool` | 2.3 + 2.4 | `true` | no | PublicGateway controls whether the cluster subnets attach a public gateway for worker Internet egress. |
 | `vpc_cidr` | `string` | 2.3 + 2.4 | — | no | VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18. |
 | `network_mode` | `string` | 2.3 + 2.4 | `single-nic` | no | NetworkMode selects how the cluster's worker nodes are attached: "single-nic" (the default, and today's only behaviour) or "multi-nic". |
 | `existing_subnet_ids` | `[]string` | 2.3 + 2.4 | — | no | ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per zone in zone order, instead of creating them (#61). |
-| `worker_flavor` | `string` | 2.3 + 2.4 | — | no | MinWorkerVCPUCount / MinWorkerMemoryGB drive the worker-flavor auto-select (the cluster module picks the smallest bx2 profile meeting both minimums). |
-| `min_worker_vcpu_count` | `int` | 2.3 + 2.4 | `16` | no |  |
-| `min_worker_memory_gb` | `int` | 2.3 + 2.4 | `64` | no |  |
+| `worker_flavor` | `string` | 2.3 + 2.4 | — | no | WorkerFlavor names the worker profile EXACTLY, e.g. |
+| `min_worker_vcpu_count` | `int` | 2.3 + 2.4 | `16` | no | MinWorkerVCPUCount is the vCPU floor for the worker-flavor auto-select: the cluster module picks the smallest bx2 profile meeting this and MinWorkerMemoryGB. |
+| `min_worker_memory_gb` | `int` | 2.3 + 2.4 | `64` | no | MinWorkerMemoryGB is the memory floor for the same auto-select. |
 
 ## `ConnectivityCfg`
 

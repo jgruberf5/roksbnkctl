@@ -11,9 +11,9 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 - **19 of the reference's blank descriptions filled** (#181): all twelve
   top-level config sections — `ibmcloud`, `cluster`, `bnk`, `gateway`,
   `registry`, `test`, `tf_source`, `cos`, `targets`, `state`, `bnkforge`,
-  `agent` — and the seven `resources.*` create/adopt toggles and the six per-zone network-mapping fields, which are the
+  `agent` — and the seven `resources.*` create/adopt toggles the six per-zone network-mapping fields and the cluster block, which are the
   adopt-versus-create semantics that made an adopted cluster impossible to
-  install onto. 75 → 50, and the ratchet ceiling moves with it.
+  install onto. 75 → 44, and the ratchet ceiling moves with it.
 
 - **The undocumented-field ratchet was grading the wrong column** (#181). It
   hard-coded column index 5 and read `required`, which is never blank — so it
