@@ -35,11 +35,16 @@ instead.
 Two footnotes on the flavours. For Small, the guide recommends `bx2.8x32` over
 the reference-tested `cx3d.8x20`: the tested flavour works but leaves only ~24
 GiB cluster-wide for applications, and the balanced variant buys four times that
-for a modest price step. And `cx2.8x16` is **excluded** — 0.1 % memory free, it
-cannot hold the platform at all. A per-node DaemonSet floor of ~2.9 vCPU
-(OpenShift/Calico, IBM observability, BNK node agents) consumes 36 % of an 8-vCPU
-node before anything of yours is scheduled, which is why the small flavours trade
-application CPU for cost.
+for a modest price step.
+
+At the other end, the guide reports `cx2.8x16` as leaving **0.1 % memory free**
+and not holding the platform. `roksbnkctl` does **not** refuse it — you can set
+it, and the tool will build it. It is recorded here so the number is visible
+before you choose, not to make the decision for you. A per-node DaemonSet floor
+of ~2.9 vCPU (OpenShift/Calico, IBM observability, BNK node agents) consumes 36 %
+of an 8-vCPU node before anything of yours is scheduled, which is what makes the
+16 GiB variant tight and why the small flavours generally trade application CPU
+for cost.
 
 All of this is **single-NIC**. Multi-NIC is expected to change the picture,
 because per-pod throughput is bounded by TMM thread count rather than by the
