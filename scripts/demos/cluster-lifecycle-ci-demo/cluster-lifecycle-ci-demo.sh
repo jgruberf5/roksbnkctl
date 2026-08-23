@@ -76,6 +76,11 @@ source "$HERE/../lib/demo-format.sh"
 # The container sets its own ROKSBNKCTL_HOME to /work/.roksbnkctl, which is the
 # mounted volume and the whole point of the state volume. So the runtime
 # variables are skipped and the configuration overrides are forwarded.
+# NOTE the ${RUN_ENV[@]+"${RUN_ENV[@]}"} form where this is expanded below. macOS
+# ships bash 3.2, where expanding an EMPTY array under `set -u` is an unbound
+# variable error; bash 4.4+ allows it. A demo run with no ROKSBNKCTL_* set — which
+# is exactly what the behavioural tests do — leaves this array empty, so the plain
+# "${RUN_ENV[@]}" form aborts the script on macOS and nowhere else.
 RUN_ENV=()
 while IFS='=' read -r _n _; do
   case "$_n" in
@@ -86,7 +91,7 @@ done < <(env)
 
 RUN=(docker run --rm -v "$WORK:/work"
      -e IBMCLOUD_API_KEY -e BNK_FORGE_URL -e BNK_FORGE_USER -e BNK_FORGE_PASSWORD
-     "${RUN_ENV[@]}"
+     ${RUN_ENV[@]+"${RUN_ENV[@]}"}
      "$RUNNER" -w "$WS")
 
 # ============================ teardown =======================================
