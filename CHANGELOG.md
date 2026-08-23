@@ -8,6 +8,31 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **`resources.cert_manager: {create: false}` now actually skips cert-manager.**
+  It never did. `install_cert_manager` was declared in `variables.tf`, rendered
+  into `terraform.tfvars` by the Go side, and carried in
+  `terraform.tfvars.example` — and **no terraform anywhere read it**. The module
+  was gated on `deploy_cert_manager`, an unrelated internal bnk-phase override,
+  so the operator's setting was inert and `bnk up` created the namespace
+  regardless. On an adopted cluster that already ran cert-manager the apply died
+  on `namespaces "cert-manager" already exists` with no way to proceed.
+
+  Verified by evaluated plan rather than `validate`, in both directions: 35
+  resources with `install_cert_manager=true` including all three cert-manager
+  resources, 32 with `false` and none of them.
+
+  Gating it also means the inner module's destroy provisioner —
+  `kubectl delete namespace cert-manager` — is `count=0` when adopting, so
+  `bnk down` can no longer delete a cert-manager we did not install, or the
+  certificates it had issued.
+
+  This is the second setting found inert end to end, after
+  `cneinstance_advanced_env`. `TestEveryRootVariableIsRead` now fails the build
+  for any root variable no terraform reads, which catches the class on the commit
+  that introduces it. It found exactly one deliberate exception —
+  `cluster_network_mode`, whose HCL copy exists only for its validation block —
+  which is recorded with its reason.
+
 - **Adopting a cluster that already has cert-manager is now expressible from CI**
   (#186). `resources.cert_manager`, `resources.registry_cos` and
   `resources.cluster_jumphosts` had no environment override, so a container-driven

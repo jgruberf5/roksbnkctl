@@ -85,11 +85,20 @@ module "cert_manager" {
   # Empty (the default) leaves the chart's public image.repository untouched.
   cert_manager_image_repository = var.use_registry_mirror ? var.far_image_repo_url : ""
   create_roks_cluster           = var.create_roks_cluster
-  deploy_cert_manager           = var.deploy_cert_manager
-  roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
-  kubeconfig_dir                = "${var.kubeconfig_dir}/cert_manager"
-  registry_mirror_username      = var.registry_mirror_username
-  registry_mirror_password      = var.registry_mirror_password
+  # install_cert_manager is the OPERATOR's setting (resources.cert_manager.create
+  # / ROKSBNKCTL_CERT_MANAGER_CREATE); deploy_cert_manager is the internal
+  # bnk-phase override. Both must agree before the module brings cert-manager up.
+  # An adopted cluster very often already runs cert-manager — OpenShift installs
+  # it as a day-1 add-on — and without this the apply died on
+  # `namespaces "cert-manager" already exists`. Disabling here also means the
+  # inner module's destroy provisioner (kubectl delete namespace cert-manager) is
+  # gated to count=0, so `bnk down` cannot delete a cert-manager we did not
+  # install, nor the certificates it issued.
+  deploy_cert_manager        = var.deploy_cert_manager && var.install_cert_manager
+  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
+  kubeconfig_dir             = "${var.kubeconfig_dir}/cert_manager"
+  registry_mirror_username   = var.registry_mirror_username
+  registry_mirror_password   = var.registry_mirror_password
 }
 
 
