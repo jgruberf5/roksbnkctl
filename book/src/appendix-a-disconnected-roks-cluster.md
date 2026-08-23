@@ -988,4 +988,5 @@ appendix:
 |---|---|
 | [`disconnected-cluster-cli-demo`](https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/disconnected-cluster-cli-demo) | Part 0 + topology D from the CLI |
 | [`disconnected-cluster-ci-demo`](https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/disconnected-cluster-ci-demo) | the same as a two-Workflow pipeline, plus the k3s + Argo VSI build |
+| [`artifactory-adopt-ci-demo`](https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/artifactory-adopt-ci-demo) | topology **D** with nothing created at all — an existing gateway, VPC and cluster, images from a JFrog Artifactory the customer already runs, and **cert-manager adopted**. No `config.yaml` exists: the workspace is built entirely from `docker run -e`. This is the shape most customers arrive in. |
 | [`blueprint-workflows-ci-demo`](https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/blueprint-workflows-ci-demo) | **all four topologies** as Argo Workflows, plus the mirror and FLP prerequisites |
