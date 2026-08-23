@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -220,6 +221,9 @@ func tfxConsumeWatch(ctx context.Context, w watch.Interface, name string, m wait
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return true, nil
 			}
+			if why, terminal := terminalWaitDiagnosis(desc); terminal {
+				return false, fmt.Errorf("%s cannot become ready: %s", name, why)
+			}
 			fmt.Fprintf(logw, "tfx wait: %s not ready -- %s (want [%s])\n", name, desc, m)
 		}
 	}
@@ -260,6 +264,9 @@ func runTFXWaitPoll(ctx context.Context, ri dynamic.ResourceInterface, name stri
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return nil
 			} else {
+				if why, terminal := terminalWaitDiagnosis(desc); terminal {
+					return fmt.Errorf("%s cannot become ready: %s", name, why)
+				}
 				fmt.Fprintf(logw, "tfx wait: %s not ready -- %s (want [%s], attempt %d)\n", name, desc, m, attempt)
 			}
 		case apierrors.IsNotFound(err):
@@ -374,4 +381,62 @@ func evalJSONPath(jp *jsonpath.JSONPath, data interface{}) (string, error) {
 		}
 	}
 	return strings.Join(vals, ","), nil
+}
+
+// unschedulableRe recognises the scheduler's "Insufficient <resource>" verdict
+// inside a status-condition message.
+//
+// The operator republishes the failing pod's scheduling message verbatim, e.g.
+//
+//	pod f5-bnk/f5-tmm-…: 0/3 nodes are available: 3 Insufficient hugepages-2Mi
+//
+// so the diagnosis is already in the data `tfx wait` polls; nothing extra has to
+// be queried to produce it.
+var unschedulableRe = regexp.MustCompile(`(\d+)/(\d+) nodes are available: .*?Insufficient ([a-zA-Z0-9\-\./]+)`)
+
+// terminalWaitDiagnosis reports whether a condition message describes a state
+// that WAITING CANNOT FIX, and returns an explanation if so.
+//
+// A pod the scheduler has rejected for insufficient node resources will not
+// become schedulable by waiting: no node gains capacity on its own. Before this,
+// `bnk up` sat for the full 15-minute timeout and then failed with
+//
+//	f5-bnk-f5-cne-controller not ready -- Available=False
+//
+// which names neither the resource nor the pod. Twice during BNK 2.4 validation
+// that cost fifteen minutes apiece to learn "the nodes have no hugepages".
+//
+// Deliberately narrow: only the scheduler's own "Insufficient <resource>"
+// verdict. A pod that is Pending for an unbound PVC, an image pull, or a
+// not-yet-created node genuinely may resolve by waiting, and failing those early
+// would trade a slow success for a fast wrong answer.
+func terminalWaitDiagnosis(desc string) (string, bool) {
+	m := unschedulableRe.FindStringSubmatch(desc)
+	if m == nil {
+		return "", false
+	}
+	avail, total, resource := m[1], m[2], m[3]
+	if avail != "0" {
+		// Some nodes still fit; the scheduler may yet place it.
+		return "", false
+	}
+
+	msg := fmt.Sprintf("no node can run this pod: %s of %s nodes lack %q, and waiting will not create capacity.",
+		avail, total, resource)
+	if strings.HasPrefix(resource, "hugepages-") {
+		msg += "\n\n" +
+			"  BNK's deploymentSize decides how much it asks for. Tiny requests NO hugepages;\n" +
+			"  Small requests 4Gi of hugepages-2Mi. A stock ROKS worker reports 0 — including\n" +
+			"  F5's own reference cluster, which runs Tiny for exactly this reason.\n\n" +
+			"  Two ways forward:\n\n" +
+			"    bnk.cneinstance_size: Tiny      # ask for what the nodes already have\n\n" +
+			"    bnk.hugepages:                  # or give the nodes what BNK asked for\n" +
+			"      enabled: true\n" +
+			"      count: 2048                   # x 2M = 4Gi per node\n\n" +
+			"  bnk.hugepages allocates them through the Node Tuning Operator. Note that it\n" +
+			"  sets a bootloader kernel argument, so the Machine Config Operator DRAINS AND\n" +
+			"  REBOOTS every matching worker in turn — a maintenance event, not a config\n" +
+			"  change. That is why it is off by default and you are reading this instead."
+	}
+	return msg, true
 }

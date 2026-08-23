@@ -30,6 +30,7 @@
 # ============================================================
 
 module "roks_cluster" {
+  bnk_line       = var.bnk_line
   source         = "./modules/roks_cluster"
   cluster_absent = var.cluster_absent
 

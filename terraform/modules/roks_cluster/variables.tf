@@ -216,3 +216,9 @@ variable "roks_worker_flavor" {
   type        = string
   default     = ""
 }
+
+variable "bnk_line" {
+  description = "BNK release line (2.3 / 2.4), used to pick a VALIDATED default worker flavor per line."
+  type        = string
+  default     = "2.3"
+}

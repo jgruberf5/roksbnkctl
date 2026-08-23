@@ -115,6 +115,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `gateway_api_version` | `string` | 2.4 | `1.5.0` | no | GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. |
 | `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
 | `whole_cluster` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | TCPSettings overrides fields on the data-plane F5BigTcpSetting CR. |
+| `hugepages` | `*HugepagesCfg` | 2.3 + 2.4 | — | no | Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator. |
 | `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no |  |
 | `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
@@ -324,6 +325,18 @@ ExecToolCfg is one entry under workspace.Exec — the chosen backend for a given
 | `vxlan_port` | `int` | 2.3 + 2.4 | — | no |  |
 | `route_examples` | `[]string` | 2.3 + 2.4 | — | no | RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates. |
 | `l4_listener_port` | `int` | 2.3 + 2.4 | — | no | L4ListenerPort is the port for that TCP listener. |
+
+## `HugepagesCfg`
+
+HugepagesCfg allocates hugepages on the worker pool through the OpenShift Node Tuning Operator.  BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including F5's approved reference cluster, which runs Tiny for exactly this reason. So any size above Tiny needs this, or nodes prepared some other way.  APPLYING THIS REBOOTS WORKERS. The profile sets a bootloader kernel argument, and the Machine Config Operator rolls the pool to apply it — draining and restarting each node in turn. On a live cluster that is a maintenance event, not a configuration change.
+
+| key | type | line | default | required | description |
+|---|---|---|---|---|---|
+| `enabled` | `bool` | 2.3 + 2.4 | — | yes | Enabled allocates hugepages. |
+| `size` | `string` | 2.3 + 2.4 | `2M` | no | Size is the hugepage size, e.g. |
+| `count` | `int` | 2.3 + 2.4 | `2048` | no | Count is the number of pages PER NODE. |
+| `node_role` | `string` | 2.3 + 2.4 | `worker` | no | NodeRole is the machineconfiguration.openshift.io/role the profile applies to. |
+| `profile_name` | `string` | 2.3 + 2.4 | `bnk-hugepages` | no | ProfileName names the Tuned profile and CR. |
 
 ## `IBMCloudCfg`
 

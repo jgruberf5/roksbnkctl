@@ -62,6 +62,11 @@ import (
 //	ROKSBNKCTL_GATEWAY_API_VERSION             → bnk.gateway_api_version
 //	ROKSBNKCTL_DEMO_MODE                       → bnk.demo_mode (bool)
 //	ROKSBNKCTL_WHOLE_CLUSTER                   → bnk.whole_cluster (bool)
+//	ROKSBNKCTL_HUGEPAGES                       → bnk.hugepages.enabled (bool) —
+//	                                             allocates hugepages on the worker
+//	                                             pool. REBOOTS WORKERS.
+//	ROKSBNKCTL_HUGEPAGES_SIZE                  → bnk.hugepages.size (2M / 1G)
+//	ROKSBNKCTL_HUGEPAGES_COUNT                 → bnk.hugepages.count (per node)
 //	ROKSBNKCTL_OPENSHIFT_VERSION    → cluster.openshift_version
 //	ROKSBNKCTL_WORKERS_PER_ZONE     → cluster.workers_per_zone (int)
 //	ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY → cluster.public_gateway (bool; false = no worker egress)
@@ -177,6 +182,18 @@ func OverrideFromEnv(ws *Workspace) []string {
 		{"ROKSBNKCTL_TMM_ZONE_TOPOLOGY_KEY", func(v string) { ws.BNK.TMMZoneTopologyKey = v }},
 		{"ROKSBNKCTL_TMM_ZONE_WHEN_UNSATISFIABLE", func(v string) { ws.BNK.TMMZoneWhenUnsatisfiable = v }},
 		{"ROKSBNKCTL_TMM_POD_LABEL", func(v string) { ws.BNK.TMMPodLabel = v }},
+		{"ROKSBNKCTL_HUGEPAGES_SIZE", func(v string) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Size = v
+		}},
+		{"ROKSBNKCTL_HUGEPAGES_SIZE", func(v string) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Size = v
+		}},
 		{"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET", func(v string) { ws.BNK.ExternalBigIPLoginSecret = v }},
 		{"ROKSBNKCTL_CLUSTER_IDENTIFIER", func(v string) { ws.BNK.ClusterIdentifier = v }},
 		{"ROKSBNKCTL_GATEWAY_API_VERSION", func(v string) { ws.BNK.GatewayAPIVersion = v }},
@@ -192,6 +209,18 @@ func OverrideFromEnv(ws *Workspace) []string {
 	}{
 		{"ROKSBNKCTL_TMM_REPLICAS", func(n int) { ws.BNK.TMMReplicas = n }},
 		{"ROKSBNKCTL_TMM_ZONE_MAX_SKEW", func(n int) { ws.BNK.TMMZoneMaxSkew = n }},
+		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Count = n
+		}},
+		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Count = n
+		}},
 	} {
 		if v := envValue(o.env); v != "" {
 			if n, err := strconv.Atoi(v); err == nil {
@@ -213,6 +242,12 @@ func OverrideFromEnv(ws *Workspace) []string {
 		{"ROKSBNKCTL_EXTERNAL_BIGIP", func(b *bool) { ws.BNK.ExternalBigIP = b }},
 		{"ROKSBNKCTL_DEMO_MODE", func(b *bool) { ws.BNK.DemoMode = b }},
 		{"ROKSBNKCTL_WHOLE_CLUSTER", func(b *bool) { ws.BNK.WholeCluster = b }},
+		{"ROKSBNKCTL_HUGEPAGES", func(b *bool) {
+			if ws.BNK.Hugepages == nil {
+				ws.BNK.Hugepages = &HugepagesCfg{}
+			}
+			ws.BNK.Hugepages.Enabled = *b
+		}},
 	} {
 		if v := envValue(o.env); v != "" {
 			if b, err := strconv.ParseBool(v); err == nil {
@@ -874,6 +909,9 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_CLUSTER_IDENTIFIER",
 	"ROKSBNKCTL_DEMO_MODE",
 	"ROKSBNKCTL_WHOLE_CLUSTER",
+	"ROKSBNKCTL_HUGEPAGES",
+	"ROKSBNKCTL_HUGEPAGES_COUNT",
+	"ROKSBNKCTL_HUGEPAGES_SIZE",
 	"ROKSBNKCTL_EXTERNAL_BIGIP",
 	"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET",
 	"ROKSBNKCTL_GATEWAY_API_VERSION",

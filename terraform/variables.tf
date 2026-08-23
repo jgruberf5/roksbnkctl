@@ -110,7 +110,7 @@ variable "openshift_cluster_version" {
     OCP silently (#178).
   EOT
   type        = string
-  default     = "4.20"
+  default     = "4.21"
 
   validation {
     # The suffix is appended by modules/roks_cluster/modules/cluster; supplying
@@ -1286,4 +1286,43 @@ variable "roks_worker_flavor" {
   EOT
   type        = string
   default     = ""
+}
+
+# ── hugepages on the worker pool ─────────────────────────────────────────────
+
+variable "cneinstance_hugepages" {
+  description = <<-EOT
+    Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator.
+
+    OFF by default. Turning it on sets a bootloader kernel argument, which makes
+    the Machine Config Operator DRAIN AND REBOOT every matching worker, one at a
+    time. That is a maintenance event, not a configuration change, and is not
+    something a default should decide.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "cneinstance_hugepages_size" {
+  description = "Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size."
+  type        = string
+  default     = "2M"
+}
+
+variable "cneinstance_hugepages_count" {
+  description = "Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request."
+  type        = number
+  default     = 2048
+}
+
+variable "cneinstance_hugepages_node_role" {
+  description = "machineconfiguration.openshift.io/role the Tuned profile applies to."
+  type        = string
+  default     = "worker"
+}
+
+variable "cneinstance_hugepages_profile_name" {
+  description = "Name of the Tuned profile and CR."
+  type        = string
+  default     = "bnk-hugepages"
 }

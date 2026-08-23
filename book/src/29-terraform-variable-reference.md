@@ -21,7 +21,7 @@ Source: `terraform/variables.tf`
 | `deploy_cert_manager` | `bool` | `true` | When true, the cert_manager module's helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to \"direct-apply\"). | no |
 | `roks_cluster_vpc_name` | `string` | `"tf-cluster-vpc"` | Name of the cluster VPC | no |
 | `openshift_cluster_name` | `string` | `"tf-openshift-cluster"` | Name of the OpenShift cluster | no |
-| `openshift_cluster_version` | `string` | `"4.20"` | OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty uses the latest available. | no |
+| `openshift_cluster_version` | `string` | `"4.21"` | OpenShift cluster version as a BARE major.minor prefix (e.g. "4.20"). Empty uses the latest available. | no |
 | `roks_workers_per_zone` | `number` | `1` | Number of worker nodes per availability zone | no |
 | `roks_min_worker_vcpu_count` | `number` | `16` | Minimum vCPU count when auto-selecting the worker node flavor | no |
 | `roks_min_worker_memory_gb` | `number` | `64` | Minimum memory in GB when auto-selecting the worker node flavor | no |
@@ -158,6 +158,11 @@ Source: `terraform/variables.tf`
 | `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
 | `cneinstance_whole_cluster_override` | `string` | `""` | spec.wholeCluster, as a tri-state. | no |
 | `roks_worker_flavor` | `string` | `""` | Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects. | no |
+| `cneinstance_hugepages` | `bool` | `false` | Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator. | no |
+| `cneinstance_hugepages_size` | `string` | `"2M"` | Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size. | no |
+| `cneinstance_hugepages_count` | `number` | `2048` | Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request. | no |
+| `cneinstance_hugepages_node_role` | `string` | `"worker"` | machineconfiguration.openshift.io/role the Tuned profile applies to. | no |
+| `cneinstance_hugepages_profile_name` | `string` | `"bnk-hugepages"` | Name of the Tuned profile and CR. | no |
 
 ## Module: `cert_manager`
 
@@ -239,6 +244,11 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_tcp_settings` | `map(string)` | `{}` | F5BigTcpSetting field overrides, as a flat map of field name to value. | no |
 | `cneinstance_tcp_settings_name` | `string` | `"sys-default-tcp"` | Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp. | no |
 | `cneinstance_whole_cluster_override` | `string` | `""` | spec.wholeCluster, as a tri-state. | no |
+| `cneinstance_hugepages` | `bool` | `false` | Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator. | no |
+| `cneinstance_hugepages_size` | `string` | `"2M"` | Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size. | no |
+| `cneinstance_hugepages_count` | `number` | `2048` | Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request. | no |
+| `cneinstance_hugepages_node_role` | `string` | `"worker"` | machineconfiguration.openshift.io/role the Tuned profile applies to. | no |
+| `cneinstance_hugepages_profile_name` | `string` | `"bnk-hugepages"` | Name of the Tuned profile and CR. | no |
 
 ## Module: `flo`
 
@@ -476,6 +486,7 @@ Source: `terraform/modules/roks_cluster/variables.tf`
 | `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0. | no |
 | `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0. | no |
 | `roks_worker_flavor` | `string` | `""` | Exact worker-node flavor, e.g. "cx3d.8x20". Empty auto-selects. | no |
+| `bnk_line` | `string` | `"2.3"` | BNK release line (2.3 / 2.4), used to pick a VALIDATED default worker flavor per line. | no |
 
 ## Module: `testing`
 

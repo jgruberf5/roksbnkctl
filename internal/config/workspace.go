@@ -264,6 +264,38 @@ type ClusterCfg struct {
 	MinWorkerMemoryGB  int `yaml:"min_worker_memory_gb,omitempty" default:"64"`
 }
 
+// HugepagesCfg allocates hugepages on the worker pool through the OpenShift
+// Node Tuning Operator.
+//
+// BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small
+// requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including
+// F5's approved reference cluster, which runs Tiny for exactly this reason. So
+// any size above Tiny needs this, or nodes prepared some other way.
+//
+// APPLYING THIS REBOOTS WORKERS. The profile sets a bootloader kernel argument,
+// and the Machine Config Operator rolls the pool to apply it — draining and
+// restarting each node in turn. On a live cluster that is a maintenance event,
+// not a configuration change.
+type HugepagesCfg struct {
+	// Enabled allocates hugepages. Default false.
+	Enabled bool `yaml:"enabled"`
+
+	// Size is the hugepage size, e.g. "2M" or "1G". TMM asks for hugepages-2Mi,
+	// so 2M is what matches unless F5 says otherwise for a given size.
+	Size string `yaml:"size,omitempty" default:"2M"`
+
+	// Count is the number of pages PER NODE. 2048 x 2M = 4Gi, which is what
+	// deploymentSize Small was observed to request.
+	Count int `yaml:"count,omitempty" default:"2048"`
+
+	// NodeRole is the machineconfiguration.openshift.io/role the profile applies
+	// to. "worker" is every worker in the pool.
+	NodeRole string `yaml:"node_role,omitempty" default:"worker"`
+
+	// ProfileName names the Tuned profile and CR.
+	ProfileName string `yaml:"profile_name,omitempty" default:"bnk-hugepages"`
+}
+
 // ResourcesCfg holds the per-resource create toggles for a prefix-driven
 // workspace (Sprint 26). The cluster itself is NOT here — it reuses the
 // existing ClusterCfg.Create / ClusterCfg.Name (Name doubles as the
@@ -558,6 +590,17 @@ type BNKCfg struct {
 	// watchNamespaces=["All"] as an invalid product configuration, because that
 	// says "watch everything" twice in two contradictory ways.
 	WholeCluster *bool `yaml:"whole_cluster,omitempty" default:"false on 2.4, true on 2.3"`
+
+	// Hugepages optionally allocates hugepages on the worker pool via the
+	// OpenShift Node Tuning Operator.
+	//
+	// OFF by default, deliberately. Allocating hugepages changes the kernel
+	// command line, which means the Machine Config Operator DRAINS AND REBOOTS
+	// every matching worker, one at a time. That is not something to do because
+	// a default said so — a cluster that does not need it should never be
+	// rebooted for it. With it off, a deploymentSize that needs hugepages fails
+	// fast with a diagnosis naming this setting.
+	Hugepages *HugepagesCfg `yaml:"hugepages,omitempty"`
 
 	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
 

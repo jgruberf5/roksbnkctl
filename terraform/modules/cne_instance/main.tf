@@ -73,8 +73,13 @@ module "cneinstance" {
   cneinstance_env_discovery     = false
   cneinstance_advanced_env      = var.cneinstance_advanced_env
 
-  cneinstance_tcp_settings      = var.cneinstance_tcp_settings
-  cneinstance_tcp_settings_name = var.cneinstance_tcp_settings_name
+  cneinstance_tcp_settings           = var.cneinstance_tcp_settings
+  cneinstance_hugepages              = var.cneinstance_hugepages
+  cneinstance_hugepages_size         = var.cneinstance_hugepages_size
+  cneinstance_hugepages_count        = var.cneinstance_hugepages_count
+  cneinstance_hugepages_node_role    = var.cneinstance_hugepages_node_role
+  cneinstance_hugepages_profile_name = var.cneinstance_hugepages_profile_name
+  cneinstance_tcp_settings_name      = var.cneinstance_tcp_settings_name
   # BNK 2.4 conformance with F5's reference CNEInstance (all 2.4-gated inside).
   cneinstance_tmm_replicas                   = var.cneinstance_tmm_replicas
   cneinstance_watch_namespaces               = var.cneinstance_watch_namespaces

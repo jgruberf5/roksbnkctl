@@ -487,6 +487,7 @@ func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryM
 	renderBNKLine(w, ws)
 	renderBNKAdvancedEnv(w, ws)
 	renderBNKTCPSettings(w, ws)
+	renderBNKHugepages(w, ws)
 	renderBNKNamespaces(w, ws)
 	renderBNKTrustedProfile(w, ws)
 	if err := renderBNKGTM(w, ws); err != nil {
@@ -1065,4 +1066,29 @@ func renderBNKTCPSettings(w io.Writer, ws *config.Workspace) {
 	}
 	b.WriteString("}\n")
 	fmt.Fprint(w, b.String())
+}
+
+// renderBNKHugepages emits the worker-pool hugepage allocation.
+//
+// Nothing renders when unset, so no Tuned profile is written and no worker is
+// rebooted — which is the point: the default must never trigger a rolling
+// reboot of the pool.
+func renderBNKHugepages(w io.Writer, ws *config.Workspace) {
+	h := ws.BNK.Hugepages
+	if h == nil {
+		return
+	}
+	fmt.Fprintf(w, "cneinstance_hugepages = %t\n", h.Enabled)
+	if h.Size != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_size = %q\n", h.Size)
+	}
+	if h.Count != 0 {
+		fmt.Fprintf(w, "cneinstance_hugepages_count = %d\n", h.Count)
+	}
+	if h.NodeRole != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_node_role = %q\n", h.NodeRole)
+	}
+	if h.ProfileName != "" {
+		fmt.Fprintf(w, "cneinstance_hugepages_profile_name = %q\n", h.ProfileName)
+	}
 }

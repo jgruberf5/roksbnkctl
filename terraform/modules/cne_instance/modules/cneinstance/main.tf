@@ -924,3 +924,62 @@ resource "kubectl_manifest" "tcp_settings" {
 
 depends_on = [kubectl_manifest.cneinstance]
 }
+
+# ── hugepages on the worker pool ─────────────────────────────────────────────
+#
+# BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small
+# requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including
+# F5's approved reference cluster, which runs Tiny for exactly that reason. So
+# any size above Tiny needs hugepages allocated, or TMM never schedules.
+#
+# A Tuned profile rather than a MachineConfig: the Node Tuning Operator is
+# already installed on OpenShift (the reference cluster has tuned/default), it
+# owns the node-level kernel tuning surface, and it renders the MachineConfig
+# itself. Writing a MachineConfig by hand would put this tree in competition
+# with an operator that is already there to do it.
+#
+# THIS REBOOTS WORKERS. `cmdline_hugepages` is a bootloader argument, so the
+# Machine Config Operator rolls the pool to apply it — draining and restarting
+# each node in turn. Hence off by default: a cluster that does not need
+# hugepages should never be rebooted because a default said so.
+resource "kubectl_manifest" "hugepages_tuned" {
+  count             = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
+  server_side_apply = true
+  force_conflicts   = true
+
+  yaml_body = yamlencode({
+    apiVersion = "tuned.openshift.io/v1"
+    kind       = "Tuned"
+    metadata = {
+      name      = var.cneinstance_hugepages_profile_name
+      namespace = "openshift-cluster-node-tuning-operator"
+    }
+    spec = {
+      profile = [
+        {
+          name = var.cneinstance_hugepages_profile_name
+          data = join("\n", [
+            "[main]",
+            "summary=Allocate hugepages for BIG-IP Next for Kubernetes TMM",
+            "include=openshift-node",
+            "",
+            "[bootloader]",
+            format("cmdline_hugepages=+hugepagesz=%s hugepages=%d",
+            var.cneinstance_hugepages_size, var.cneinstance_hugepages_count),
+            "",
+          ])
+        },
+      ]
+      recommend = [
+        {
+          machineConfigLabels = {
+            "machineconfiguration.openshift.io/role" = var.cneinstance_hugepages_node_role
+          }
+          # Above the default profile's priority so this wins for these nodes.
+          priority = 20
+          profile  = var.cneinstance_hugepages_profile_name
+        },
+      ]
+    }
+  })
+}
