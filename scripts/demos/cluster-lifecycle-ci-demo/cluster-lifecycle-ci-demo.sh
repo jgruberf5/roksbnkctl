@@ -58,8 +58,22 @@ source "$HERE/../lib/demo-format.sh"
 # RUN is the runner invocation each CI step calls. The image ENTRYPOINT is
 # roksbnkctl, so args after the image are roksbnkctl args. -e passes secrets by
 # NAME (the value never appears in argv); -v mounts the state volume at /work.
+# Every ROKSBNKCTL_* override in the environment is forwarded BY NAME, alongside
+# the credentials. Without this the container sees none of them: the pipeline
+# could not be configured at all from CI, which is the one place a container
+# runner exists to serve. Found by an override being silently dropped and the
+# workspace falling back to COS it had no access to.
+#
+# By name, not by value, for the same reason the credentials are: the value never
+# appears in argv, so it cannot leak into a process list or a recording.
+RUN_ENV=()
+while IFS='=' read -r _n _; do
+  case "$_n" in ROKSBNKCTL_*) RUN_ENV+=(-e "$_n") ;; esac
+done < <(env)
+
 RUN=(docker run --rm -v "$WORK:/work"
      -e IBMCLOUD_API_KEY -e BNK_FORGE_URL -e BNK_FORGE_USER -e BNK_FORGE_PASSWORD
+     "${RUN_ENV[@]}"
      "$RUNNER" -w "$WS")
 
 # ============================ teardown =======================================
