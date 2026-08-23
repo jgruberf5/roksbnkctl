@@ -59,7 +59,7 @@ Source: `terraform/variables.tf`
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=<cluster vpc>). | no |
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
-| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here. | no |
+| `cneinstance_deployment_size` | `string` | `""` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here. | no |
 | `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
 | `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
 | `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
@@ -200,7 +200,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_trusted_profile_sa_name` | `string` | `""` | The CNE controller service account; must match what the flo module linked. | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM IAM Trusted Profile ID for provisioning VPC routes | no |
 | `flo_cluster_issuer_name` | `string` | `""` | mTLS certificate issuer name | no |
-| `cneinstance_deployment_size` | `string` | `"Small"` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses. | no |
+| `cneinstance_deployment_size` | `string` | `""` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses. | no |
 | `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
 | `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
 | `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |

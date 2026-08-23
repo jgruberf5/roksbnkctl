@@ -465,9 +465,9 @@ variable "cneinstance_network_attachments" {
 # ============================================================
 
 variable "cneinstance_deployment_size" {
-  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here."
+  description = "Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here."
   type        = string
-  default     = "Small"
+  default     = ""
 }
 
 variable "cneinstance_gtm_url" {
