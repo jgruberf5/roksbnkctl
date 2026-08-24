@@ -217,9 +217,9 @@ BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `zones` | `[]BNKZoneCfg` | 2.3 + 2.4 | — | no | Zones is the per-availability-zone network mapping, in zone order — one entry per zone the cluster spans. |
-| `vlan_prefixlen` | `*int` | 2.3 + 2.4 | `24` | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
-| `vlan_prefixlen_external` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
-| `vlan_prefixlen_internal` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenInternal is the same override for the INTERNAL VLAN. |
+| `vlan_prefixlen` | `*int` | 2.3 | `24` | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
+| `vlan_prefixlen_external` | `*int` | 2.3 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
+| `vlan_prefixlen_internal` | `*int` | 2.3 | — | no | VLANPrefixLenInternal is the same override for the INTERNAL VLAN. |
 | `tmm_k8s_routes` | `string` | 2.3 + 2.4 | `172.17.0.0/18` | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
 
 ## `BNKPreflightCfg`
@@ -247,11 +247,11 @@ BNKZoneCfg is one availability zone's subnet CIDRs + TMM self-IPs. Field order/n
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `ext_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes | ExtVLANCIDR is the zone's EXTERNAL VLAN — the client side of the data plane, where traffic arrives. |
-| `int_vlan_cidr` | `string` | 2.3 + 2.4 | — | yes | IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches the workloads it fronts. |
+| `int_vlan_cidr` | `string` | 2.3 | — | yes | IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches the workloads it fronts. |
 | `int_snat_cidr` | `string` | 2.3 + 2.4 | — | yes | IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the return traffic comes back through TMM rather than routing around it. |
 | `int_vip_cidr` | `string` | 2.3 + 2.4 | — | yes | IntVIPCIDR is the range virtual servers are allocated from on the internal side. |
-| `external_selfip` | `string` | 2.3 + 2.4 | — | yes | ExternalSelfIP is TMM's own address on the external VLAN. |
-| `internal_selfip` | `string` | 2.3 + 2.4 | — | yes | InternalSelfIP is TMM's own address on the internal VLAN. |
+| `external_selfip` | `string` | 2.3 | — | yes | ExternalSelfIP is TMM's own address on the external VLAN. |
+| `internal_selfip` | `string` | 2.3 | — | yes | InternalSelfIP is TMM's own address on the internal VLAN. |
 
 ## `COSCfg`
 

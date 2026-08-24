@@ -1074,7 +1074,14 @@ type BNKNetworkCfg struct {
 	// default (24); set only when the VLAN subnets aren't /24. A pointer so "unset"
 	// (fall back to the default) is distinct from a literal 0. Rendered as
 	// cneinstance_vlan_prefixlen.
-	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty" default:"24"`
+	//
+	// 2.3 ONLY. Its only consumer is the external/internal F5SPKVlan pair, and
+	// those CRs are count-gated to line_pre_24 (#187). 2.4 carries no prefix
+	// length of its own: Infra's IPAM pools are CIDRs, and a CIDR already states
+	// its mask. Verified by TestConfigLineTagsMatchWhatTerraformRenders — perturbing
+	// cneinstance_vlan_prefixlen changes the 2.3 rendered surface and leaves the
+	// 2.4 one byte-identical.
+	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty" line:"2.3" default:"24"`
 	// VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one
 	// VLAN. nil → that VLAN uses VLANPrefixLen, so a deployment that does not need
 	// them keeps one knob and one value.
@@ -1085,11 +1092,14 @@ type BNKNetworkCfg struct {
 	// deliberately independent of the CIDRs, so a smaller or larger
 	// directly-connected block can be forced and the remainder steered with static
 	// routes.
-	VLANPrefixLenExternal *int `yaml:"vlan_prefixlen_external,omitempty"`
+	//
+	// 2.3 ONLY, for the same reason as VLANPrefixLen: it overrides a value that
+	// only the F5SPKVlan CRs read.
+	VLANPrefixLenExternal *int `yaml:"vlan_prefixlen_external,omitempty" line:"2.3"`
 
 	// VLANPrefixLenInternal is the same override for the INTERNAL VLAN. nil → it
-	// uses VLANPrefixLen.
-	VLANPrefixLenInternal *int `yaml:"vlan_prefixlen_internal,omitempty"`
+	// uses VLANPrefixLen. 2.3 ONLY, as above.
+	VLANPrefixLenInternal *int `yaml:"vlan_prefixlen_internal,omitempty" line:"2.3"`
 	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
 	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
@@ -1291,27 +1301,52 @@ type BNKZoneCfg struct {
 	// plane, where traffic arrives. Overlay addressing internal to BNK: it does
 	// not have to exist in the VPC, but it must not collide with anything the
 	// cluster can route to.
+	//
+	// BOTH LINES, and deliberately untagged. cloud-network-mapping and the
+	// F5SPKVlan CRs are 2.3-only, which makes it tempting to conclude this whole
+	// struct is — it is not. On 2.4 the gateway module builds Infra's
+	// external-vlan-ipam pool and every zone's staticRoutes nextHop from this same
+	// value (terraform/modules/gateway/infra_24.tf). Marking it 2.3 would hide
+	// addressing a 2.4 operator has to get right.
 	ExtVLANCIDR string `yaml:"ext_vlan_cidr"`
 
 	// IntVLANCIDR is the zone's INTERNAL VLAN — the pod side, where BNK reaches
 	// the workloads it fronts.
-	IntVLANCIDR string `yaml:"int_vlan_cidr"`
+	//
+	// 2.3 ONLY, and it is the one CIDR in this struct that is. Its only consumer
+	// is the cloud-network-mapping ConfigMap, which is count-gated to line_pre_24
+	// (#187). The 2.4 Infra CR builds its three IPAM pools from ExtVLANCIDR,
+	// IntVIPCIDR and IntSNATCIDR and never reads this one — the internal side is
+	// not a TMM-addressed VLAN there.
+	IntVLANCIDR string `yaml:"int_vlan_cidr" line:"2.3"`
 
 	// IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the
 	// return traffic comes back through TMM rather than routing around it.
+	// BOTH LINES: 2.3 reads it from cloud-network-mapping and the F5SPKSnatpool
+	// addressList; 2.4 reads it as Infra's egress-snat-ipam pool.
 	IntSNATCIDR string `yaml:"int_snat_cidr"`
 
 	// IntVIPCIDR is the range virtual servers are allocated from on the internal
-	// side.
+	// side. BOTH LINES: 2.3 reads it from cloud-network-mapping and
+	// F5BnkGateway.defaultListenerNetworks; 2.4 reads it as Infra's
+	// vip-listener-ipam pool.
 	IntVIPCIDR string `yaml:"int_vip_cidr"`
 
 	// ExternalSelfIP is TMM's own address on the external VLAN. Must sit inside
 	// ExtVLANCIDR.
-	ExternalSelfIP string `yaml:"external_selfip"`
+	//
+	// 2.3 ONLY: the self-IP lists live on the F5SPKVlan CRs, which are gated to
+	// line_pre_24. On 2.4 TMM's VLAN addresses are ALLOCATED from Infra's
+	// external-vlan-ipam pool rather than named one per zone, so there is nothing
+	// for this to set. It is still interpolated on 2.4 — the CNEInstance module
+	// uses the external F5SPKVlan body as the payload of a server-side DRY-RUN
+	// probe that waits for the f5validate webhook to serve TLS — but a dry run
+	// persists nothing, so it configures nothing.
+	ExternalSelfIP string `yaml:"external_selfip" line:"2.3"`
 
 	// InternalSelfIP is TMM's own address on the internal VLAN. Must sit inside
-	// IntVLANCIDR.
-	InternalSelfIP string `yaml:"internal_selfip"`
+	// IntVLANCIDR. 2.3 ONLY, as above.
+	InternalSelfIP string `yaml:"internal_selfip" line:"2.3"`
 }
 
 type TestCfg struct {

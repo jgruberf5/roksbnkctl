@@ -212,14 +212,57 @@ module "cne_instance" {
   cneinstance_vlan_prefixlen_external = var.cneinstance_vlan_prefixlen_external
   cneinstance_vlan_prefixlen_internal = var.cneinstance_vlan_prefixlen_internal
   cneinstance_tmm_k8s_routes          = var.cneinstance_tmm_k8s_routes
-  create_roks_cluster                 = var.create_roks_cluster
-  roks_cluster_dependency_id          = module.roks_cluster.cluster_ready_id
-  flo_dependency_id                   = module.flo.flo_ready_id
-  deploy_bnk                          = var.deploy_bnk
-  kubeconfig_dir                      = "${var.kubeconfig_dir}/cne_instance"
-  registry_mirror_username            = var.registry_mirror_username
-  registry_mirror_password            = var.registry_mirror_password
-  roksbnkctl_binary                   = var.roksbnkctl_binary
+
+  # Everything below was declared as a ROOT variable, rendered into
+  # terraform.tfvars by the Go renderer, documented in the config reference —
+  # and never passed down. The wrapping module declares a variable of the SAME
+  # NAME with the same default, so `var.cneinstance_tmm_replicas` inside it
+  # resolved to that default and the operator's value went nowhere. Every one of
+  # these settings was inert end to end on BOTH lines.
+  #
+  # This is the `cneinstance_advanced_env` defect with one extra layer of
+  # camouflage. TestEveryRootVariableIsRead greps the whole tree for
+  # `var.<name>`, finds the hit inside the child module, and concludes the root
+  # variable is read — a grep proves a name EXISTS, never that the parent and
+  # the child are JOINED. TestEveryRootVariableReachesTheModuleThatReadsIt is
+  # the guard that does check the join.
+  #
+  # The defaults are identical at all three levels (root, wrapper, leaf), so a
+  # deployment that sets none of these renders exactly the bytes it rendered
+  # before; the change is that setting one now does something.
+  cneinstance_tcp_settings           = var.cneinstance_tcp_settings
+  cneinstance_tcp_settings_name      = var.cneinstance_tcp_settings_name
+  cneinstance_hugepages              = var.cneinstance_hugepages
+  cneinstance_hugepages_size         = var.cneinstance_hugepages_size
+  cneinstance_hugepages_count        = var.cneinstance_hugepages_count
+  cneinstance_hugepages_node_role    = var.cneinstance_hugepages_node_role
+  cneinstance_hugepages_profile_name = var.cneinstance_hugepages_profile_name
+
+  cneinstance_tmm_replicas                   = var.cneinstance_tmm_replicas
+  cneinstance_watch_namespaces               = var.cneinstance_watch_namespaces
+  cneinstance_tmm_anti_affinity              = var.cneinstance_tmm_anti_affinity
+  cneinstance_tmm_anti_affinity_topology_key = var.cneinstance_tmm_anti_affinity_topology_key
+  cneinstance_tmm_zone_spread                = var.cneinstance_tmm_zone_spread
+  cneinstance_tmm_zone_topology_key          = var.cneinstance_tmm_zone_topology_key
+  cneinstance_tmm_zone_max_skew              = var.cneinstance_tmm_zone_max_skew
+  cneinstance_tmm_zone_when_unsatisfiable    = var.cneinstance_tmm_zone_when_unsatisfiable
+  cneinstance_tmm_pod_label                  = var.cneinstance_tmm_pod_label
+  cneinstance_tmm_rolling_update             = var.cneinstance_tmm_rolling_update
+  cneinstance_external_bigip                 = var.cneinstance_external_bigip
+  cneinstance_external_bigip_login_secret    = var.cneinstance_external_bigip_login_secret
+  cneinstance_cluster_identifier             = var.cneinstance_cluster_identifier
+  cneinstance_gateway_api_version            = var.cneinstance_gateway_api_version
+  cneinstance_demo_mode                      = var.cneinstance_demo_mode
+  cneinstance_whole_cluster_override         = var.cneinstance_whole_cluster_override
+
+  create_roks_cluster        = var.create_roks_cluster
+  roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
+  flo_dependency_id          = module.flo.flo_ready_id
+  deploy_bnk                 = var.deploy_bnk
+  kubeconfig_dir             = "${var.kubeconfig_dir}/cne_instance"
+  registry_mirror_username   = var.registry_mirror_username
+  registry_mirror_password   = var.registry_mirror_password
+  roksbnkctl_binary          = var.roksbnkctl_binary
 }
 
 
@@ -242,18 +285,23 @@ module "license" {
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
   flo_utils_namespace           = var.flo_utils_namespace
-  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
-  use_cos_bucket                = var.use_cos_bucket
-  jwt_token                     = var.f5_cne_subscription_jwt
-  license_mode                  = var.license_mode
-  flp_license_server_url        = var.flp_license_server_url
-  license_server_root_ca        = var.license_server_root_ca
-  create_roks_cluster           = var.create_roks_cluster
-  roks_cluster_dependency_id    = module.roks_cluster.cluster_ready_id
-  cneinstance_dependency_id     = module.cne_instance.cneinstance_ready_id
-  deploy_bnk                    = var.deploy_bnk
-  kubeconfig_dir                = "${var.kubeconfig_dir}/license"
-  roksbnkctl_binary             = var.roksbnkctl_binary
+  # The 2.4 post-licensing health check polls the CNEInstance BY NAMESPACE, and
+  # this was never passed: it fell through to the module default "f5-bnk", so a
+  # workspace with a custom bnk.flo_namespace waited fifteen minutes on a
+  # CNEInstance in a namespace that does not exist. Same defect as #65.
+  flo_namespace                = local.flo_namespace
+  f5_cne_subscription_jwt_file = var.f5_cne_subscription_jwt_file
+  use_cos_bucket               = var.use_cos_bucket
+  jwt_token                    = var.f5_cne_subscription_jwt
+  license_mode                 = var.license_mode
+  flp_license_server_url       = var.flp_license_server_url
+  license_server_root_ca       = var.license_server_root_ca
+  create_roks_cluster          = var.create_roks_cluster
+  roks_cluster_dependency_id   = module.roks_cluster.cluster_ready_id
+  cneinstance_dependency_id    = module.cne_instance.cneinstance_ready_id
+  deploy_bnk                   = var.deploy_bnk
+  kubeconfig_dir               = "${var.kubeconfig_dir}/license"
+  roksbnkctl_binary            = var.roksbnkctl_binary
 }
 
 
