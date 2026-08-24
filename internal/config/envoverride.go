@@ -202,12 +202,6 @@ func OverrideFromEnv(ws *Workspace) []string {
 			}
 			ws.BNK.Hugepages.Size = v
 		}},
-		{"ROKSBNKCTL_HUGEPAGES_SIZE", func(v string) {
-			if ws.BNK.Hugepages == nil {
-				ws.BNK.Hugepages = &HugepagesCfg{}
-			}
-			ws.BNK.Hugepages.Size = v
-		}},
 		{"ROKSBNKCTL_EXTERNAL_BIGIP_LOGIN_SECRET", func(v string) { ws.BNK.ExternalBigIPLoginSecret = v }},
 		{"ROKSBNKCTL_CLUSTER_IDENTIFIER", func(v string) { ws.BNK.ClusterIdentifier = v }},
 		{"ROKSBNKCTL_GATEWAY_API_VERSION", func(v string) { ws.BNK.GatewayAPIVersion = v }},
@@ -223,12 +217,6 @@ func OverrideFromEnv(ws *Workspace) []string {
 	}{
 		{"ROKSBNKCTL_TMM_REPLICAS", func(n int) { ws.BNK.TMMReplicas = n }},
 		{"ROKSBNKCTL_TMM_ZONE_MAX_SKEW", func(n int) { ws.BNK.TMMZoneMaxSkew = n }},
-		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
-			if ws.BNK.Hugepages == nil {
-				ws.BNK.Hugepages = &HugepagesCfg{}
-			}
-			ws.BNK.Hugepages.Count = n
-		}},
 		{"ROKSBNKCTL_HUGEPAGES_COUNT", func(n int) {
 			if ws.BNK.Hugepages == nil {
 				ws.BNK.Hugepages = &HugepagesCfg{}
