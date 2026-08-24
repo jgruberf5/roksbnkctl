@@ -82,7 +82,50 @@ following hold at once:
 | Flavour | `bx2.16x64` | `bx2.8x32` | `cx2.16x32` | `cx2.48x96` |
 | `deploymentSize` | `Tiny` | `Small` | `Medium` | `Medium` |
 | TMM pods | 1 | 3 | 3 | 9 |
-| Verified | **yes** | pending | pending | pending |
+| Verified | **yes** | see below | see below | see below |
+
+### Only `Tiny` can run on ROKS today
+
+`deploymentSize: Small` and above request **4 GiB of `hugepages-2Mi` per TMM
+pod**; `Tiny` requests none. TMM validates hugepages against the 2 MB page
+cgroup limit when it starts, and exits if that limit is zero:
+
+```
+<get_mem_info>  ERROR: No memory available based on 2MB page cgroup limit
+<init_memory>   ERROR: Could not validate sufficient hugepages
+<main>          ERROR: Failed to create cmdline args
+```
+
+It exits `code 0`, so this does not look like a crash — the pod reports
+`4/5 Running` and the Deployment simply never becomes Available.
+
+**A ROKS cluster cannot allocate hugepages.** Six approaches were measured on
+live 4.21 clusters and every one fails:
+
+| approach | result |
+|---|---|
+| `bnk.hugepages` (Node Tuning Operator, `[bootloader]`) | needs the Machine Config Operator; ROKS has **0 MachineConfigPools** |
+| `Tuned` with `[sysctl] vm.nr_hugepages` | ROKS **deletes the CR** — created object returned, next read `NotFound` |
+| privileged pod writing `/proc/sys/vm/nr_hugepages` | allocates (`HugePages_Total: 2048`) but kubelet still advertises `allocatable: 0` |
+| `advanced.tmm.resources` with `hugepages-2Mi: 0` | TMM schedules, then refuses to start (above) |
+| `advanced.tmm.env.TMM_MEM` | accepted, but hugepages are still required |
+| `ibmcloud ks worker-pool` | no kernel-argument or sysctl option exists |
+
+Note that `bnk.hugepages` is therefore a **no-op on ROKS**, even though it is
+what the scheduling failure recommends. Setting it applies a `Tuned` CR that
+ROKS removes, which surfaces as terraform reporting a provider bug.
+
+F5's 2.3.1 sizing guide describes the reference-tested Small profile as
+*"TMM: 1 thread, 1 vCPU / 1.5 GiB, hugepages disabled"*, and its TMM resource
+table lists CPU and memory only. That configuration cannot be reproduced on the
+2.4 build: Small derives a hugepages request, and TMM will not start without
+one. Whether the 2.3.1 profile still exists in 2.4 is an open question with F5
+(issue #203).
+
+Until it is answered, treat the Small, Medium and Large rows above as F5's
+published figures rather than as configurations this tool can stand up on ROKS.
+`Tiny` is the only verified one, which is consistent with F5's own reference
+cluster running `Tiny`.
 
 `Tiny` is not in F5's sizing guide — it is the profile the engineering reference
 cluster itself runs, recorded here as the smallest configuration known to work
