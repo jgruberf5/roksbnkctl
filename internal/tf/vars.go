@@ -1027,6 +1027,15 @@ func renderBNK24Conformance(w io.Writer, ws *config.Workspace) {
 	if b.GatewayAPIVersion != "" {
 		fmt.Fprintf(w, "cneinstance_gateway_api_version = %q\n", b.GatewayAPIVersion)
 	}
+	// The Gateway API bundle source (#185). roksbnkctl fetches and applies the
+	// bundle itself — terraform installs nothing from this — but the value is
+	// rendered so terraform's `validation` block rejects a malformed URL at PLAN
+	// time. Without that, an operator who typed the URL wrong learns it from a
+	// fetch failure once the apply is already under way and the admission sweep
+	// is running.
+	if u := strings.TrimSpace(b.GatewayAPIBundleURL); u != "" {
+		fmt.Fprintf(w, "gateway_api_bundle_url = %q\n", u)
+	}
 	// demo_mode is a string on the terraform side precisely so "unset" is
 	// distinguishable from "false": unset takes the LINE default, and on 2.3 that
 	// default is true.

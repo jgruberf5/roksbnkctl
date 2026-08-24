@@ -148,6 +148,7 @@ Source: `terraform/variables.tf`
 | `cneinstance_external_bigip_login_secret` | `string` | `"f5-bigip-ctlr-login"` | Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login. | no |
 | `cneinstance_cluster_identifier` | `string` | `""` | CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name. | no |
 | `cneinstance_gateway_api_version` | `string` | `"1.5.0"` | GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0. | no |
+| `gateway_api_bundle_url` | `string` | `""` | Where the Gateway API standard-install bundle is FETCHED from when the workspace has no registry mirror recorded (2.4 + gateway_api_mtls). Empty derives the upstream release asset for cneinstance_gateway_api_version. | no |
 | `cneinstance_demo_mode` | `string` | `""` | advanced.demoMode.enabled. | no |
 | `cneinstance_tmm_pod_label` | `string` | `"f5-tmm"` | Value of the `app` label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm. | no |
 | `cneinstance_tmm_anti_affinity_topology_key` | `string` | `"kubernetes.io/hostname"` | Node label the TMM anti-affinity rule spreads across (2.4). | no |

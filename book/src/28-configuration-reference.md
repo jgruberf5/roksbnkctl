@@ -113,6 +113,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `external_bigip_login_secret` | `string` | 2.4 | `f5-bigip-ctlr-login` | no | ExternalBigIPLoginSecret holds the external BIG-IP credentials. |
 | `cluster_identifier` | `string` | 2.4 | — | no | ClusterIdentifier is passed to the external BIG-IP controller. |
 | `gateway_api_version` | `string` | 2.4 | `1.5.0` | no | GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller. |
+| `gateway_api_bundle_url` | `string` | 2.4 | — | no | GatewayAPIBundleURL is where the Gateway API standard-install bundle is FETCHED from when `gateway_api_mtls` is on (#185). |
 | `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
 | `whole_cluster` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | TCPSettings overrides fields on the data-plane F5BigTcpSetting CR. |
 | `hugepages` | `*HugepagesCfg` | 2.3 + 2.4 | — | no | Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator. |

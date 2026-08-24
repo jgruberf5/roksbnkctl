@@ -703,6 +703,22 @@ type BNKCfg struct {
 	// 1.5.0 — which the 2.4 EA guide requires for mTLS.
 	GatewayAPIVersion string `yaml:"gateway_api_version,omitempty" line:"2.4" default:"1.5.0"`
 
+	// GatewayAPIBundleURL is where the Gateway API standard-install bundle is
+	// FETCHED from when `gateway_api_mtls` is on (#185). Empty derives the
+	// upstream release asset for `gateway_api_version`:
+	// https://github.com/kubernetes-sigs/gateway-api/releases/download/v<version>/standard-install.yaml
+	//
+	// Point it at an internal proxy when the estate blocks github.com but has no
+	// replicated mirror yet. It changes only WHERE the bytes come from: they are
+	// still checked against the sha256 roksbnkctl pins for the configured
+	// version, so a proxy serving anything other than that release is refused
+	// before a single CRD is applied.
+	//
+	// Ignored once a registry mirror is recorded — the bundle then comes out of
+	// the mirror like every other artifact, which is the whole point of carrying
+	// it there.
+	GatewayAPIBundleURL string `yaml:"gateway_api_bundle_url,omitempty" line:"2.4"`
+
 	// DemoMode sets advanced.demoMode.enabled. Nil means the LINE default: true
 	// on 2.3, which is what has always shipped, and false on 2.4, matching the
 	// reference. Demo mode was being enabled on every install, which is not

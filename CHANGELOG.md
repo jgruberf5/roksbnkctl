@@ -144,6 +144,70 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   the jumphost sizing pair were all documented in prose that the generator could
   not see.
 
+- **`bnk up` installs the Gateway API 1.5 bundle, from the mirror** (#185). BNK
+  2.4's `crd-installer` no longer forces its own Gateway API CRDs — it logs a
+  graceful skip and leaves the cluster on whatever bundle OpenShift ships, which
+  is right for a base install and wrong for mTLS. Nothing on the cluster
+  installed the standard channel the CNE controller was being told to expect, so
+  `gateway_api_mtls: true` swept a platform admission policy out of the way and
+  then put nothing in the gap.
+
+  With `gateway_api_mtls` on and the line at 2.4, the bundle now enters the BOM
+  and is applied to the cluster: 8 CRDs, a `ValidatingAdmissionPolicy` and its
+  binding, no container images. `registry bom` lists it, `registry replicate`
+  copies it, `registry verify` proves it arrived — the same three guarantees
+  every chart and image already gets, and the reason it is carried *in* the
+  mirror rather than beside it: a disconnected cluster can only reach the mirror,
+  and in the CI path roksbnkctl runs as a pod inside that cluster, so its egress
+  is the cluster's and `github.com` is unreachable for exactly the estates that
+  want mTLS. Off the mirror path it is fetched from
+  `bnk.gateway_api_bundle_url`, or from the upstream release.
+
+  The version is not a new setting: it is `bnk.gateway_api_version`, the value
+  already rendered as the controller's `GATEWAY_API_VERSION`. One accessor
+  answers both, so the bundle on the cluster and the release the controller was
+  configured for cannot be resolved from different places and disagree — a test
+  pins the Go default against the terraform one.
+
+  The bytes are checked against a **sha256 that ships in roksbnkctl**, on the way
+  into the mirror and again on the way out. A release with no pin in the build is
+  refused rather than fetched unverified: this is a megabyte of cluster-scoped
+  CRDs applied with `--force-conflicts`, and a pin an operator can retype is a
+  pin an attacker upstream can talk them out of. A separate test fetches the real
+  release and re-establishes the pin against it, so the pin cannot quietly become
+  a description of nothing.
+
+- **`bnk.gateway_api_bundle_url`** (#185) — where that bundle is fetched from
+  when no mirror is recorded, for an estate that blocks `github.com` but proxies
+  it internally. `ROKSBNKCTL_GATEWAY_API_BUNDLE_URL` in the environment, in the
+  demo `.env.example` allowlist, and rendered as the `gateway_api_bundle_url`
+  tfvar — terraform installs nothing from it, but its `validation` block is what
+  rejects a malformed URL at plan time instead of letting it surface as a fetch
+  failure once the apply is under way. It moves only *where* the bytes come from;
+  the sha256 pin for the configured version still applies.
+
+### Fixed
+
+- **The gateway-api admission sweep could have deleted what the bundle installs**
+  (#185). The bundle ships a `ValidatingAdmissionPolicy` of its own,
+  `safe-upgrades.gateway.networking.k8s.io`, and it is applied while the sweep is
+  running and deleting OpenShift's
+  `openshift-ingress-operator-gatewayapi-crd-admission`. Two different objects —
+  but nothing checked that, and a sweep widened to a prefix, a label or a
+  delete-collection would have removed the bundle seconds after it landed. That
+  failure is silent: no error, no denied write, just an absent policy and an
+  install that looks as though the bundle never applied.
+
+  `bnk up` now refuses to install an object the running sweep would delete, and
+  a test drives the real sweep loop against a cluster holding both policies and
+  checks which one is standing afterwards. Broadening the sweep by one name fails
+  it.
+
+  The 2.4 sweep gate and the bundle are also now the same question asked once,
+  rather than two copies of it — a build that sweeps without installing anything,
+  or installs the bundle into a window nothing is holding open, is a build where
+  one half does nothing.
+
 - **A 2.4 install was still rendering the 2.3 network surface** (#187). The
   `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs, and the
   `CLOUD_NETWORK_CONFIGMAP` env pointing at them were gated on

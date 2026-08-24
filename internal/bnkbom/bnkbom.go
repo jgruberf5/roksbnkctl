@@ -150,6 +150,21 @@ type Options struct {
 	CertManagerVersion string
 	// NodeLabelerImageTag tags the bitnami/kubectl node-labeler image.
 	NodeLabelerImageTag string
+
+	// GatewayAPIBundleVersion, when non-empty, unions the upstream Gateway API
+	// standard-install bundle (#185) at that version.
+	//
+	// Deliberately NOT folded into IncludeDeps. --include-deps says whether to
+	// carry the two non-F5 artifacts EVERY install pulls; the bundle is carried
+	// on a different question entirely — 2.4 with mTLS — and one flag answering
+	// both would either drag a megabyte of CRDs into every 2.3 mirror or drop it
+	// from the one install that cannot proceed without it.
+	GatewayAPIBundleVersion string
+
+	// GatewayAPIBundleURL overrides where the bundle is FETCHED from (an internal
+	// proxy of the upstream release). Empty derives the upstream URL. It does not
+	// change the sha256 the bytes must match.
+	GatewayAPIBundleURL string
 }
 
 // Build parses the f5-bigip-k8s-manifest and, when opts.IncludeDeps is set,
@@ -161,6 +176,18 @@ func Build(manifest []byte, opts Options) (*BOM, error) {
 	}
 	if opts.IncludeDeps {
 		bom.Artifacts = append(bom.Artifacts, Deps(opts.CertManagerVersion, opts.NodeLabelerImageTag)...)
+	}
+	// The Gateway API bundle, when this install needs it. An unpinned version
+	// fails the BUILD rather than being dropped: a BOM silently missing the one
+	// artifact an mTLS install cannot start without would be replicated, verified
+	// and reported complete, and the omission would surface much later as a
+	// cluster whose CRDs never arrived.
+	if opts.GatewayAPIBundleVersion != "" {
+		a, err := GatewayAPIBundle(opts.GatewayAPIBundleVersion, opts.GatewayAPIBundleURL)
+		if err != nil {
+			return nil, err
+		}
+		bom.Artifacts = append(bom.Artifacts, a)
 	}
 	bom.sortArtifacts()
 	return bom, nil

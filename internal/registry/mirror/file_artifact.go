@@ -37,25 +37,13 @@ func (e *Engine) copyFile(ctx context.Context, a bnkbom.Artifact) Result {
 		res.Err = fmt.Errorf("file artifact %s has no source_url", a.Name)
 		return res
 	}
-	if strings.TrimSpace(a.SHA256) == "" {
-		// Refusing is deliberate. An unpinned file is one an attacker upstream can
-		// change under us, and the whole point of putting it in the mirror is that
-		// what installs is what was reviewed.
-		res.Err = fmt.Errorf("file artifact %s has no sha256 pin; refusing to mirror unverified content", a.Name)
-		return res
-	}
-
-	body, err := fetchFileArtifact(ctx, a.SourceURL)
+	// Fetch and verify BEFORE anything is pushed. Refusing an unpinned file is
+	// deliberate: an unpinned file is one an attacker upstream can change under
+	// us, and the whole point of putting it in the mirror is that what installs
+	// is what was reviewed.
+	body, err := FetchAndVerifyFile(ctx, a.SourceURL, a.SHA256)
 	if err != nil {
-		res.Err = err
-		return res
-	}
-
-	sum := sha256.Sum256(body)
-	if got := hex.EncodeToString(sum[:]); got != a.SHA256 {
-		res.Err = fmt.Errorf("file artifact %s: sha256 mismatch\n  want %s\n  got  %s\n"+
-			"  the upstream content changed, or the pin is wrong; nothing was pushed",
-			a.Name, a.SHA256, got)
+		res.Err = fmt.Errorf("file artifact %s: %w", a.Name, err)
 		return res
 	}
 
@@ -80,6 +68,34 @@ func (e *Engine) copyFile(ctx context.Context, a bnkbom.Artifact) Result {
 	}
 	res.Digest = d.String()
 	return res
+}
+
+// FetchAndVerifyFile GETs url and returns its body only if it matches wantSHA256.
+//
+// The connected fallback for a KindFile artifact: what copyFile does on the way
+// into the mirror, exposed for the install path that has no mirror to read from.
+// One implementation of "fetch this file and prove it is the right one", so the
+// no-mirror path cannot end up with a weaker guarantee than the mirrored one —
+// which is the path that would have carried it, and the reason the guarantee
+// exists at all.
+func FetchAndVerifyFile(ctx context.Context, url, wantSHA256 string) ([]byte, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, fmt.Errorf("no source URL to fetch the file from")
+	}
+	if strings.TrimSpace(wantSHA256) == "" {
+		return nil, fmt.Errorf("fetch %s: no sha256 pin; refusing to use unverified content", url)
+	}
+	body, err := fetchFileArtifact(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(body)
+	if got := hex.EncodeToString(sum[:]); got != wantSHA256 {
+		return nil, fmt.Errorf("fetch %s: sha256 mismatch\n  want %s\n  got  %s\n"+
+			"  the upstream content changed, or the pin is wrong; nothing was used",
+			url, wantSHA256, got)
+	}
+	return body, nil
 }
 
 // fetchFileArtifact GETs the URL and returns its body, bounded.

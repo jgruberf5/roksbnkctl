@@ -8,6 +8,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
@@ -47,17 +48,78 @@ var admissionSweepGVRs = []schema.GroupVersionResource{
 
 const admissionSweepName = "openshift-ingress-operator-gatewayapi-crd-admission"
 
+// admissionSweepWouldDelete reports whether the sweep, as it is written, would
+// delete obj.
+//
+// It exists because the Gateway API bundle (#185) ships an admission policy OF
+// ITS OWN — "safe-upgrades.gateway.networking.k8s.io" — and that bundle is
+// applied while this sweep is running. The two objects are different and must
+// stay different: a sweep that widened to a prefix, a label selector or a
+// delete-collection would remove what the bundle had just installed, and the
+// failure would be silent. Nothing errors, nothing is denied; the policy is
+// simply absent afterwards and the install looks as though the bundle never
+// applied.
+//
+// Derived from admissionSweepGVRs and admissionSweepName rather than restating
+// them, so it cannot answer for a sweep the loop no longer performs.
+func admissionSweepWouldDelete(obj *unstructured.Unstructured) bool {
+	if obj == nil || obj.GetName() != admissionSweepName {
+		return false
+	}
+	group := obj.GroupVersionKind().Group
+	for _, gvr := range admissionSweepGVRs {
+		if gvr.Group == group {
+			return true
+		}
+	}
+	return false
+}
+
 // applyBNKWithAdmissionSweep runs the BNK-phase apply with the admission-policy
 // sweep goroutine alive for its duration (started before, stopped after) —
 // covering the crd-installer window. The sweep is best-effort; the apply's result
 // is what's returned.
 func applyBNKWithAdmissionSweep(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, varFiles []string) error {
-	if !admissionSweepNeeded(cctx) {
-		return applyWithRetry(ctx, tfws, varFiles)
+	return applyBNKInSweepWindow(
+		admissionSweepNeeded(cctx),
+		func() func() { return startAdmissionPolicySweep(ctx, cctx, tfws) },
+		func() error { return applyGatewayAPIBundle(ctx, cctx, tfws, os.Stderr) },
+		func() error { return applyWithRetry(ctx, tfws, varFiles) },
+	)
+}
+
+// applyBNKInSweepWindow is the ORDER, separated from what each step does.
+//
+// The order is the whole point and none of it is unit-testable against a real
+// cluster, so the three steps arrive as functions and this decides when each
+// runs: start the sweep, install the Gateway API bundle, run the apply, stop the
+// sweep. A test can then observe the sequence directly instead of a guard having
+// to read the source and hope.
+//
+// Why this sequence and not another:
+//
+//   - The bundle goes on INSIDE the window. The OpenShift ingress operator's
+//     ValidatingAdmissionPolicy blocks third-party writes to the Gateway API
+//     CRDs and is recreated within about a minute of each delete, so the sweep
+//     running is the only condition under which the apply survives.
+//   - It goes on BEFORE terraform. The CRDs have to exist before the FLO
+//     crd-installer's own window, which the terraform apply opens.
+//   - A bundle failure stops the run. An mTLS install without its Gateway API
+//     bundle does not fail loudly later; the CNE controller is simply configured
+//     for a Gateway API the cluster does not carry.
+func applyBNKInSweepWindow(sweepNeeded bool, startSweep func() func(), installBundle, apply func() error) error {
+	if !sweepNeeded {
+		// No sweep means no bundle either: the two are gated on the same
+		// question, so a bundle installed here would go on with nothing holding
+		// the admission policy open.
+		return apply()
 	}
-	stop := startAdmissionPolicySweep(ctx, cctx, tfws)
+	stop := startSweep()
 	defer stop()
-	return applyWithRetry(ctx, tfws, varFiles)
+	if err := installBundle(); err != nil {
+		return err
+	}
+	return apply()
 }
 
 // admissionSweepNeeded reports whether this install has to fight the OpenShift
@@ -88,7 +150,12 @@ func admissionSweepNeeded(cctx *config.Context) bool {
 	if cctx.Workspace.BNKLineOrEmpty() != "2.4" {
 		return true
 	}
-	return cctx.Workspace.BNK.GatewayAPIMTLS
+	// On 2.4 the sweep runs for exactly one reason: to clear the way for the
+	// Gateway API bundle. Asking the same question the bundle asks — rather than
+	// re-deriving it here — is what stops the two drifting into a build that
+	// sweeps without installing anything, or installs the bundle into a window
+	// nothing is holding open.
+	return cctx.Workspace.GatewayAPIBundleNeeded()
 }
 
 // startAdmissionPolicySweep resolves a dynamic client (fresh admin kubeconfig) and

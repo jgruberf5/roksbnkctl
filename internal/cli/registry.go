@@ -191,6 +191,18 @@ type registryBOMInputs struct {
 	IncludeDeps     bool
 	CertManagerVer  string
 	NodeLabelerTag  string
+
+	// GatewayAPIBundleVersion is non-empty only when this workspace needs the
+	// upstream Gateway API bundle (2.4 + bnk.gateway_api_mtls, #185), and
+	// GatewayAPIBundleURL optionally moves where it is fetched from.
+	//
+	// Resolved from the WORKSPACE rather than offered as a flag. The condition is
+	// a property of the install, not of the operator's mood: a mirror replicated
+	// without the bundle is a mirror an mTLS install cannot install from, and one
+	// replicated with it for a 2.3 workspace carries a megabyte of CRDs that
+	// nothing will ever pull.
+	GatewayAPIBundleVersion string
+	GatewayAPIBundleURL     string
 }
 
 // resolveBOMInputs merges the registry flags over the workspace config.
@@ -207,6 +219,10 @@ func resolveBOMInputs(ws *config.Workspace) registryBOMInputs {
 	}
 	if ws.Registry != nil {
 		in.SourceSAB64 = ws.Registry.SourceServiceAccountB64
+	}
+	if ws.GatewayAPIBundleNeeded() {
+		in.GatewayAPIBundleVersion = ws.GatewayAPIBundleVersion()
+		in.GatewayAPIBundleURL = ws.BNK.GatewayAPIBundleURL
 	}
 	if flagRegistryManifestVer != "" {
 		in.ManifestVersion = flagRegistryManifestVer
@@ -319,12 +335,23 @@ func buildBOM(ctx context.Context, name string, ws *config.Workspace, in *regist
 	if err != nil {
 		return nil, fmt.Errorf("fetching f5-bigip-k8s-manifest %s: %w", in.ManifestVersion, err)
 	}
-	return bnkbom.Build(manifest, bnkbom.Options{
-		ManifestVersion:     in.ManifestVersion,
-		IncludeDeps:         in.IncludeDeps,
-		CertManagerVersion:  in.CertManagerVer,
-		NodeLabelerImageTag: in.NodeLabelerTag,
-	})
+	return bnkbom.Build(manifest, bomOptions(in))
+}
+
+// bomOptions maps the resolved inputs onto the BOM builder's options.
+//
+// Split out of buildBOM so it is reachable without a FAR manifest pull: buildBOM
+// itself needs the network and a credential, so a field mapped to the wrong
+// option there could only be caught by running against FAR — which no test does.
+func bomOptions(in *registryBOMInputs) bnkbom.Options {
+	return bnkbom.Options{
+		ManifestVersion:         in.ManifestVersion,
+		IncludeDeps:             in.IncludeDeps,
+		CertManagerVersion:      in.CertManagerVer,
+		NodeLabelerImageTag:     in.NodeLabelerTag,
+		GatewayAPIBundleVersion: in.GatewayAPIBundleVersion,
+		GatewayAPIBundleURL:     in.GatewayAPIBundleURL,
+	}
 }
 
 // loadRegistryWorkspace resolves the workspace name + loads its config, the same
