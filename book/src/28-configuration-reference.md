@@ -54,7 +54,7 @@ AdvancedComponentCfg is one component's advanced settings. Only env is surfaced 
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `env` | `map[string]string` | 2.3 + 2.4 | — | no |  |
+| `env` | `map[string]string` | 2.3 + 2.4 | — | no | Env sets environment variables on that component's containers, name → value. |
 
 ## `AgentCfg`
 
@@ -94,10 +94,10 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `far_auth_file` | `string` | 2.3 + 2.4 | — | no | FarAuthFile is the FAR auth tarball's filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry` to resolve the FAR _json_key_base64 service account. |
 | `subscription_jwt_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTFile is the subscription/license JWT's filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar. |
 | `far_auth_local_file` | `string` | 2.3 + 2.4 | — | no | FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of COS objects. |
-| `subscription_jwt_local_file` | `string` | 2.3 + 2.4 | — | no |  |
+| `subscription_jwt_local_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTLocalFile is the F5 subscription JWT as a LOCAL file, the companion to FarAuthLocalFile above. |
 | `trusted_profile` | `*BNKTrustedProfileCfg` | 2.3 + 2.4 | — | no | TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller assumes to manage its own cluster's VPC. |
 | `flo_namespace` | `string` | 2.3 + 2.4 | `f5-bnk` | no | FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle Operator and its utility components install into (rendered as flo_namespace / flo_utils_namespace). |
-| `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no |  |
+| `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no | FLOUtilsNamespace is where FLO's SHARED utility components install — coremond, the observer, the licence — as opposed to FLONamespace, which holds the BNK instance itself. |
 | `gateway_api_mtls` | `bool` | 2.4 | — | no | GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS (#170). |
 | `tmm_replicas` | `int` | 2.4 | `3` | no | TMMReplicas is the number of f5-tmm data-plane replicas. |
 | `watch_namespaces` | `[]string` | 2.4 | `All` | no | WatchNamespaces are the namespaces the CNE controller watches. |
@@ -116,7 +116,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
 | `whole_cluster` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | TCPSettings overrides fields on the data-plane F5BigTcpSetting CR. |
 | `hugepages` | `*HugepagesCfg` | 2.3 + 2.4 | — | no | Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator. |
-| `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no |  |
+| `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {"congestionControl": "bbr", "delayedAcks": "true"} — the key is the CR's own spec field. |
 | `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
@@ -158,8 +158,8 @@ BNKFLPForwardProxyCfg describes an egress forward proxy for the FLP VSI's calls 
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `host` | `string` | 2.3 + 2.4 | — | no |  |
-| `port` | `int` | 2.3 + 2.4 | — | no |  |
+| `host` | `string` | 2.3 + 2.4 | — | no | Host is the forward proxy's address. |
+| `port` | `int` | 2.3 + 2.4 | — | no | Port is the forward proxy's port. |
 | `protocol` | `string` | 2.3 + 2.4 | — | no | http (default) \| https. |
 
 ## `BNKFLPVSICfg`
@@ -184,7 +184,7 @@ BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running t
 | `floating_ip` | `*bool` | 2.3 + 2.4 | — | no | FloatingIP attaches an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + the :8443 proxy from a machine OUTSIDE the VPC. |
 | `status_image` | `string` | 2.3 + 2.4 | — | no | StatusImage, when set, runs the flp-status web UI as a container in the FLP pod (mobile-friendly status page + /api/status + live logs on :80, no auth — a read-only private status endpoint). |
 | `status_registry_host` | `string` | 2.3 + 2.4 | — | no | StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<host>/ca.crt before the pod comes up. |
-| `status_registry_ca_b64` | `string` | 2.3 + 2.4 | — | no |  |
+| `status_registry_ca_b64` | `string` | 2.3 + 2.4 | — | no | StatusRegistryCAB64 is that registry's CA, base64-encoded, written to /etc/containers/certs.d/<host>/ca.crt on the VSI. |
 | `forward_proxy` | `*BNKFLPForwardProxyCfg` | 2.3 + 2.4 | — | no | ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP forward proxy (air-gapped/egress-controlled networks). |
 
 ## `BNKForgeCfg`
@@ -219,7 +219,7 @@ BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 | `zones` | `[]BNKZoneCfg` | 2.3 + 2.4 | — | no | Zones is the per-availability-zone network mapping, in zone order — one entry per zone the cluster spans. |
 | `vlan_prefixlen` | `*int` | 2.3 + 2.4 | `24` | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
 | `vlan_prefixlen_external` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
-| `vlan_prefixlen_internal` | `*int` | 2.3 + 2.4 | — | no |  |
+| `vlan_prefixlen_internal` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenInternal is the same override for the INTERNAL VLAN. |
 | `tmm_k8s_routes` | `string` | 2.3 + 2.4 | `172.17.0.0/18` | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
 
 ## `BNKPreflightCfg`
@@ -268,8 +268,8 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `source` | `string` | 2.3 + 2.4 | — | yes |  |
-| `key` | `string` | 2.3 + 2.4 | — | yes |  |
+| `source` | `string` | 2.3 + 2.4 | — | yes | Source is the local file to upload. |
+| `key` | `string` | 2.3 + 2.4 | — | yes | Key is the object name it is stored under in the bucket. |
 
 ## `ClusterCfg`
 
@@ -291,7 +291,7 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `extra_hosts` | `[]string` | 2.3 + 2.4 | — | no |  |
+| `extra_hosts` | `[]string` | 2.3 + 2.4 | — | no | ExtraHosts are additional targets the connectivity probe tries, beyond the defaults. |
 
 ## `DNSCfg`
 
@@ -299,8 +299,8 @@ DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe (GSLB-awar
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `resolvers` | `map[string]string` | 2.3 + 2.4 | — | no |  |
-| `default_target` | `string` | 2.3 + 2.4 | — | no |  |
+| `resolvers` | `map[string]string` | 2.3 + 2.4 | — | no | Resolvers names the DNS servers to query, as name → "<ip>[:<port>]". |
+| `default_target` | `string` | 2.3 + 2.4 | — | no | DefaultTarget is the resolver queried when a probe names none. |
 
 ## `ExecToolCfg`
 
@@ -372,8 +372,8 @@ ResourceToggle is one create/reuse decision: Create=true provisions the resource
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `create` | `bool` | 2.3 + 2.4 | — | yes |  |
-| `existing` | `string` | 2.3 + 2.4 | — | no | existing name/ID when Create=false. |
+| `create` | `bool` | 2.3 + 2.4 | — | yes | Create decides whether roksbnkctl provisions this resource or adopts one that already exists. |
+| `existing` | `string` | 2.3 + 2.4 | — | no | Existing is the name or ID of the resource to adopt when Create is false. |
 
 ## `ResourcesCfg`
 
@@ -393,8 +393,8 @@ ResourcesCfg holds the per-resource create toggles for a prefix-driven workspace
 | `testing_client_vpc_name` | `string` | 2.3 + 2.4 | `tf-testing-vpc` | no | TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name). |
 | `testing_ssh_key_name` | `string` | 2.3 + 2.4 | — | no | TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing jumphosts (rendered as testing_ssh_key_name). |
 | `testing_jumphost_profile` | `string` | 2.3 + 2.4 | — | no | Jumphost sizing. |
-| `testing_min_vcpu_count` | `int` | 2.3 + 2.4 | `4` | no |  |
-| `testing_min_memory_gb` | `int` | 2.3 + 2.4 | `8` | no |  |
+| `testing_min_vcpu_count` | `int` | 2.3 + 2.4 | `4` | no | TestingMinVCPUCount is the vCPU floor for the jumphost auto-select. |
+| `testing_min_memory_gb` | `int` | 2.3 + 2.4 | `8` | no | TestingMinMemoryGB is the memory floor for the same auto-select. |
 | `testing_jumphost_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | Security-group source CIDRs, following the flp_vsi module's split between a management plane and an in-fabric plane. |
 | `testing_client_vpc_inbound_cidrs` | `[]string` | 2.3 + 2.4 | — | no | TestingClientVPCInboundCIDRs gates the client VPC's DEFAULT security group, which the testing phase widens to all protocols and ports. |
 | `cluster_http_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | ClusterHTTPAllowedCIDRs gates :80 on the cluster security group — the ingress/ALB path, which is meant to be publicly reachable, so empty means open. |
@@ -408,7 +408,7 @@ GatewayCfg carries optional overrides for the Gateway phase (the BNK data-plane 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `backend` | `string` | 2.3 + 2.4 | — | no | "" \| "local" \| "s3". |
-| `s3` | `*StateS3Cfg` | 2.3 + 2.4 | — | no |  |
+| `s3` | `*StateS3Cfg` | 2.3 + 2.4 | — | no | S3 configures an S3-compatible backend (IBM COS) for terraform state, so a workspace is not tied to one machine's disk. |
 
 ## `StateS3Cfg`
 
@@ -440,9 +440,9 @@ TargetCfg is the on-disk shape of one entry under `targets:` in the workspace co
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `host` | `string` | 2.3 + 2.4 | — | yes |  |
-| `port` | `int` | 2.3 + 2.4 | — | no | default 22. |
-| `user` | `string` | 2.3 + 2.4 | — | yes |  |
+| `host` | `string` | 2.3 + 2.4 | — | yes | Host is the target's address, reached over SSH. |
+| `port` | `int` | 2.3 + 2.4 | `22` | no | Port is its SSH port. |
+| `user` | `string` | 2.3 + 2.4 | — | yes | User is the SSH login. |
 | `key_path` | `string` | 2.3 + 2.4 | — | no | file path (PEM). |
 | `key_source` | `string` | 2.3 + 2.4 | — | no | "agent" \| "tf-output:<name>". |
 
