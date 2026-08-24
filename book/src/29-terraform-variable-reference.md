@@ -49,6 +49,7 @@ Source: `terraform/variables.tf`
 | `far_service_account_b64` | `string` | `""` | FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path. | **yes** |
 | `f5_cne_subscription_jwt` | `string` | `""` | Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead). | **yes** |
 | `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating (2.3 or 2.4). Derived by roksbnkctl from bnk.manifest_version — set it by hand only for a standalone terraform run. | no |
+| `flo_container_platform` | `string` | `"Generic"` | The container platform the F5 Lifecycle Operator is told it runs on. F5's chart accepts Generic, OCP, Robin or AON, and says these "may have specific installation logic in the component controllers". | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Kubernetes namespace for the F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license. Set equal to flo_namespace to install into ONE namespace. | no |
 | `bigip_username` | `string` | `"admin"` | BIG-IP username for the CIS controller | no |
@@ -277,6 +278,7 @@ Source: `terraform/modules/flo/variables.tf`
 | `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
 | `flo_trusted_profile_sa_name` | `string` | `""` | Service account the CNE controller Trusted Profile is linked to. | no |
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC. | no |
+| `flo_container_platform` | `string` | `"Generic"` | containerPlatform for the FLO helm values. See the root variable of the same name (#189). | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
 | `flo_utils_namespace` | `string` | `"f5-utils"` | Namespace for F5 utility components | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager - used by cert-manager, flo modules | no |

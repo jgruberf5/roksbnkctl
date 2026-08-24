@@ -604,6 +604,23 @@ type BNKCfg struct {
 	FLONamespace      string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
+	// FLOContainerPlatform tells the F5 Lifecycle Operator which platform it is
+	// on. F5's chart accepts Generic, OCP, Robin or AON and notes these "may have
+	// specific installation logic in the component controllers".
+	//
+	// ROKS IS OpenShift, so "OCP" is the accurate value, and only with it does the
+	// CNE controller's F5Tmm reach Reconciled=True — under "Generic" it aborts
+	// looking for the kubeadm-config ConfigMap that only kubeadm-built clusters
+	// have, and never creates TMM's internal macvlan NAD (#189).
+	//
+	// The default is still "Generic" because "OCP" is not yet safe unattended: a
+	// reconciling F5Tmm asks for a persistent volume, while TMM's replicas are
+	// pinned to separate nodes across separate zones by the placement F5's own
+	// reference prescribes. One ReadWriteOnce zonal volume cannot serve those, so
+	// on a stock ROKS cluster two of three TMM pods stay Pending. Set "OCP" when
+	// the cluster's default StorageClass supports ReadWriteMany.
+	FLOContainerPlatform string `yaml:"flo_container_platform,omitempty" default:"Generic"`
+
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
 	// (#170).
 	//

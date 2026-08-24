@@ -8,6 +8,30 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **`bnk.flo_container_platform`, and the reason 2.4's TMM has never actually
+  worked** (#189). The FLO helm values hard-coded `containerPlatform = "Generic"`.
+  ROKS **is** OpenShift, and F5's chart notes these platforms "may have specific
+  installation logic in the component controllers" — under `Generic` the CNE
+  controller looks for the `kubeadm-config` ConfigMap that only kubeadm-built
+  clusters have, aborts at `Reconciled=False`, and never creates TMM's internal
+  macvlan NAD.
+
+  Two clean installs differing only in this value settle it: `Generic` →
+  `Reconciled=False`, `OCP` → `Reconciled=True`.
+
+  It also reframes what we thought was healthy. `F5Tmm.spec.persistence` is
+  **true on both**; under `Generic` the controller simply never gets far enough
+  to act on it. So the 3/3 TMM pods every 2.4 install has reported were a *side
+  effect of the bug* — a correctly reconciling TMM asks for a persistent volume,
+  and we have never given it one.
+
+  **The default stays `Generic`** because `OCP` is not yet safe unattended: the
+  reconciling TMM's three replicas are pinned to three nodes across three zones
+  by the placement F5's own reference prescribes, and one `ReadWriteOnce` zonal
+  volume cannot serve them — so on a stock ROKS cluster two of three TMM pods
+  stay `Pending`. Set `OCP` when the default StorageClass supports
+  `ReadWriteMany`. #189 stays open for the storage answer.
+
 - **A 2.4 install was still rendering the 2.3 network surface** (#187). The
   `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs, and the
   `CLOUD_NETWORK_CONFIGMAP` env pointing at them were gated on

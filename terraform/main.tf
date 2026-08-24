@@ -143,6 +143,7 @@ module "flo" {
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   flo_namespace                 = var.flo_namespace
+  flo_container_platform        = var.flo_container_platform
   flo_trusted_profile_sa_name   = var.flo_trusted_profile_sa_name
   flo_trusted_profile_roles     = var.flo_trusted_profile_roles
   flo_utils_namespace           = var.flo_utils_namespace

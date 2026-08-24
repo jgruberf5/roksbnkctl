@@ -300,3 +300,9 @@ variable "helm_registry_config" {
   type        = string
   default     = ""
 }
+
+variable "flo_container_platform" {
+  description = "containerPlatform passed to the FLO helm chart. ROKS is OpenShift, so OCP is accurate; the default stays Generic until TMM persistence has RWX storage (#189)."
+  type        = string
+  default     = "Generic"
+}

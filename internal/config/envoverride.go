@@ -85,6 +85,10 @@ import (
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_TESTING_VPC_NAME     → resources.testing_client_vpc_name (name the created testing client VPC)
 //	ROKSBNKCTL_TRANSIT_GATEWAY_NAME → resources.transit_gateway.existing (create:false — adopt a shared TGW by name or id)
+//	ROKSBNKCTL_FLO_CONTAINER_PLATFORM → bnk.flo_container_platform (Generic |
+//	                                  OCP | Robin | AON). ROKS is OpenShift, so OCP
+//	                                  is accurate and is what makes F5Tmm reconcile
+//	                                  — but it needs RWX storage (#189)
 //	ROKSBNKCTL_CERT_MANAGER_CREATE  → resources.cert_manager.create (bool) — set
 //	                                  false to ADOPT a cert-manager the cluster
 //	                                  already runs, which an adopted cluster very
@@ -285,6 +289,11 @@ func OverrideFromEnv(ws *Workspace) []string {
 				applied = append(applied, o.path+" ("+o.env+")")
 			}
 		}
+	}
+
+	if v := envValue("ROKSBNKCTL_FLO_CONTAINER_PLATFORM"); v != "" {
+		ws.BNK.FLOContainerPlatform = v
+		applied = append(applied, "bnk.flo_container_platform (ROKSBNKCTL_FLO_CONTAINER_PLATFORM)")
 	}
 
 	if v := envValue("ROKSBNKCTL_WATCH_NAMESPACES"); v != "" {
@@ -941,6 +950,7 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_DEMO_MODE",
 	"ROKSBNKCTL_WHOLE_CLUSTER",
 	"ROKSBNKCTL_CERT_MANAGER_CREATE",
+	"ROKSBNKCTL_FLO_CONTAINER_PLATFORM",
 	"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE",
 	"ROKSBNKCTL_REGISTRY_COS_CREATE",
 	"ROKSBNKCTL_HUGEPAGES",

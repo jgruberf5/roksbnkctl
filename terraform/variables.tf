@@ -349,6 +349,35 @@ variable "bnk_line" {
 # they were for some time and nothing enforced it. An invalid namespace name is
 # not caught until the apply, where it surfaces as a Kubernetes admission error
 # partway through creating things.
+variable "flo_container_platform" {
+  description = <<-EOT
+    The container platform the F5 Lifecycle Operator is told it runs on. F5's chart
+    accepts Generic, OCP, Robin or AON, and says these "may have specific
+    installation logic in the component controllers".
+
+    ROKS IS OpenShift, so OCP is the accurate value — and with it the CNE
+    controller's F5Tmm reaches Reconciled=True. Under Generic it aborts looking for
+    the kubeadm-config ConfigMap that only kubeadm-built clusters have, and never
+    creates its internal macvlan NAD (#189).
+
+    The DEFAULT is still Generic, because OCP is not yet safe by default: a
+    reconciling F5Tmm asks for a persistent volume, and TMM's three replicas are
+    pinned to three different nodes across three zones by the placement F5's own
+    reference prescribes. One ReadWriteOnce zonal volume cannot serve that, so on a
+    cluster whose default StorageClass is RWO block — every stock ROKS cluster —
+    two of three TMM pods stay Pending and the install fails.
+
+    Set OCP when the cluster's default StorageClass supports ReadWriteMany.
+  EOT
+  type        = string
+  default     = "Generic"
+
+  validation {
+    condition     = contains(["Generic", "OCP", "Robin", "AON"], var.flo_container_platform)
+    error_message = "flo_container_platform must be one of Generic, OCP, Robin, AON."
+  }
+}
+
 variable "flo_namespace" {
   description = "Kubernetes namespace for the F5 Lifecycle Operator"
   type        = string

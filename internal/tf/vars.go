@@ -546,6 +546,9 @@ func renderBNKNamespaces(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
+	if ws.BNK.FLOContainerPlatform != "" {
+		fmt.Fprintf(w, "flo_container_platform = %q\n", ws.BNK.FLOContainerPlatform)
+	}
 }
 
 // renderBNKTrustedProfile emits FLO's Trusted Profile service account and roles.
