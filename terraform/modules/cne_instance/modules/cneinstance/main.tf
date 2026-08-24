@@ -227,35 +227,53 @@ locals {
         name  = "CLOUD_PROVIDER"
         value = var.cneinstance_cloud_provider
       },
-      {
-        name  = "CLOUD_NETWORK_CONFIGMAP"
-        value = "cloud-network-mapping"
-      },
-      {
-        name  = "VPC_NAME"
-        value = var.cneinstance_vpc_name
-      },
-      {
-        name  = "CLOUD_REGION"
-        value = var.cneinstance_cloud_region
-      },
-      {
-        name  = "IBM_TRUSTED_PROFILE_ID"
-        value = var.cneinstance_ibm_trusted_profile_id
-      },
-      {
-        name  = "GSLB_DATACENTER_NAME"
-        value = var.cneinstance_gslb_datacenter_name
-      },
-      {
-        name  = "CLOUD_VPC"
-        value = var.cneinstance_vpc_name
-      },
-      {
-        name  = "CLOUD_TRUSTED_PROFILE"
-        value = var.cneinstance_ibm_trusted_profile_id
-      }
-    ], local.cnecontroller_gtm_env)
+      ],
+      # 2.3 ONLY. On 2.4 the controller reads Infra + GatewaySettings and ignores
+      # the ConfigMap; F5's approved reference carries neither this env var nor the
+      # ConfigMap. Both formats at once is the device-IP conflict the guide warns
+      # about (#172), and it leaves F5Tmm at Reconciled=False so the internal
+      # macvlan NAD is never created (#187).
+      #
+      # Spliced in POSITION rather than appended: the 2.3 env order is otherwise
+      # unchanged, so a shipping 2.3 install sees no CNEInstance diff from this.
+      local.line_pre_24 ? [
+        {
+          name  = "CLOUD_NETWORK_CONFIGMAP"
+          value = "cloud-network-mapping"
+        },
+      ] : [],
+      [
+        {
+          name  = "VPC_NAME"
+          value = var.cneinstance_vpc_name
+        },
+        {
+          name  = "CLOUD_REGION"
+          value = var.cneinstance_cloud_region
+        },
+        {
+          name  = "IBM_TRUSTED_PROFILE_ID"
+          value = var.cneinstance_ibm_trusted_profile_id
+        },
+        {
+          name  = "GSLB_DATACENTER_NAME"
+          value = var.cneinstance_gslb_datacenter_name
+        },
+        {
+          name  = "CLOUD_VPC"
+          value = var.cneinstance_vpc_name
+        },
+        {
+          name  = "CLOUD_TRUSTED_PROFILE"
+          value = var.cneinstance_ibm_trusted_profile_id
+        }
+      ],
+      # 2.3 ONLY. On 2.4 the controller reads Infra + GatewaySettings and ignores
+      # the ConfigMap entirely; F5's approved reference carries neither this env var
+      # nor the ConfigMap. Emitting both formats at once is the device-IP conflict
+      # the 2.4 guide warns about (#172), and it leaves F5Tmm at Reconciled=False so
+      # the internal macvlan NAD is never created (#187).
+    local.cnecontroller_gtm_env)
     tmm = [
       {
         name  = "TMM_CALICO_ROUTER"
@@ -687,7 +705,8 @@ locals {
 }
 
 resource "kubectl_manifest" "cloud_network_mapping" {
-  count             = local.use_kubectl ? 1 : 0
+  # 2.3 ONLY — see the CLOUD_NETWORK_CONFIGMAP note above (#187).
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.cloud_network_mapping_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -824,7 +843,8 @@ resource "null_resource" "validation_webhook_ready" {
 }
 
 resource "kubectl_manifest" "external_vlan" {
-  count             = local.use_kubectl ? 1 : 0
+  # 2.3 ONLY — see the CLOUD_NETWORK_CONFIGMAP note above (#187).
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.external_vlan_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
@@ -833,7 +853,8 @@ resource "kubectl_manifest" "external_vlan" {
 }
 
 resource "kubectl_manifest" "internal_vlan" {
-  count             = local.use_kubectl ? 1 : 0
+  # 2.3 ONLY — see the CLOUD_NETWORK_CONFIGMAP note above (#187).
+  count             = local.use_kubectl && local.line_pre_24 ? 1 : 0
   yaml_body         = yamlencode(local.internal_vlan_manifest)
   server_side_apply = true
   field_manager     = "roksbnkctl"
