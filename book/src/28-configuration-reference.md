@@ -71,7 +71,7 @@ BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `bigip_url` | `string` | 2.3 + 2.4 | — | no | BigIPURL is the management address of the classic BIG-IP that the Container Ingress Services controller configures, e.g. |
+| `bigip_url` | `string` | 2.3 + 2.4 | — | no | BigIPURL is the management address of the classic BIG-IP that the Container Ingress Services controller configures, e.g. "https://10.1.1.5". |
 | `bigip_username` | `string` | 2.3 + 2.4 | — | no | BigIPUsername is the account CIS authenticates to that BIG-IP as. |
 | `bigip_password_b64` | `string` | 2.3 + 2.4 | — | no | BigIPPasswordB64 is that account's password, base64-encoded — obfuscation, not encryption. |
 
@@ -90,7 +90,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 |---|---|---|---|---|---|
 | `cneinstance_size` | `string` | 2.3 + 2.4 | — | no | CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium, Large or Max. |
 | `far_repo_url` | `string` | 2.3 + 2.4 | — | no | FARRepoURL is the F5 Artifact Repository charts are pulled from. |
-| `manifest_version` | `string` | 2.3 + 2.4 | — | no | ManifestVersion pins the BNK release, e.g. |
+| `manifest_version` | `string` | 2.3 + 2.4 | — | no | ManifestVersion pins the BNK release, e.g. "2.4.0-EA". |
 | `far_auth_file` | `string` | 2.3 + 2.4 | — | no | FarAuthFile is the FAR auth tarball's filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry` to resolve the FAR _json_key_base64 service account. |
 | `subscription_jwt_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTFile is the subscription/license JWT's filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar. |
 | `far_auth_local_file` | `string` | 2.3 + 2.4 | — | no | FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of COS objects. |
@@ -149,7 +149,7 @@ BNKFLPExternalCfg addresses an F5 License Proxy that this workspace does not own
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `url` | `string` | 2.3 + 2.4 | — | no | URL of the proxy, e.g. |
+| `url` | `string` | 2.3 + 2.4 | — | no | URL of the proxy, e.g. https://10.240.64.5:30001 — reachable from THIS cluster's pods. |
 | `root_ca_b64` | `string` | 2.3 + 2.4 | — | no | RootCAB64 is the proxy's root CA, base64-encoded (as `flp output` emits it). |
 
 ## `BNKFLPForwardProxyCfg`
@@ -174,7 +174,7 @@ BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running t
 | `vpc_name` | `string` | 2.3 + 2.4 | — | no | VPCName names the VPC created when CreateVPC is set. |
 | `subnet_cidr` | `string` | 2.3 + 2.4 | — | no | SubnetCIDR is the address prefix for that VPC. |
 | `profile` | `string` | 2.3 + 2.4 | — | no | Profile is the IBM Cloud VSI instance profile. |
-| `zone` | `string` | 2.3 + 2.4 | — | no | Zone the VSI lands in (e.g. |
+| `zone` | `string` | 2.3 + 2.4 | — | no | Zone the VSI lands in (e.g. us-south-1). |
 | `boot_size_gb` | `int` | 2.3 + 2.4 | — | no | BootSizeGB is the boot volume size. |
 | `reach` | `string` | 2.3 + 2.4 | — | no | Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP, for a CWC in the same/peered VPC) or "floating" (a public floating IP). |
 | `management_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80 flp-status web UI (read-only status). |
@@ -194,7 +194,7 @@ BNKForgeCfg is the optional integration with a co-located BNK Forge (v3) install
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `register` | `bool` | 2.3 + 2.4 | — | no | Register opts the workspace in. |
-| `url` | `string` | 2.3 + 2.4 | — | no | URL is the BNK Forge server base URL (e.g. |
+| `url` | `string` | 2.3 + 2.4 | — | no | URL is the BNK Forge server base URL (e.g. https://forge.example.com). |
 | `project` | `string` | 2.3 + 2.4 | — | no | Project is the target BNK Forge project NAME. |
 | `username` | `string` | 2.3 + 2.4 | — | no | Username is the BNK Forge login user. |
 | `insecure` | `bool` | 2.3 + 2.4 | — | no | Insecure skips TLS verification against the Forge server. |
@@ -206,7 +206,7 @@ BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional. BNKGT
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `url` | `string` | 2.3 + 2.4 | — | no | URL of the GTM/BIG-IP DNS management endpoint, e.g. |
+| `url` | `string` | 2.3 + 2.4 | — | no | URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com. |
 | `username` | `string` | 2.3 + 2.4 | — | no | Username to authenticate with. |
 | `password_b64` | `string` | 2.3 + 2.4 | — | no | PasswordB64 is the base64 of the password. |
 
@@ -277,13 +277,13 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 |---|---|---|---|---|---|
 | `create` | `bool` | 2.3 + 2.4 | — | yes | Create decides whether this workspace BUILDS the ROKS cluster or adopts one that already exists. |
 | `name` | `string` | 2.3 + 2.4 | — | yes | Name is the ROKS cluster's name — the one to create, or the existing one to adopt when Create is false. |
-| `openshift_version` | `string` | 2.3 + 2.4 | — | no | OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g. |
+| `openshift_version` | `string` | 2.3 + 2.4 | — | no | OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g. "4.20"). |
 | `workers_per_zone` | `int` | 2.3 + 2.4 | `1` | no | WorkersPerZone is the worker count PER ZONE, not in total: ROKS spans three availability zones, so 2 here is a six-node cluster. |
 | `public_gateway` | `*bool` | 2.3 + 2.4 | `true` | no | PublicGateway controls whether the cluster subnets attach a public gateway for worker Internet egress. |
 | `vpc_cidr` | `string` | 2.3 + 2.4 | — | no | VPCCIDR is the block the cluster VPC's per-zone address prefixes are carved from — "10.241.0.0/16" becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18. |
 | `network_mode` | `string` | 2.3 + 2.4 | `single-nic` | no | NetworkMode selects how the cluster's worker nodes are attached: "single-nic" (the default, and today's only behaviour) or "multi-nic". |
 | `existing_subnet_ids` | `[]string` | 2.3 + 2.4 | — | no | ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per zone in zone order, instead of creating them (#61). |
-| `worker_flavor` | `string` | 2.3 + 2.4 | — | no | WorkerFlavor names the worker profile EXACTLY, e.g. |
+| `worker_flavor` | `string` | 2.3 + 2.4 | — | no | WorkerFlavor names the worker profile EXACTLY, e.g. "cx3d.8x20". |
 | `min_worker_vcpu_count` | `int` | 2.3 + 2.4 | `16` | no | MinWorkerVCPUCount is the vCPU floor for the worker-flavor auto-select: the cluster module picks the smallest bx2 profile meeting this and MinWorkerMemoryGB. |
 | `min_worker_memory_gb` | `int` | 2.3 + 2.4 | `64` | no | MinWorkerMemoryGB is the memory floor for the same auto-select. |
 
@@ -321,7 +321,7 @@ ExecToolCfg is one entry under workspace.Exec — the chosen backend for a given
 | `backend_port` | `int` | 2.3 + 2.4 | — | no | BackendPort is the port on that Service. |
 | `egress_mode` | `string` | 2.3 + 2.4 | — | no | EgressMode selects how return traffic is source-addressed: "snatpool", "automap", or "both". |
 | `client_subnet_local` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetLocal lists client CIDRs reachable on the same VPC as the cluster — routed directly rather than over the transit gateway. |
-| `client_subnet_remote` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. |
+| `client_subnet_remote` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. the testing client VPC. |
 | `vxlan_port` | `int` | 2.3 + 2.4 | — | no | VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes. |
 | `route_examples` | `[]string` | 2.3 + 2.4 | — | no | RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates. |
 | `l4_listener_port` | `int` | 2.3 + 2.4 | — | no | L4ListenerPort is the port for that TCP listener. |
@@ -333,7 +333,7 @@ HugepagesCfg allocates hugepages on the worker pool through the OpenShift Node T
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `enabled` | `bool` | 2.3 + 2.4 | — | yes | Enabled allocates hugepages. |
-| `size` | `string` | 2.3 + 2.4 | `2M` | no | Size is the hugepage size, e.g. |
+| `size` | `string` | 2.3 + 2.4 | `2M` | no | Size is the hugepage size, e.g. "2M" or "1G". |
 | `count` | `int` | 2.3 + 2.4 | `2048` | no | Count is the number of pages PER NODE. |
 | `node_role` | `string` | 2.3 + 2.4 | `worker` | no | NodeRole is the machineconfiguration.openshift.io/role the profile applies to. |
 | `profile_name` | `string` | 2.3 + 2.4 | `bnk-hugepages` | no | ProfileName names the Tuned profile and CR. |
@@ -342,7 +342,7 @@ HugepagesCfg allocates hugepages on the worker pool through the OpenShift Node T
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `region` | `string` | 2.3 + 2.4 | — | yes | Region is the IBM Cloud region everything in this workspace is created in or adopted from, e.g. |
+| `region` | `string` | 2.3 + 2.4 | — | yes | Region is the IBM Cloud region everything in this workspace is created in or adopted from, e.g. "us-east". |
 | `resource_group` | `string` | 2.3 + 2.4 | `default` | yes | ResourceGroup is the IBM Cloud resource group resources are placed in, and the one an adopted cluster is looked up in. |
 | `api_key_source` | `string` | 2.3 + 2.4 | — | no | env \| keychain \| config \| prompt — see secrets.go. |
 | `api_key_b64` | `string` | 2.3 + 2.4 | — | no | APIKeyB64 stores the API key base64-encoded inline in the workspace config. |
@@ -354,10 +354,10 @@ RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which tar
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `target` | `string` | 2.3 + 2.4 | — | no | Target selects the mirror backend: "icr" (IBM Container Registry — the DEFAULT when unset) or "generic" (any OCI-compliant registry — Artifactory / Harbor / Quay / registry:2). |
-| `icr_host` | `string` | 2.3 + 2.4 | — | no | ICRHost overrides the IBM Container Registry host for target=icr (e.g. |
+| `icr_host` | `string` | 2.3 + 2.4 | — | no | ICRHost overrides the IBM Container Registry host for target=icr (e.g. "de.icr.io"). |
 | `icr_namespace` | `string` | 2.3 + 2.4 | — | no | ICRNamespace is the ICR namespace artifacts nest under for target=icr. |
-| `generic_host` | `string` | 2.3 + 2.4 | — | no | GenericHost is the OCI registry host for target=generic (e.g. |
-| `generic_repo_prefix` | `string` | 2.3 + 2.4 | — | no | GenericRepoPrefix is the repository path artifacts nest under for target=generic (e.g. |
+| `generic_host` | `string` | 2.3 + 2.4 | — | no | GenericHost is the OCI registry host for target=generic (e.g. "artifactory.example.com"). |
+| `generic_repo_prefix` | `string` | 2.3 + 2.4 | — | no | GenericRepoPrefix is the repository path artifacts nest under for target=generic (e.g. an Artifactory repo key). |
 | `generic_username` | `string` | 2.3 + 2.4 | — | no | GenericUsername / GenericPasswordB64 are the static basic-auth credential for target=generic (an Artifactory user + access token). |
 | `generic_password_b64` | `string` | 2.3 + 2.4 | — | no | GenericPasswordB64 is that user's password or access token, base64-encoded — obfuscation, not encryption. |
 | `generic_ca_b64` | `string` | 2.3 + 2.4 | — | no | GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network. |

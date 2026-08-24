@@ -8,6 +8,18 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Added
 
+- **Fourteen reference descriptions were being cut off mid-phrase.** The
+  generator ended the published sentence at the first `". "`, so any
+  abbreviation truncated it — `bnk.manifest_version` shipped as "pins the BNK
+  release, e.g.", stopping immediately before the clause explaining that it is
+  the field selecting the 2.3 or 2.4 model. Six more broke on the parenthesised
+  `(e.g.` form, including `registry.icr_host` and `cluster.openshift_version`,
+  which had been wrong since long before this release.
+
+  The undocumented-field ratchet cannot catch these: the rows are not blank,
+  only cut short. `firstSentence` now recognises abbreviations and single-letter
+  initials, with a unit test covering each form.
+
 - **56 of the reference's blank descriptions filled** (#181): every top-level
   config section, the seven `resources.*` create/adopt toggles, the six per-zone
   network-mapping fields, and the `cluster`, `bnk`, `ibmcloud`, `tf_source`,

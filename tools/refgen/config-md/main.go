@@ -183,13 +183,42 @@ func docText(groups ...*ast.CommentGroup) string {
 // firstSentence keeps the table one line per field. The full prose stays in the
 // source, which the chapter links to — duplicating all of it here would make
 // this a second copy to maintain, which is the thing being removed.
+// sentenceAbbrevs are the abbreviations whose trailing period does NOT end a
+// sentence. Without this, "pins the BNK release, e.g. \"2.4.0-EA\". This is the
+// single field that selects the product line" was published as "pins the BNK
+// release, e.g." — cut mid-phrase, immediately before the only part that
+// mattered. Fourteen rows were truncated this way, and the undocumented-field
+// ratchet cannot see it: they are not blank, merely cut off.
+var sentenceAbbrevs = map[string]bool{
+	"eg": true, "ie": true, "etc": true, "vs": true, "cf": true,
+	"approx": true, "inc": true, "no": true, "fig": true, "al": true,
+}
+
+// endsSentence reports whether the period at s[i] terminates a sentence, rather
+// than sitting inside an abbreviation or a single-letter initial.
+func endsSentence(s string, i int) bool {
+	start := strings.LastIndexByte(s[:i], ' ') + 1
+	// Strip the dots and any leading punctuation: the abbreviation is commonly
+	// parenthesised, and "(e.g" would otherwise miss the table entirely.
+	word := strings.ToLower(strings.ReplaceAll(s[start:i], ".", ""))
+	word = strings.TrimLeft(word, "([{\"'`“‘")
+	if word == "" {
+		return false
+	}
+	if sentenceAbbrevs[word] {
+		return false
+	}
+	// A lone letter before the period is an initial ("F. Smith"), not an end.
+	return len(word) > 1
+}
+
 func firstSentence(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if s == "" {
 		return ""
 	}
 	for i := 0; i+1 < len(s); i++ {
-		if s[i] == '.' && s[i+1] == ' ' {
+		if s[i] == '.' && s[i+1] == ' ' && endsSentence(s, i) {
 			return s[:i+1]
 		}
 	}
