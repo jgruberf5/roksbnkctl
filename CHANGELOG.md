@@ -144,6 +144,17 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   the jumphost sizing pair were all documented in prose that the generator could
   not see.
 
+- **The last 19 blank descriptions in the configuration reference are filled**
+  (#181). v1.53.0 took 75 to 19; the count is now **zero** and the ratchet's
+  ceiling is zero, so a new config field without a doc comment on the struct
+  fails the build rather than shipping an empty cell.
+
+  Several were blank for a reason worth recording: a shared comment describing
+  two fields attaches to only one of them, orphaning the rest.
+  `MinWorkerVCPUCount`, `SubscriptionJWTLocalFile`, `FLOUtilsNamespace`,
+  `VLANPrefixLenInternal` and the jumphost sizing pair were all documented in
+  prose the generator could not see.
+
 - **`bnk up` installs the Gateway API 1.5 bundle, from the mirror** (#185). BNK
   2.4's `crd-installer` no longer forces its own Gateway API CRDs — it logs a
   graceful skip and leaves the cluster on whatever bundle OpenShift ships, which
