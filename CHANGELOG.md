@@ -8,29 +8,42 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
-- **`bnk.flo_container_platform`, and the reason 2.4's TMM has never actually
-  worked** (#189). The FLO helm values hard-coded `containerPlatform = "Generic"`.
-  ROKS **is** OpenShift, and F5's chart notes these platforms "may have specific
-  installation logic in the component controllers" — under `Generic` the CNE
-  controller looks for the `kubeadm-config` ConfigMap that only kubeadm-built
-  clusters have, aborts at `Reconciled=False`, and never creates TMM's internal
-  macvlan NAD.
+- **2.4's TMM has never actually worked, and twenty-three settings never reached
+  terraform** (#189). Two defects, found together.
 
-  Two clean installs differing only in this value settle it: `Generic` →
-  `Reconciled=False`, `OCP` → `Reconciled=True`.
+  `containerPlatform` was hard-coded to `"Generic"` in the FLO helm values. ROKS
+  **is** OpenShift — this tool builds and adopts nothing else — and F5's chart
+  notes these platforms "may have specific installation logic in the component
+  controllers". Under `Generic` the CNE controller looks for the `kubeadm-config`
+  ConfigMap only kubeadm-built clusters have, aborts at `Reconciled=False`, and
+  never creates TMM's internal macvlan NAD. Now `"OCP"`, and not a setting —
+  there is no cluster this tool targets where anything else is true.
 
-  It also reframes what we thought was healthy. `F5Tmm.spec.persistence` is
-  **true on both**; under `Generic` the controller simply never gets far enough
-  to act on it. So the 3/3 TMM pods every 2.4 install has reported were a *side
-  effect of the bug* — a correctly reconciling TMM asks for a persistent volume,
-  and we have never given it one.
+  Two clean installs differing only in that value: `Generic` →
+  `Reconciled=False`, `OCP` → `Reconciled=True`. It also reframes what looked
+  healthy: `persistence` is true on both, so the 3/3 TMM pods every 2.4 install
+  reported were a *side effect of the bug* — the controller never got far enough
+  to ask for TMM's volume.
 
-  **The default stays `Generic`** because `OCP` is not yet safe unattended: the
-  reconciling TMM's three replicas are pinned to three nodes across three zones
-  by the placement F5's own reference prescribes, and one `ReadWriteOnce` zonal
-  volume cannot serve them — so on a stock ROKS cluster two of three TMM pods
-  stay `Pending`. Set `OCP` when the default StorageClass supports
-  `ReadWriteMany`. #189 stays open for the storage answer.
+  Adds `bnk.storage_class_name`, because a correctly reconciling TMM needs one.
+  Its replicas are pinned to separate nodes across separate zones by the
+  placement F5's own reference prescribes, while their volume is shared — so the
+  stock ROKS default (`ibmc-vpc-block-*`, ReadWriteOnce, zonal) binds one replica
+  and the rest stay Pending. A ReadWriteMany class from the `vpc-file-csi-driver`
+  addon serves all three; `ibmc-vpc-file-regional` also spans zones.
+
+  **And the larger find: twenty-three root variables were never passed to their
+  module.** `cneinstance_tmm_replicas`, `watch_namespaces`, every TMM placement
+  key, `external_bigip`, `demo_mode`, `gateway_api_version`, `tcp_settings` and
+  more were declared, rendered into `terraform.tfvars`, documented in the book —
+  and `terraform/main.tf` never handed any of them to `module.cne_instance`. The
+  live CNEInstance matched F5's reference by *coincidence of module defaults*,
+  not because an operator setting reached it. Setting any of them did nothing.
+
+  `TestEveryRootVariableIsRead` missed this because it accepted `var.foo` found
+  anywhere in the tree — but a module declares its **own** variables, so that
+  match was a different variable that merely shared a name. It now scans
+  root-level files only, which is what surfaced all twenty-three.
 
 - **A 2.4 install was still rendering the 2.3 network surface** (#187). The
   `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs, and the

@@ -98,7 +98,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `trusted_profile` | `*BNKTrustedProfileCfg` | 2.3 + 2.4 | — | no | TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller assumes to manage its own cluster's VPC. |
 | `flo_namespace` | `string` | 2.3 + 2.4 | `f5-bnk` | no | FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle Operator and its utility components install into (rendered as flo_namespace / flo_utils_namespace). |
 | `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no |  |
-| `flo_container_platform` | `string` | 2.3 + 2.4 | `Generic` | no | FLOContainerPlatform tells the F5 Lifecycle Operator which platform it is on. |
+| `storage_class_name` | `string` | 2.3 + 2.4 | — | no | StorageClassName is the StorageClass the CNEInstance's persistent volumes use, TMM's included. |
 | `gateway_api_mtls` | `bool` | 2.4 | — | no | GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS (#170). |
 | `tmm_replicas` | `int` | 2.4 | `3` | no | TMMReplicas is the number of f5-tmm data-plane replicas. |
 | `watch_namespaces` | `[]string` | 2.4 | `All` | no | WatchNamespaces are the namespaces the CNE controller watches. |

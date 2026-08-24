@@ -166,12 +166,6 @@ variable "flo_trusted_profile_roles" {
   default     = ["Viewer", "Editor"]
 }
 
-variable "flo_container_platform" {
-  description = "containerPlatform for the FLO helm values. See the root variable of the same name (#189)."
-  type        = string
-  default     = "Generic"
-}
-
 variable "flo_namespace" {
   description = "Namespace for F5 Lifecycle Operator"
   type        = string

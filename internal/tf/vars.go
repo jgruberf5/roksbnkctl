@@ -546,8 +546,8 @@ func renderBNKNamespaces(w io.Writer, ws *config.Workspace) {
 	if ws.BNK.FLOUtilsNamespace != "" {
 		fmt.Fprintf(w, "flo_utils_namespace = %q\n", ws.BNK.FLOUtilsNamespace)
 	}
-	if ws.BNK.FLOContainerPlatform != "" {
-		fmt.Fprintf(w, "flo_container_platform = %q\n", ws.BNK.FLOContainerPlatform)
+	if ws.BNK.StorageClassName != "" {
+		fmt.Fprintf(w, "cneinstance_storage_class_name = %q\n", ws.BNK.StorageClassName)
 	}
 }
 

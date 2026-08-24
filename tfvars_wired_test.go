@@ -54,13 +54,26 @@ func TestEveryRootVariableIsRead(t *testing.T) {
 		t.Fatalf("only %d root variables parsed; the regex has stopped matching", len(declared))
 	}
 
-	// Every .tf in the tree EXCEPT the root declaration file itself. A
-	// validation block lives inside the `variable` block, so including
-	// variables.tf would make every variable trivially "read".
+	// ROOT-LEVEL .tf files only, excluding the declaration file itself.
+	//
+	// Scanning the whole tree was wrong, and missed three real mutations. A
+	// module declares its OWN variables, so `var.foo` inside modules/x/main.tf
+	// refers to that module's foo — a different variable that merely shares a
+	// name. Counting it let a root variable be declared, rendered into tfvars and
+	// documented, while terraform/main.tf never passed it to any module: inert,
+	// and green. That is the exact defect this test exists to catch, and it
+	// happened twice in one change.
+	//
+	// A validation block lives inside the `variable` block, so including
+	// variables.tf would also make every variable trivially "read".
 	var body strings.Builder
 	err = fs.WalkDir(EmbeddedTerraform, "terraform", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path.Ext(p) != ".tf" || p == "terraform/variables.tf" {
 			return err
+		}
+		// root level only: "terraform/<file>.tf", never "terraform/modules/..."
+		if strings.Count(p, "/") != 1 {
+			return nil
 		}
 		b, err := fs.ReadFile(EmbeddedTerraform, p)
 		if err != nil {

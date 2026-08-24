@@ -85,7 +85,6 @@ module "flo" {
   # FLO Configuration
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
   flo_namespace                 = var.flo_namespace
-  flo_container_platform        = var.flo_container_platform
   trusted_profile_sa_name       = var.flo_trusted_profile_sa_name
   trusted_profile_roles         = var.flo_trusted_profile_roles
   utils_namespace               = var.flo_utils_namespace
