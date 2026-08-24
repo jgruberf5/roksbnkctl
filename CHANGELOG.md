@@ -6,6 +6,42 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Changed
+
+- **Chapter 12 is no longer a second copy of the configuration schema** (#184).
+  It carried eight field-spec tables — `prefix:`, `ibmcloud:`, `cluster:`,
+  `resources:`, `bnk:`, `bnk.network:`, `test:` and `cos:` — restating 68
+  descriptions that Chapter 28 already generates from the `Workspace` struct.
+  Two copies of a schema is one copy plus a thing that will disagree with
+  itself, and it already had: `resources.tgw_jumphost` was documented as
+  defaulting to `create: true` when the testing client has been opt-in
+  (defaulting to *off*) since it moved behind the "Add a testing client?"
+  prompt, and `cluster.create` was documented as defaulting to `true` when the
+  Go field is a plain `bool` whose zero value is `false`.
+
+  Every one of those tables is gone, replaced by a link to the exact section of
+  Chapter 28 that lists the block's fields. Chapter 12 keeps everything a
+  generated table cannot carry: the worked `init` transcript, the YAML
+  examples, "When it gets written", "Behaviour when fields are missing",
+  "Editing by hand vs helpers", and the `tf_source:` / `exec:` tables, which
+  enumerate *values* of one field rather than fields.
+
+  Chapter 28 publishes only the **first sentence** of each doc comment, so ten
+  fields carried real guidance in Chapter 12 that deleting the row would have
+  destroyed. That guidance was rewritten as prose rather than dropped —
+  `cluster.public_gateway` (what a disconnected cluster obliges you to provide),
+  `cluster.vpc_cidr` (why IBM's `auto` prefixes stop two clusters sharing a
+  Transit Gateway, issue #46), `cluster.existing_subnet_ids` (zone order is read
+  from the subnets, so a reordered list silently places the cluster
+  differently), `cluster.network_mode` (create-time only and refused on
+  disagreement), `bnk.trusted_profile.service_account` (an IAM **matcher**, not
+  a pointer: a wrong name makes the profile unassumable and reports nothing),
+  `bnk.gtm.*` and `bnk.gslb_datacenter_name` (a datacenter name without a GTM
+  URL is a label pointing at nothing), `bnk.cneinstance_size` (unvalidated on
+  purpose), `bnk.network.vlan_prefixlen` (independent of the VLAN CIDRs and
+  never derived from them), `prefix` (the 35-char ROKS cluster-name cap and the
+  label charset), and `ibmcloud.api_key_b64` (obfuscation, not encryption).
+
 ### Fixed
 
 - **Twenty-three `bnk.*` settings did nothing on either release line** — found
@@ -67,6 +103,27 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   `count`/`for_each` expression, lifted out of the HCL and evaluated by
   `terraform console`, so an inverted or commented-out gate changes the answer.
   `TestEveryLineTagHasEvidence` refuses a new tag that arrives without one.
+
+- **`test.throughput.image` was documented as the wrong image, for the wrong
+  end of the test.** Chapter 12 said the `k8s` backend substitutes
+  `ghcr.io/jgruberf5/roksbnkctl-tools-iperf3` for it. It does not: that field is
+  the in-cluster iperf3 **server** fixture and is used whatever the backend, and
+  the GHCR tool images are the iperf3 **client** the `docker`/`k8s` exec
+  backends run. The chapter now says so, and records the reason you would
+  actually override it — the default `networkstatic/iperf3:latest` runs as root,
+  which OpenShift's SCC admission papers over but a plain Kubernetes cluster
+  with the `restricted` Pod Security standard rejects.
+
+- **The orchestration COS defaults are now generated rather than asserted**
+  (#184). `cos.instance` / `cos.bucket` / `cos.region` published no default in
+  Chapter 28 while Chapter 12 claimed `bnk-supply-chain` / `bnk-artifacts` /
+  `us-south` in prose. They carry `default:"..."` struct tags now, so the
+  reference publishes them and they are checked against
+  `terraform/variables.tf` like every other default. Chapter 12 keeps the part
+  a tag cannot express: `init` provisions
+  `bnk-artifacts-<first 12 of the account id>`, because COS bucket names are
+  globally unique and keying the suffix off the account makes the name both
+  collision-free and discoverable by a second workspace from the same account.
 
 - **Every config field in the reference now has a description** (#181). 75 of
   215 rows shipped blank; the count is now **zero**, and the ratchet's ceiling is
