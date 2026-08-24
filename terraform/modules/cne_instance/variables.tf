@@ -479,3 +479,9 @@ variable "cneinstance_hugepages_profile_name" {
   type        = string
   default     = "bnk-hugepages"
 }
+
+variable "cneinstance_storage_class_name" {
+  description = "StorageClass for the CNEInstance's persistent volumes. See the leaf module variable of the same name (#189)."
+  type        = string
+  default     = ""
+}

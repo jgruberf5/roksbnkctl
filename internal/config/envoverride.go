@@ -85,6 +85,8 @@ import (
 //	ROKSBNKCTL_TESTING_SSH_KEY_NAME → resources.testing_ssh_key_name
 //	ROKSBNKCTL_TESTING_VPC_NAME     → resources.testing_client_vpc_name (name the created testing client VPC)
 //	ROKSBNKCTL_TRANSIT_GATEWAY_NAME → resources.transit_gateway.existing (create:false — adopt a shared TGW by name or id)
+//	ROKSBNKCTL_STORAGE_CLASS_NAME   → bnk.storage_class_name — the CNEInstance
+//	                                  StorageClass; needs ReadWriteMany for TMM
 //	ROKSBNKCTL_CERT_MANAGER_CREATE  → resources.cert_manager.create (bool) — set
 //	                                  false to ADOPT a cert-manager the cluster
 //	                                  already runs, which an adopted cluster very
@@ -285,6 +287,11 @@ func OverrideFromEnv(ws *Workspace) []string {
 				applied = append(applied, o.path+" ("+o.env+")")
 			}
 		}
+	}
+
+	if v := envValue("ROKSBNKCTL_STORAGE_CLASS_NAME"); v != "" {
+		ws.BNK.StorageClassName = v
+		applied = append(applied, "bnk.storage_class_name (ROKSBNKCTL_STORAGE_CLASS_NAME)")
 	}
 
 	if v := envValue("ROKSBNKCTL_WATCH_NAMESPACES"); v != "" {
@@ -941,6 +948,7 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_DEMO_MODE",
 	"ROKSBNKCTL_WHOLE_CLUSTER",
 	"ROKSBNKCTL_CERT_MANAGER_CREATE",
+	"ROKSBNKCTL_STORAGE_CLASS_NAME",
 	"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE",
 	"ROKSBNKCTL_REGISTRY_COS_CREATE",
 	"ROKSBNKCTL_HUGEPAGES",

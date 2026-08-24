@@ -163,6 +163,7 @@ Source: `terraform/variables.tf`
 | `cneinstance_hugepages_count` | `number` | `2048` | Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request. | no |
 | `cneinstance_hugepages_node_role` | `string` | `"worker"` | machineconfiguration.openshift.io/role the Tuned profile applies to. | no |
 | `cneinstance_hugepages_profile_name` | `string` | `"bnk-hugepages"` | Name of the Tuned profile and CR. | no |
+| `cneinstance_storage_class_name` | `string` | `""` | StorageClass for the CNEInstance's persistent volumes, TMM's included. Empty leaves the CR's own default, which resolves to the cluster default class. | no |
 
 ## Module: `cert_manager`
 
@@ -249,6 +250,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_hugepages_count` | `number` | `2048` | Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request. | no |
 | `cneinstance_hugepages_node_role` | `string` | `"worker"` | machineconfiguration.openshift.io/role the Tuned profile applies to. | no |
 | `cneinstance_hugepages_profile_name` | `string` | `"bnk-hugepages"` | Name of the Tuned profile and CR. | no |
+| `cneinstance_storage_class_name` | `string` | `""` | StorageClass for the CNEInstance's persistent volumes. See the leaf module variable of the same name (#189). | no |
 
 ## Module: `flo`
 

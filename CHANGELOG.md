@@ -8,6 +8,35 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **2.4's TMM has never actually reconciled** (#189). `containerPlatform` was
+  hard-coded to `"Generic"` in the FLO helm values. ROKS **is** OpenShift — this
+  tool builds and adopts nothing else — and F5's chart notes these platforms "may
+  have specific installation logic in the component controllers". Under `Generic`
+  the CNE controller looks for the `kubeadm-config` ConfigMap only kubeadm-built
+  clusters have, aborts at `Reconciled=False`, and never creates TMM's internal
+  macvlan NAD.
+
+  It is now `"OCP"`, and **not** a setting: there is no cluster this tool targets
+  where anything else is true. An earlier revision of this change shipped it as a
+  knob defaulting to `Generic`, which was a way of avoiding the decision while
+  continuing to ship a broken `F5Tmm`.
+
+  Two clean installs differing only in that value: `Generic` →
+  `Reconciled=False`, `OCP` → `Reconciled=True`.
+
+  This also reframes what looked healthy. `F5Tmm.spec.persistence` is true on
+  **both**, so the 3/3 TMM pods every 2.4 install has reported were a *side
+  effect of the bug* — the controller never got far enough to ask for TMM's
+  volume.
+
+- **`bnk.storage_class_name`**, because a reconciling TMM needs one. Its replicas
+  are pinned to separate nodes across separate zones by the placement F5's own
+  reference prescribes, while their volume is shared — so the stock ROKS default
+  (`ibmc-vpc-block-*`, ReadWriteOnce, zonal) binds one replica and the rest stay
+  `Pending`. A ReadWriteMany class from the `vpc-file-csi-driver` addon serves all
+  three; `ibmc-vpc-file-regional` also spans zones. Emitted only when set, so
+  unset leaves the CR's own default.
+
 - **Twenty-three `bnk.*` settings did nothing on either release line** — found
   while establishing the line applicability of every config field (#182). The
   root module declared `cneinstance_tmm_replicas` and twenty-two siblings (the

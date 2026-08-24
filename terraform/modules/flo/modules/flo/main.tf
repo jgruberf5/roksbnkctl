@@ -146,8 +146,29 @@ locals {
       }
     }
 
-    namespace                = var.flo_namespace
-    containerPlatform        = "Generic"
+    namespace = var.flo_namespace
+    # ROKS IS OpenShift, and F5's chart says these platforms "may have specific
+    # installation logic in the component controllers". Under Generic the CNE
+    # controller looks for the kubeadm-config ConfigMap that only kubeadm-built
+    # clusters have, aborts at Reconciled=False, and never creates TMM's internal
+    # macvlan NAD (#189) — while every other signal still reports healthy.
+    #
+    # OCP fixes that and is verified to. It is NOT the default yet because a
+    # reconciling F5Tmm then asks for a persistent volume, and TMM's replicas are
+    # pinned to separate nodes across separate zones by the placement F5's own
+    # reference prescribes; one ReadWriteOnce zonal volume cannot serve them.
+    # ROKS IS OpenShift — this tool builds and adopts nothing else
+    # (kube_version = local.openshift_version, tags ["terraform","openshift"]).
+    # So OCP is not a choice, it is the only truthful value, and F5's chart says
+    # these platforms "may have specific installation logic in the component
+    # controllers".
+    #
+    # Under "Generic" the CNE controller looks for the kubeadm-config ConfigMap
+    # that only kubeadm-built clusters have, aborts at Reconciled=False, and never
+    # creates TMM's internal macvlan NAD (#189) — while every other signal reports
+    # healthy. The 3/3 TMM pods that made installs look fine were a side effect of
+    # that failure: the controller never got far enough to ask for TMM's volume.
+    containerPlatform        = "OCP"
     sharedComponentNamespace = var.utils_namespace
 
     image = {

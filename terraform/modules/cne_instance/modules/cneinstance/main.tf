@@ -447,6 +447,20 @@ locals {
   # and turns it OFF. An explicit setting wins on either line.
   demo_mode_effective = var.cneinstance_demo_mode != "" ? var.cneinstance_demo_mode == "true" : local.line_pre_24
 
+  # storageClassName is a TOP-LEVEL CNEInstance field, and it is what makes a
+  # correctly reconciling TMM schedulable. TMM's replicas are pinned to separate
+  # nodes across separate zones by the placement F5's reference prescribes, and
+  # their persistent volume is shared — so on the default ROKS class
+  # (ibmc-vpc-block-*, ReadWriteOnce, zonal) only one replica can ever bind it.
+  # A ReadWriteMany class from the vpc-file-csi-driver addon serves all three;
+  # ibmc-vpc-file-regional additionally spans zones.
+  #
+  # Emitted only when set, so unset leaves the CR's own default rather than
+  # pinning an empty string.
+  cneinstance_storage = var.cneinstance_storage_class_name == "" ? {} : {
+    storageClassName = var.cneinstance_storage_class_name
+  }
+
   cneinstance_conformance_24 = merge({
     for k, v in {
       tmmReplicas     = var.cneinstance_tmm_replicas
@@ -592,7 +606,7 @@ locals {
         env = local.adv_env["pseudoCNI"]
       }
     }, local.adv_env_extra, local.adv_external_bigip_24)
-  }, local.cneinstance_conformance_24)
+  }, local.cneinstance_conformance_24, local.cneinstance_storage)
 }
 
 locals {

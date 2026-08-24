@@ -625,6 +625,18 @@ type BNKCfg struct {
 	// are cluster-scoped concerns that more than one instance can sit behind.
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
+	// StorageClassName is the StorageClass the CNEInstance's persistent volumes
+	// use, TMM's included. Empty leaves the CR's own default, which resolves to
+	// the cluster default class.
+	//
+	// It matters more than it looks. TMM's replicas are pinned to separate nodes
+	// across separate zones by the placement F5's reference prescribes, while
+	// their volume is shared — so the stock ROKS default (ibmc-vpc-block-*,
+	// ReadWriteOnce, zonal) can bind only one of them and the rest stay Pending.
+	// A ReadWriteMany class from the vpc-file-csi-driver addon serves all three;
+	// ibmc-vpc-file-regional additionally spans zones (#189).
+	StorageClassName string `yaml:"storage_class_name,omitempty"`
+
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
 	// (#170).
 	//

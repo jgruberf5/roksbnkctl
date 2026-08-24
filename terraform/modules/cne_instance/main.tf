@@ -82,6 +82,7 @@ module "cneinstance" {
   cneinstance_tcp_settings_name      = var.cneinstance_tcp_settings_name
   # BNK 2.4 conformance with F5's reference CNEInstance (all 2.4-gated inside).
   cneinstance_tmm_replicas                   = var.cneinstance_tmm_replicas
+  cneinstance_storage_class_name             = var.cneinstance_storage_class_name
   cneinstance_watch_namespaces               = var.cneinstance_watch_namespaces
   cneinstance_tmm_anti_affinity              = var.cneinstance_tmm_anti_affinity
   cneinstance_tmm_anti_affinity_topology_key = var.cneinstance_tmm_anti_affinity_topology_key
