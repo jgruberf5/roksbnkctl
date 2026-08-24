@@ -1447,14 +1447,17 @@ type TFSourceCfg struct {
 type COSCfg struct {
 	// Instance is the IBM Cloud Object Storage service instance holding the
 	// bucket.
-	Instance string `yaml:"instance,omitempty"`
+	Instance string `yaml:"instance,omitempty" default:"bnk-supply-chain"`
 
 	// Bucket is the bucket the FAR service-account credential is read from, for
-	// estates that stage it centrally rather than passing a local file.
-	Bucket string `yaml:"bucket,omitempty"`
+	// estates that stage it centrally rather than passing a local file. The
+	// published default is the BASE name; `init` provisions
+	// "bnk-artifacts-<first 12 of the account id>" and writes that back here,
+	// because COS bucket names are globally unique (see uniqueBucketName).
+	Bucket string `yaml:"bucket,omitempty" default:"bnk-artifacts"`
 
 	// Region is the bucket's region, which need not match ibmcloud.region.
-	Region string `yaml:"region,omitempty"`
+	Region string `yaml:"region,omitempty" default:"us-south"`
 
 	// Upload lists local files to place into that bucket before the phases that
 	// read them run.
