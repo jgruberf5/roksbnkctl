@@ -530,3 +530,9 @@ variable "cneinstance_hugepages_profile_name" {
   type        = string
   default     = "bnk-hugepages"
 }
+
+variable "cneinstance_storage_class_name" {
+  description = "StorageClass for the CNEInstance's persistent volumes, including TMM's. Empty leaves the CR default. Needs ReadWriteMany when TMM has multiple zone-spread replicas (#189)."
+  type        = string
+  default     = ""
+}
