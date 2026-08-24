@@ -145,3 +145,47 @@ func TestAnUnknownLineKeepsTheTwoThreeBehaviour(t *testing.T) {
 		}
 	}
 }
+
+// #187. The complementary half of #168: 2.4 was not merely failing to emit
+// Infra + GatewaySettings, it was STILL emitting the 2.3 network surface those
+// replace. cloud-network-mapping and the two F5SPKVlan CRs were gated on
+// local.use_kubectl alone, so a 2.4 install put both formats on the cluster at
+// once — which the 2.4 guide warns causes device IP conflicts (#172).
+//
+// The install still looked healthy: CNEInstance 18/18 conditions True, 34 f5
+// pods Running, f5-tmm 3/3. What was actually broken was F5Tmm, stuck at
+// Reconciled=False ("failed to get kubeadm-config"), so the internal
+// macvlan-internal NAD it owns was never created. Ten of eleven
+// reference-conformance checks passed.
+//
+// Reproduced on two independent installs — a Forge blueprint and a
+// disconnected-adopt CLI run — before this gate existed.
+func TestTheTwoThreeNetworkSurfaceIsGatedOffOnTwoFour(t *testing.T) {
+	cne := tfSource(t, "terraform/modules/cne_instance/modules/cneinstance/main.tf")
+
+	for _, r := range []string{
+		`resource "kubectl_manifest" "cloud_network_mapping`,
+		`resource "kubectl_manifest" "external_vlan`,
+		`resource "kubectl_manifest" "internal_vlan`,
+	} {
+		assertCountGated(t, cne, r)
+	}
+
+	// The ConfigMap being absent is only half of it: the controller must also stop
+	// being TOLD to read it. F5's approved reference carries no
+	// CLOUD_NETWORK_CONFIGMAP env at all, while the failing installs did.
+	//
+	// Asserted as the gating expression rather than a mention, because the comment
+	// above the gate names the variable too — the exact way earlier guards in this
+	// repo passed against their own defect.
+	gatedEnv := regexp.MustCompile(`local\.line_pre_24\s*\?\s*\[\s*\{\s*\n\s*name\s*=\s*"CLOUD_NETWORK_CONFIGMAP"`)
+	if !gatedEnv.MatchString(cne) {
+		t.Error(`CLOUD_NETWORK_CONFIGMAP is not gated behind local.line_pre_24.` + "\n" +
+			`  On 2.4 the controller reads Infra + GatewaySettings; pointing it at the ConfigMap as` + "\n" +
+			`  well is what leaves F5Tmm at Reconciled=False and the internal NAD uncreated (#187).`)
+	}
+	// ...and it must still be emitted on 2.3, where it is the only network model.
+	if !strings.Contains(cne, `name  = "CLOUD_NETWORK_CONFIGMAP"`) {
+		t.Error("CLOUD_NETWORK_CONFIGMAP is not emitted at all; 2.3 needs it — gate it, do not delete it")
+	}
+}

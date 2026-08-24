@@ -219,3 +219,48 @@ func TestDeploymentSizeDefaultsToTheReferenceSizeOnTwoFour(t *testing.T) {
 		})
 	}
 }
+
+// #187. Every other conformance test here asserts what the 2.4 spec CONTAINS.
+// None asserted what it must NOT contain, and that is the gap the defect lived
+// in: 2.4 kept emitting the 2.3 network surface — cloud-network-mapping, the two
+// F5SPKVlan CRs, and the CLOUD_NETWORK_CONFIGMAP env pointing at it — alongside
+// the 2.4 model. Both formats on one cluster is the device-IP conflict the guide
+// warns about, and it left F5Tmm at Reconciled=False with the internal NAD never
+// created, on an install that otherwise reported 18/18 conditions True.
+//
+// Ten of eleven reference checks passed on the broken cluster. A conformance
+// suite that only asserts presence cannot see a thing that should be gone.
+//
+// Evaluated through terraform console rather than read from the source, so a
+// gate that is present but wired to the wrong local still fails.
+func TestTwoFourDoesNotCarryTheTwoThreeNetworkEnv(t *testing.T) {
+	names := func(line string) map[string]bool {
+		out := consoleJSON(t, []string{"cne_instance", "modules", "cneinstance"},
+			"bnk_line = \""+line+"\"\n",
+			"nonsensitive([for e in local.adv_env_defaults.cneController : e.name])")
+		var got []string
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode controller env names on %s from %q: %v", line, out, err)
+		}
+		if len(got) == 0 {
+			t.Fatalf("no controller env names on %s; this test would pass vacuously", line)
+		}
+		set := map[string]bool{}
+		for _, n := range got {
+			set[n] = true
+		}
+		return set
+	}
+
+	if names("2.4")["CLOUD_NETWORK_CONFIGMAP"] {
+		t.Error("the 2.4 controller env still carries CLOUD_NETWORK_CONFIGMAP.\n" +
+			"  On 2.4 the controller reads Infra + GatewaySettings; pointing it at the 2.3\n" +
+			"  ConfigMap as well leaves F5Tmm at Reconciled=False and the internal macvlan\n" +
+			"  NAD uncreated, on an install that still reports every CNEInstance condition True.")
+	}
+
+	// 2.3 is still a shipping line and it is the only network model there.
+	if !names("2.3")["CLOUD_NETWORK_CONFIGMAP"] {
+		t.Error("the 2.3 controller env has lost CLOUD_NETWORK_CONFIGMAP — it must be gated, not deleted")
+	}
+}

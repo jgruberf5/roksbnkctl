@@ -8,6 +8,26 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **A 2.4 install was still rendering the 2.3 network surface** (#187). The
+  `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs, and the
+  `CLOUD_NETWORK_CONFIGMAP` env pointing at them were gated on
+  `local.use_kubectl` alone, with no line gate — so a 2.4 cluster carried both
+  network models at once, which the 2.4 guide warns causes device IP conflicts.
+
+  The consequence was invisible from every signal we were checking: `F5Tmm` sat
+  at `Reconciled=False` ("failed to get kubeadm-config"), so the internal
+  `macvlan-internal` NAD it owns was never created — while the CNEInstance
+  reported 18/18 conditions True, all 34 F5 pods Running and the licence Active.
+  Reproduced independently on two installs, a Forge blueprint and a
+  disconnected-adopt CLI run.
+
+  The env var is spliced back **in position** on 2.3 rather than appended, so a
+  shipping 2.3 install sees no CNEInstance diff from this change.
+
+  The conformance suite could not have caught it: every check asserted what the
+  spec *contains* and none what it must not. `TestTwoFourDoesNotCarryTheTwoThreeNetworkEnv` now evaluates the controller env through `terraform console` on both
+  lines, so a gate that exists but is wired to the wrong local still fails.
+
 - **The CLI and CI demos did not say what their variables default to.** Eight of
   seventeen and eight of fourteen configurable variables carried no comment, so
   a reader had to infer `REGION`, `OCP_VERSION`, `FAR_REPO_URL`, `PREFIX` and

@@ -35,6 +35,19 @@ lines:
   #   reference pod placement, TMM_IGNORE_GATEWAYS + DISABLE_HT +
   #   ENABLE_K8S_ROUTES, GATEWAY_API_VERSION 1.5.0, demoMode off.
   #
+  #   WHAT THAT RUN DID NOT COVER, recorded because it was later found broken
+  #   (#187). Those checks asserted what the install CONTAINS and never what it
+  #   must NOT contain, so they all passed on a cluster that was still emitting
+  #   the 2.3 network surface — cloud-network-mapping, two F5SPKVlan CRs and the
+  #   CLOUD_NETWORK_CONFIGMAP env — alongside the 2.4 model. F5Tmm sat at
+  #   Reconciled=False ("failed to get kubeadm-config") and the internal
+  #   macvlan NAD it owns was never created, while CNEInstance still reported
+  #   18/18 conditions True and every pod Running.
+  #
+  #   Neither the pod counts, the licence state, nor the CNEInstance spec
+  #   conformance can see that. Any future verification of this cell must assert
+  #   F5Tmm Reconciled=True and the ABSENCE of the 2.3 objects.
+  #
   #   FIVE consecutive clean cluster-lifecycle CLI demo runs, each a cold start:
   #   cluster up, bnk up, testing up + test, then bnk down + bnk up. Every
   #   world-changing command status-checked — an earlier sequence of five
