@@ -252,20 +252,20 @@ Every field here is optional — leave the block out entirely and you get the up
 
 BNK's data plane (TMM) needs per-availability-zone VLAN subnets, SNAT/VIP ranges, and self-IPs. Leave `bnk.network` out entirely and the BNK install-guide defaults apply. Set it to match your cluster's fabric — `roksbnkctl init` prompts for every field (opt in at *"Customize BNK networking?"*, seeded with these defaults), or hand-write the block.
 
-| Field | Default (AZ1) | Notes |
-|---|---|---|
-| `zones[].ext_vlan_cidr` | `10.155.15.0/24` | External VLAN subnet CIDR. |
-| `zones[].int_vlan_cidr` | `10.254.99.0/24` | Internal VLAN subnet CIDR. |
-| `zones[].int_snat_cidr` | `10.10.11.0/24` | Internal SNAT-pool CIDR. |
-| `zones[].int_vip_cidr` | `10.135.15.0/24` | Internal VIP CIDR. |
-| `zones[].external_selfip` | `10.155.15.101` | External TMM self-IP. |
-| `zones[].internal_selfip` | `10.254.99.101` | Internal TMM self-IP. |
-| `vlan_prefixlen` | `24` | Self-IP prefix length (`spec.prefixlen_v4` on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Usually you want it to match your VLAN CIDRs — but it is **independent of them and never derived from them**, and nothing validates the two against each other. A deliberate disagreement, paired with static routes, is how a specific traffic pattern is forced. Sets `cneinstance_vlan_prefixlen`. |
-| `vlan_prefixlen_external` | (inherit) | Overrides `vlan_prefixlen` for the **external** VLAN only. Unset inherits. Sets `cneinstance_vlan_prefixlen_external`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL`. |
-| `vlan_prefixlen_internal` | (inherit) | Same for the **internal** VLAN. Sets `cneinstance_vlan_prefixlen_internal`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL`. |
-| `tmm_k8s_routes` | `172.17.0.0/18` | Pod CIDR TMM installs a route toward (`TMM_K8S_ROUTES`) so it can reach backend pods. Set to your cluster's pod subnet if it isn't the ROKS default. Sets `cneinstance_tmm_k8s_routes`. |
+| Field | Default (AZ1) | Line | Notes |
+|---|---|---|---|
+| `zones[].ext_vlan_cidr` | `10.155.15.0/24` | 2.3 + 2.4 | External VLAN subnet CIDR. On 2.4 it is also the `external-vlan-ipam` pool and the next hop of every generated static route. |
+| `zones[].int_vlan_cidr` | `10.254.99.0/24` | 2.3 | Internal VLAN subnet CIDR. 2.4 has no internal VLAN — nothing reads this there. |
+| `zones[].int_snat_cidr` | `10.10.11.0/24` | 2.3 + 2.4 | Internal SNAT-pool CIDR. On 2.4 it is the `egress-snat-ipam` pool. |
+| `zones[].int_vip_cidr` | `10.135.15.0/24` | 2.3 + 2.4 | Internal VIP CIDR. On 2.4 it is the `vip-listener-ipam` pool. |
+| `zones[].external_selfip` | `10.155.15.101` | 2.3 | External TMM self-IP. On 2.4 TMM's VLAN addresses are allocated from `external-vlan-ipam` instead. |
+| `zones[].internal_selfip` | `10.254.99.101` | 2.3 | Internal TMM self-IP. |
+| `vlan_prefixlen` | `24` | 2.3 | Self-IP prefix length (`spec.prefixlen_v4` on the F5SPKVlan CRs) — the size of the L2 subnet TMM treats as directly connected. Usually you want it to match your VLAN CIDRs — but it is **independent of them and never derived from them**, and nothing validates the two against each other. A deliberate disagreement, paired with static routes, is how a specific traffic pattern is forced. Sets `cneinstance_vlan_prefixlen`. |
+| `vlan_prefixlen_external` | (inherit) | 2.3 | Overrides `vlan_prefixlen` for the **external** VLAN only. Unset inherits. Sets `cneinstance_vlan_prefixlen_external`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL`. |
+| `vlan_prefixlen_internal` | (inherit) | 2.3 | Same for the **internal** VLAN. Sets `cneinstance_vlan_prefixlen_internal`. Env: `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL`. |
+| `tmm_k8s_routes` | `172.17.0.0/18` | 2.3 + 2.4 | Pod CIDR TMM installs a route toward (`TMM_K8S_ROUTES`) so it can reach backend pods. Set to your cluster's pod subnet if it isn't the ROKS default. Sets `cneinstance_tmm_k8s_routes`. |
 
-Provide **all three zones** when you set `zones` — supplying zones replaces the defaults entirely (they render `cneinstance_network_zones`, driving the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs). Zone *names* are derived from the region and aren't configurable. `vlan_prefixlen` and `tmm_k8s_routes` are network-wide (shared across all zones), though the mask can differ **between the two VLANs** via `vlan_prefixlen_external` / `vlan_prefixlen_internal` — TMM can front a `/23` externally while the internal side is a `/26`, which one shared scalar could not express. Unset either scalar to keep the terraform default.
+Provide **all three zones** when you set `zones` — supplying zones replaces the defaults entirely. They render `cneinstance_network_zones`, which drives the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs on 2.3, and the `Infra` CR's three IPAM pools plus its per-zone static routes on 2.4. The block is **not** 2.3-only for being the source of the 2.3 network objects: three of the six per-zone fields carry the 2.4 addressing too, which is why the `Line` column above differs row by row. Zone *names* are derived from the region and aren't configurable. `vlan_prefixlen` and `tmm_k8s_routes` are network-wide (shared across all zones), though the mask can differ **between the two VLANs** via `vlan_prefixlen_external` / `vlan_prefixlen_internal` — TMM can front a `/23` externally while the internal side is a `/26`, which one shared scalar could not express. Unset either scalar to keep the terraform default.
 
 ## `test:`
 

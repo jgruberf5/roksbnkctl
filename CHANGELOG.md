@@ -8,6 +8,66 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **Twenty-three `bnk.*` settings did nothing on either release line** — found
+  while establishing the line applicability of every config field (#182). The
+  root module declared `cneinstance_tmm_replicas` and twenty-two siblings (the
+  whole TMM placement set, `external_bigip*`, `cluster_identifier`,
+  `gateway_api_version`, `demo_mode`, `whole_cluster`, `tcp_settings*` and the
+  five `hugepages` keys); the Go renderer wrote each into `terraform.tfvars`; the
+  config reference documented them; and `module "cne_instance"` in
+  `terraform/main.tf` passed none of them down. The wrapping module declares
+  variables of the same names with the same defaults, so `var.cneinstance_*`
+  inside it resolved to the default and the operator's value went nowhere.
+
+  This is the `cneinstance_advanced_env` defect with one extra layer of
+  camouflage: `TestEveryRootVariableIsRead` greps the tree for `var.<name>`,
+  finds the hit inside the child module, and pronounces the root variable read.
+  A grep proves a name exists, never that its two halves are joined.
+  `TestEveryRootVariableReachesTheModuleThatReadsIt` now checks the join at every
+  module call in the tree.
+
+  The defaults are identical at all three levels, so an install that sets none of
+  these renders exactly what it rendered before — what changed is that setting
+  one now does something. Anyone who had set `bnk.hugepages.enabled: true` or a
+  non-default `bnk.tmm_replicas` and saw no effect was seeing this.
+
+- **`bnk.flo_namespace` never reached the licensing module**, so the 2.4
+  post-licensing health check polled the CNEInstance in `f5-bnk` regardless of
+  the configured namespace — a fifteen-minute wait on an object in a namespace
+  that does not exist. Same defect class as #65.
+
+### Changed
+
+- **The `line` column in the configuration reference now says something** (#182).
+  It used to report "2.3 + 2.4" for 189 fields because that is the unset default,
+  not because anyone had checked. Nine fields are now tagged from terraform
+  evidence rather than left to the default:
+
+  - **2.3 only** — `bnk.network.vlan_prefixlen`, `vlan_prefixlen_external` and
+    `vlan_prefixlen_internal` (their only consumer is the `F5SPKVlan` pair, gated
+    to `line_pre_24`); `bnk.network.zones[].int_vlan_cidr`, `external_selfip` and
+    `internal_selfip` (the `cloud-network-mapping` ConfigMap and the same
+    `F5SPKVlan` pair — 2.4's `Infra` CR has no internal VLAN and allocates TMM's
+    addresses from an IPAM pool instead of naming them per zone).
+  - **2.4 only, now true rather than aspirational** — the fourteen fields already
+    tagged 2.4 were verified, and were inert on both lines until the wiring fix
+    above.
+
+  What did NOT get tagged matters as much. `zones[].ext_vlan_cidr`,
+  `int_snat_cidr` and `int_vip_cidr` feed the 2.3-only `cloud-network-mapping`
+  ConfigMap and look 2.3-only for it — but `terraform/modules/gateway/infra_24.tf`
+  builds the 2.4 `Infra` CR's three IPAM pools out of the same three values.
+  Tagging them 2.3 would have hidden the addressing a 2.4 operator most needs to
+  get right, which is worse than the under-promising default it replaced. They
+  are pinned as "both" by the same test that pins the tags.
+
+  `TestConfigLineTagsMatchWhatTerraformRenders` asks terraform the question
+  directly: for each line, does perturbing the variable change the set of objects
+  the apply persists? The surface is assembled from each resource's own
+  `count`/`for_each` expression, lifted out of the HCL and evaluated by
+  `terraform console`, so an inverted or commented-out gate changes the answer.
+  `TestEveryLineTagHasEvidence` refuses a new tag that arrives without one.
+
 - **Every config field in the reference now has a description** (#181). 75 of
   215 rows shipped blank; the count is now **zero**, and the ratchet's ceiling is
   zero — a new field without a doc comment on the struct fails the build.
