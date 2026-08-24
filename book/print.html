@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f6934f8b.js";
+            window.path_to_searchindex_js = "searchindex-ec04703f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -12455,7 +12455,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>bigip_url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BigIPURL is the management address of the classic BIG-IP that the Container Ingress Services controller configures, e.g.</td></tr>
+<tr><td><code>bigip_url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BigIPURL is the management address of the classic BIG-IP that the Container Ingress Services controller configures, e.g. “https://10.1.1.5”.</td></tr>
 <tr><td><code>bigip_username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BigIPUsername is the account CIS authenticates to that BIG-IP as.</td></tr>
 <tr><td><code>bigip_password_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BigIPPasswordB64 is that account’s password, base64-encoded — obfuscation, not encryption.</td></tr>
 </tbody>
@@ -12483,7 +12483,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tbody>
 <tr><td><code>cneinstance_size</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium, Large or Max.</td></tr>
 <tr><td><code>far_repo_url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FARRepoURL is the F5 Artifact Repository charts are pulled from.</td></tr>
-<tr><td><code>manifest_version</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ManifestVersion pins the BNK release, e.g.</td></tr>
+<tr><td><code>manifest_version</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ManifestVersion pins the BNK release, e.g. “2.4.0-EA”.</td></tr>
 <tr><td><code>far_auth_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FarAuthFile is the FAR auth tarball’s filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by <code>registry</code> to resolve the FAR _json_key_base64 service account.</td></tr>
 <tr><td><code>subscription_jwt_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SubscriptionJWTFile is the subscription/license JWT’s filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.</td></tr>
 <tr><td><code>far_auth_local_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of COS objects.</td></tr>
@@ -12550,7 +12550,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL of the proxy, e.g.</td></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL of the proxy, e.g. https://10.240.64.5:30001 — reachable from THIS cluster’s pods.</td></tr>
 <tr><td><code>root_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>RootCAB64 is the proxy’s root CA, base64-encoded (as <code>flp output</code> emits it).</td></tr>
 </tbody>
 </table>
@@ -12583,7 +12583,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>vpc_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VPCName names the VPC created when CreateVPC is set.</td></tr>
 <tr><td><code>subnet_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SubnetCIDR is the address prefix for that VPC.</td></tr>
 <tr><td><code>profile</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Profile is the IBM Cloud VSI instance profile.</td></tr>
-<tr><td><code>zone</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Zone the VSI lands in (e.g.</td></tr>
+<tr><td><code>zone</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Zone the VSI lands in (e.g. us-south-1).</td></tr>
 <tr><td><code>boot_size_gb</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BootSizeGB is the boot volume size.</td></tr>
 <tr><td><code>reach</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Reach selects the address the CWC dials: “private” (default — the VSI’s VPC IP, for a CWC in the same/peered VPC) or “floating” (a public floating IP).</td></tr>
 <tr><td><code>management_allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80 flp-status web UI (read-only status).</td></tr>
@@ -12607,7 +12607,7 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>register</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Register opts the workspace in.</td></tr>
-<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL is the BNK Forge server base URL (e.g.</td></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL is the BNK Forge server base URL (e.g. https://forge.example.com).</td></tr>
 <tr><td><code>project</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Project is the target BNK Forge project NAME.</td></tr>
 <tr><td><code>username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Username is the BNK Forge login user.</td></tr>
 <tr><td><code>insecure</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Insecure skips TLS verification against the Forge server.</td></tr>
@@ -12623,7 +12623,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL of the GTM/BIG-IP DNS management endpoint, e.g.</td></tr>
+<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com.</td></tr>
 <tr><td><code>username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Username to authenticate with.</td></tr>
 <tr><td><code>password_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>PasswordB64 is the base64 of the password.</td></tr>
 </tbody>
@@ -12724,13 +12724,13 @@ run time and belongs in the prose rather than a table cell.</p>
 <tbody>
 <tr><td><code>create</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Create decides whether this workspace BUILDS the ROKS cluster or adopts one that already exists.</td></tr>
 <tr><td><code>name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Name is the ROKS cluster’s name — the one to create, or the existing one to adopt when Create is false.</td></tr>
-<tr><td><code>openshift_version</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g.</td></tr>
+<tr><td><code>openshift_version</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>OpenShiftVersion pins the OpenShift version for a CREATED cluster (e.g. “4.20”).</td></tr>
 <tr><td><code>workers_per_zone</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>1</code></td><td>no</td><td>WorkersPerZone is the worker count PER ZONE, not in total: ROKS spans three availability zones, so 2 here is a six-node cluster.</td></tr>
 <tr><td><code>public_gateway</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td><code>true</code></td><td>no</td><td>PublicGateway controls whether the cluster subnets attach a public gateway for worker Internet egress.</td></tr>
 <tr><td><code>vpc_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VPCCIDR is the block the cluster VPC’s per-zone address prefixes are carved from — “10.241.0.0/16” becomes 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18.</td></tr>
 <tr><td><code>network_mode</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>single-nic</code></td><td>no</td><td>NetworkMode selects how the cluster’s worker nodes are attached: “single-nic” (the default, and today’s only behaviour) or “multi-nic”.</td></tr>
 <tr><td><code>existing_subnet_ids</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ExistingSubnetIDs places the cluster in subnets that ALREADY EXIST, one per zone in zone order, instead of creating them (#61).</td></tr>
-<tr><td><code>worker_flavor</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>WorkerFlavor names the worker profile EXACTLY, e.g.</td></tr>
+<tr><td><code>worker_flavor</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>WorkerFlavor names the worker profile EXACTLY, e.g. “cx3d.8x20”.</td></tr>
 <tr><td><code>min_worker_vcpu_count</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>16</code></td><td>no</td><td>MinWorkerVCPUCount is the vCPU floor for the worker-flavor auto-select: the cluster module picks the smallest bx2 profile meeting this and MinWorkerMemoryGB.</td></tr>
 <tr><td><code>min_worker_memory_gb</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>64</code></td><td>no</td><td>MinWorkerMemoryGB is the memory floor for the same auto-select.</td></tr>
 </tbody>
@@ -12786,7 +12786,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>backend_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BackendPort is the port on that Service.</td></tr>
 <tr><td><code>egress_mode</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>EgressMode selects how return traffic is source-addressed: “snatpool”, “automap”, or “both”.</td></tr>
 <tr><td><code>client_subnet_local</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientSubnetLocal lists client CIDRs reachable on the same VPC as the cluster — routed directly rather than over the transit gateway.</td></tr>
-<tr><td><code>client_subnet_remote</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g.</td></tr>
+<tr><td><code>client_subnet_remote</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. the testing client VPC.</td></tr>
 <tr><td><code>vxlan_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.</td></tr>
 <tr><td><code>route_examples</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates.</td></tr>
 <tr><td><code>l4_listener_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>L4ListenerPort is the port for that TCP listener.</td></tr>
@@ -12802,7 +12802,7 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>enabled</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Enabled allocates hugepages.</td></tr>
-<tr><td><code>size</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>2M</code></td><td>no</td><td>Size is the hugepage size, e.g.</td></tr>
+<tr><td><code>size</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>2M</code></td><td>no</td><td>Size is the hugepage size, e.g. “2M” or “1G”.</td></tr>
 <tr><td><code>count</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>2048</code></td><td>no</td><td>Count is the number of pages PER NODE.</td></tr>
 <tr><td><code>node_role</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>worker</code></td><td>no</td><td>NodeRole is the machineconfiguration.openshift.io/role the profile applies to.</td></tr>
 <tr><td><code>profile_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-hugepages</code></td><td>no</td><td>ProfileName names the Tuned profile and CR.</td></tr>
@@ -12816,7 +12816,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Region is the IBM Cloud region everything in this workspace is created in or adopted from, e.g.</td></tr>
+<tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Region is the IBM Cloud region everything in this workspace is created in or adopted from, e.g. “us-east”.</td></tr>
 <tr><td><code>resource_group</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>default</code></td><td>yes</td><td>ResourceGroup is the IBM Cloud resource group resources are placed in, and the one an adopted cluster is looked up in.</td></tr>
 <tr><td><code>api_key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>env | keychain | config | prompt — see secrets.go.</td></tr>
 <tr><td><code>api_key_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>APIKeyB64 stores the API key base64-encoded inline in the workspace config.</td></tr>
@@ -12832,10 +12832,10 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>target</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Target selects the mirror backend: “icr” (IBM Container Registry — the DEFAULT when unset) or “generic” (any OCI-compliant registry — Artifactory / Harbor / Quay / registry:2).</td></tr>
-<tr><td><code>icr_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ICRHost overrides the IBM Container Registry host for target=icr (e.g.</td></tr>
+<tr><td><code>icr_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ICRHost overrides the IBM Container Registry host for target=icr (e.g. “de.icr.io”).</td></tr>
 <tr><td><code>icr_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ICRNamespace is the ICR namespace artifacts nest under for target=icr.</td></tr>
-<tr><td><code>generic_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericHost is the OCI registry host for target=generic (e.g.</td></tr>
-<tr><td><code>generic_repo_prefix</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericRepoPrefix is the repository path artifacts nest under for target=generic (e.g.</td></tr>
+<tr><td><code>generic_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericHost is the OCI registry host for target=generic (e.g. “artifactory.example.com”).</td></tr>
+<tr><td><code>generic_repo_prefix</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericRepoPrefix is the repository path artifacts nest under for target=generic (e.g. an Artifactory repo key).</td></tr>
 <tr><td><code>generic_username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericUsername / GenericPasswordB64 are the static basic-auth credential for target=generic (an Artifactory user + access token).</td></tr>
 <tr><td><code>generic_password_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericPasswordB64 is that user’s password or access token, base64-encoded — obfuscation, not encryption.</td></tr>
 <tr><td><code>generic_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericCAB64 is the mirror’s CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network.</td></tr>
