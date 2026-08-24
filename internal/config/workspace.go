@@ -422,7 +422,7 @@ type ResourcesCfg struct {
 	// true (rendered as testing_client_vpc_name). Empty → the prefix-derived
 	// default. (When ClientVPC.Create is false, ClientVPC.Existing names the VPC
 	// to adopt instead.)
-	TestingClientVPCName string `yaml:"testing_client_vpc_name,omitempty"`
+	TestingClientVPCName string `yaml:"testing_client_vpc_name,omitempty" default:"tf-testing-vpc"`
 	// TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing
 	// jumphosts (rendered as testing_ssh_key_name). `roksbnkctl init` resolves it:
 	// an existing key is used as-is, otherwise roksbnkctl generates one, stores the
@@ -435,8 +435,8 @@ type ResourcesCfg struct {
 	// testing_min_vcpu_count / testing_min_memory_gb; 0 → the terraform defaults of
 	// 4 vCPU / 8 GB). An explicit profile wins over the minimums.
 	TestingJumphostProfile string `yaml:"testing_jumphost_profile,omitempty"`
-	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty"`
-	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty"`
+	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty" default:"4"`
+	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty" default:"8"`
 	// Security-group source CIDRs, following the flp_vsi module's split between
 	// a management plane and an in-fabric plane.
 	//
@@ -564,7 +564,7 @@ type BNKCfg struct {
 	// repo.f5.com. A disconnected cluster cannot reach it — configure `registry`
 	// with a mirror instead, and this becomes the source that mirror is filled
 	// FROM rather than what the cluster pulls from.
-	FARRepoURL string `yaml:"far_repo_url,omitempty"`
+	FARRepoURL string `yaml:"far_repo_url,omitempty" default:"repo.f5.com"`
 
 	// ManifestVersion pins the BNK release, e.g. "2.4.0-EA". This is the single
 	// field that selects the product line: a 2.4 version renders the Infra +
@@ -1043,7 +1043,7 @@ type BNKNetworkCfg struct {
 	// default (24); set only when the VLAN subnets aren't /24. A pointer so "unset"
 	// (fall back to the default) is distinct from a literal 0. Rendered as
 	// cneinstance_vlan_prefixlen.
-	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty"`
+	VLANPrefixLen *int `yaml:"vlan_prefixlen,omitempty" default:"24"`
 	// VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one
 	// VLAN. nil → that VLAN uses VLANPrefixLen, so a deployment that does not need
 	// them keeps one knob and one value.
@@ -1060,7 +1060,7 @@ type BNKNetworkCfg struct {
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
 	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
 	// only for a non-default cluster pod CIDR. Rendered as cneinstance_tmm_k8s_routes.
-	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty"`
+	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty" default:"172.17.0.0/18"`
 }
 
 // GatewayCfg carries optional overrides for the Gateway phase (the BNK
@@ -1095,12 +1095,12 @@ type StateS3Cfg struct {
 type GatewayCfg struct {
 	// AppNamespace is the namespace the example application and its Gateway
 	// resources are created in. Empty takes the terraform default.
-	AppNamespace string `yaml:"app_namespace,omitempty"`
+	AppNamespace string `yaml:"app_namespace,omitempty" default:"f5-app"`
 
 	// ClassName is the GatewayClass name. Empty → the terraform default
 	// ("gateway-class"). GatewayClass is CLUSTER-scoped, so two BNK installs in
 	// one cluster must not share it; that is what this exists for.
-	ClassName string `yaml:"class_name,omitempty"`
+	ClassName string `yaml:"class_name,omitempty" default:"gateway-class"`
 	// ControllerName is the GatewayClass controllerName. Empty → terraform
 	// DERIVES it as "f5.com/<flo_namespace>-f5-cne-controller", which is the
 	// value the CNE controller answers to. Leave it empty unless you are
@@ -1110,14 +1110,14 @@ type GatewayCfg struct {
 	ControllerName string `yaml:"controller_name,omitempty"`
 
 	// BackendService is the Kubernetes Service the example HTTPRoute forwards to.
-	BackendService string `yaml:"backend_service,omitempty"`
+	BackendService string `yaml:"backend_service,omitempty" default:"nginx-service"`
 
 	// BackendPort is the port on that Service.
-	BackendPort int `yaml:"backend_port,omitempty"`
+	BackendPort int `yaml:"backend_port,omitempty" default:"80"`
 
 	// EgressMode selects how return traffic is source-addressed: "snatpool",
 	// "automap", or "both".
-	EgressMode string `yaml:"egress_mode,omitempty"`
+	EgressMode string `yaml:"egress_mode,omitempty" default:"snatpool"`
 
 	// ClientSubnetLocal lists client CIDRs reachable on the same VPC as the
 	// cluster — routed directly rather than over the transit gateway.
@@ -1131,7 +1131,7 @@ type GatewayCfg struct {
 	// VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.
 	// Empty takes the terraform default; change it only if something else in the
 	// VPC already claims that port.
-	VXLANPort int `yaml:"vxlan_port,omitempty"`
+	VXLANPort int `yaml:"vxlan_port,omitempty" default:"6789"`
 
 	// RouteExamples names extra route kinds to create WORKING examples of,
 	// alongside the HTTPRoute the gateway phase already creates. Empty (the
@@ -1148,7 +1148,7 @@ type GatewayCfg struct {
 	// L4Route cannot attach to an HTTP listener.
 	RouteExamples []string `yaml:"route_examples,omitempty"`
 	// L4ListenerPort is the port for that TCP listener. 0 → terraform's 8080.
-	L4ListenerPort int `yaml:"l4_listener_port,omitempty"`
+	L4ListenerPort int `yaml:"l4_listener_port,omitempty" default:"8080"`
 }
 
 // RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which

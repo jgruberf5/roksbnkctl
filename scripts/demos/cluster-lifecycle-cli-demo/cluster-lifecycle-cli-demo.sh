@@ -30,26 +30,37 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # ============================ CONFIG (edit me) ===============================
-REGION="${REGION:-ca-tor}"
-RESOURCE_GROUP="${RESOURCE_GROUP:-default}"
+REGION="${REGION:-ca-tor}"                      # IBM Cloud region everything is created in. Default: ca-tor
+RESOURCE_GROUP="${RESOURCE_GROUP:-default}"     # IBM Cloud resource group. Default: default
 CLUSTER_NAME="${CLUSTER_NAME:-bnk-demo}"        # the cluster this demo BUILDS and DESTROYS
-OCP_VERSION="${OCP_VERSION:-4.20}"
+OCP_VERSION="${OCP_VERSION:-4.20}"              # OpenShift version for the cluster this demo CREATES.
+                                                # Default: 4.20. Pinned rather than left to IBM's current
+                                                # default, which moves — a demo has to be reproducible.
 WORKERS_PER_ZONE="${WORKERS_PER_ZONE:-1}"       # ROKS spans 3 AZs -> 1/zone = 3 workers
 
 BNK_VERSION="${BNK_VERSION:-2.3.0-3.2598.3-0.0.170}"        # installed in phase 4
 BNK_VERSION_REBUILD="${BNK_VERSION_REBUILD:-$BNK_VERSION}"  # reinstalled in phase 6
-FAR_REPO_URL="${FAR_REPO_URL:-repo.f5.com}"
+FAR_REPO_URL="${FAR_REPO_URL:-repo.f5.com}"     # F5 Artifact Repository charts and images come from.
+                                                # Default: repo.f5.com (needs Internet + a FAR service
+                                                # account). A disconnected cluster mirrors it instead.
 
-FORGE_URL="${FORGE_URL:-}"                      # BNK Forge — required
-FORGE_USER="${FORGE_USER:-}"
-FORGE_PASS="${FORGE_PASS:-}"
+# BNK Forge is OPTIONAL. Set ALL THREE to run the registration phase, or NONE
+# to skip it — a partial configuration dies rather than silently skipping,
+# because someone who set two of three meant to use it (#164). roksbnkctl's own
+# BNK_FORGE_URL / BNK_FORGE_USER / BNK_FORGE_PASSWORD are accepted as fallbacks.
+FORGE_URL="${FORGE_URL:-}"                      # Forge base URL. Default: empty = phase skipped
+FORGE_USER="${FORGE_USER:-}"                    # Forge username. Default: empty
+FORGE_PASS="${FORGE_PASS:-}"                    # Forge password. Default: empty
 FORGE_PROJECT="${FORGE_PROJECT:-}"              # optional Forge project id
 FORGE_INSECURE="${FORGE_INSECURE:-true}"        # Forge usually has a self-signed cert
 
 TEST_HOSTS="${TEST_HOSTS:-https://www.example.com}"   # probe targets, space-separated
 WS="${WS:-$CLUSTER_NAME}"                       # roksbnkctl workspace
-PREFIX="${PREFIX:-$CLUSTER_NAME}"
-ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"
+PREFIX="${PREFIX:-$CLUSTER_NAME}"               # name base every IBM Cloud resource derives from.
+                                                # Default: $CLUSTER_NAME. Give two demos on one account
+                                                # different prefixes or their resource names collide.
+ROKSBNKCTL_BIN="${ROKSBNKCTL_BIN:-roksbnkctl}"  # the binary to run. Default: roksbnkctl, resolved on
+                                                # PATH. Point it at a build to demo an unreleased fix.
 
 # ============================ helpers ========================================
 source "$HERE/../lib/demo-format.sh"

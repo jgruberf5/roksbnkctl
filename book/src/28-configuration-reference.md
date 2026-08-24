@@ -89,7 +89,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `cneinstance_size` | `string` | 2.3 + 2.4 | — | no | CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium, Large or Max. |
-| `far_repo_url` | `string` | 2.3 + 2.4 | — | no | FARRepoURL is the F5 Artifact Repository charts are pulled from. |
+| `far_repo_url` | `string` | 2.3 + 2.4 | `repo.f5.com` | no | FARRepoURL is the F5 Artifact Repository charts are pulled from. |
 | `manifest_version` | `string` | 2.3 + 2.4 | — | no | ManifestVersion pins the BNK release, e.g. "2.4.0-EA". |
 | `far_auth_file` | `string` | 2.3 + 2.4 | — | no | FarAuthFile is the FAR auth tarball's filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by `registry` to resolve the FAR _json_key_base64 service account. |
 | `subscription_jwt_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTFile is the subscription/license JWT's filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar. |
@@ -217,10 +217,10 @@ BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
 | `zones` | `[]BNKZoneCfg` | 2.3 + 2.4 | — | no | Zones is the per-availability-zone network mapping, in zone order — one entry per zone the cluster spans. |
-| `vlan_prefixlen` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
+| `vlan_prefixlen` | `*int` | 2.3 + 2.4 | `24` | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
 | `vlan_prefixlen_external` | `*int` | 2.3 + 2.4 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
 | `vlan_prefixlen_internal` | `*int` | 2.3 + 2.4 | — | no |  |
-| `tmm_k8s_routes` | `string` | 2.3 + 2.4 | — | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
+| `tmm_k8s_routes` | `string` | 2.3 + 2.4 | `172.17.0.0/18` | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
 
 ## `BNKPreflightCfg`
 
@@ -314,17 +314,17 @@ ExecToolCfg is one entry under workspace.Exec — the chosen backend for a given
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `app_namespace` | `string` | 2.3 + 2.4 | — | no | AppNamespace is the namespace the example application and its Gateway resources are created in. |
-| `class_name` | `string` | 2.3 + 2.4 | — | no | ClassName is the GatewayClass name. |
+| `app_namespace` | `string` | 2.3 + 2.4 | `f5-app` | no | AppNamespace is the namespace the example application and its Gateway resources are created in. |
+| `class_name` | `string` | 2.3 + 2.4 | `gateway-class` | no | ClassName is the GatewayClass name. |
 | `controller_name` | `string` | 2.3 + 2.4 | — | no | ControllerName is the GatewayClass controllerName. |
-| `backend_service` | `string` | 2.3 + 2.4 | — | no | BackendService is the Kubernetes Service the example HTTPRoute forwards to. |
-| `backend_port` | `int` | 2.3 + 2.4 | — | no | BackendPort is the port on that Service. |
-| `egress_mode` | `string` | 2.3 + 2.4 | — | no | EgressMode selects how return traffic is source-addressed: "snatpool", "automap", or "both". |
+| `backend_service` | `string` | 2.3 + 2.4 | `nginx-service` | no | BackendService is the Kubernetes Service the example HTTPRoute forwards to. |
+| `backend_port` | `int` | 2.3 + 2.4 | `80` | no | BackendPort is the port on that Service. |
+| `egress_mode` | `string` | 2.3 + 2.4 | `snatpool` | no | EgressMode selects how return traffic is source-addressed: "snatpool", "automap", or "both". |
 | `client_subnet_local` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetLocal lists client CIDRs reachable on the same VPC as the cluster — routed directly rather than over the transit gateway. |
 | `client_subnet_remote` | `[]string` | 2.3 + 2.4 | — | no | ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. the testing client VPC. |
-| `vxlan_port` | `int` | 2.3 + 2.4 | — | no | VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes. |
+| `vxlan_port` | `int` | 2.3 + 2.4 | `6789` | no | VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes. |
 | `route_examples` | `[]string` | 2.3 + 2.4 | — | no | RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates. |
-| `l4_listener_port` | `int` | 2.3 + 2.4 | — | no | L4ListenerPort is the port for that TCP listener. |
+| `l4_listener_port` | `int` | 2.3 + 2.4 | `8080` | no | L4ListenerPort is the port for that TCP listener. |
 
 ## `HugepagesCfg`
 
@@ -390,11 +390,11 @@ ResourcesCfg holds the per-resource create toggles for a prefix-driven workspace
 | `client_vpc` | `ResourceToggle` | 2.3 + 2.4 | — | yes | ClientVPC controls the testing client VPC that the jumphost lives in. |
 | `cluster_vpc` | `ResourceToggle` | 2.3 + 2.4 | — | yes | ClusterVPC controls the ROKS cluster's OWN VPC. |
 | `client_region` | `string` | 2.3 + 2.4 | — | no | ClientRegion is the region the testing client (TGW jumphost + client VPC) is installed in. |
-| `testing_client_vpc_name` | `string` | 2.3 + 2.4 | — | no | TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name). |
+| `testing_client_vpc_name` | `string` | 2.3 + 2.4 | `tf-testing-vpc` | no | TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name). |
 | `testing_ssh_key_name` | `string` | 2.3 + 2.4 | — | no | TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing jumphosts (rendered as testing_ssh_key_name). |
 | `testing_jumphost_profile` | `string` | 2.3 + 2.4 | — | no | Jumphost sizing. |
-| `testing_min_vcpu_count` | `int` | 2.3 + 2.4 | — | no |  |
-| `testing_min_memory_gb` | `int` | 2.3 + 2.4 | — | no |  |
+| `testing_min_vcpu_count` | `int` | 2.3 + 2.4 | `4` | no |  |
+| `testing_min_memory_gb` | `int` | 2.3 + 2.4 | `8` | no |  |
 | `testing_jumphost_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | Security-group source CIDRs, following the flp_vsi module's split between a management plane and an in-fabric plane. |
 | `testing_client_vpc_inbound_cidrs` | `[]string` | 2.3 + 2.4 | — | no | TestingClientVPCInboundCIDRs gates the client VPC's DEFAULT security group, which the testing phase widens to all protocols and ports. |
 | `cluster_http_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | ClusterHTTPAllowedCIDRs gates :80 on the cluster security group — the ingress/ALB path, which is meant to be publicly reachable, so empty means open. |

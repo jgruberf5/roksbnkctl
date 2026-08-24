@@ -4,6 +4,35 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
+## Unreleased
+
+### Fixed
+
+- **The CLI and CI demos did not say what their variables default to.** Eight of
+  seventeen and eight of fourteen configurable variables carried no comment, so
+  a reader had to infer `REGION`, `OCP_VERSION`, `FAR_REPO_URL`, `PREFIX` and
+  the rest from the `${VAR:-default}` expansion. Every one now states its
+  meaning and its default, in both the script and the `.env.example`.
+
+  One of the comments that *did* exist was wrong: `FORGE_URL` was marked
+  **required**, which stopped being true when Forge became optional. It is all
+  three `FORGE_*` or none — a partial configuration dies deliberately, because
+  someone who set two of three meant to use it.
+
+- **The configuration reference had the same gap, from the other direction.**
+  Its `default` column is filled from a `default:"..."` struct tag, so any field
+  whose real default lives in terraform published an em-dash — including
+  `gateway.class_name`, `gateway.vxlan_port`, `bnk.far_repo_url` and the
+  testing-jumphost sizing. Eighteen keys were affected; the renderer omits each
+  of those tfvars when unset, so terraform's default *is* what an operator gets.
+  Thirteen are now published (34 → 47 rows with a default).
+
+  Two are deliberately still blank — `bnk.cis.bigip_url` and `bigip_username`,
+  whose terraform values are placeholders (`192.168.1.245`, `admin`) rather than
+  anything a user receives. Publishing those would imply a BIG-IP is configured.
+  `TestPublishedDefaultsCoverTheTerraformDefaults` fails for any other key in
+  that state, and also fails if an exemption goes stale.
+
 ## v1.53.1 — 2026-08-23
 
 ### Fixed
