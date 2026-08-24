@@ -97,7 +97,7 @@ func TestBOMRender_FromFixture(t *testing.T) {
 	// 3 charts + 2 images from the fixture, plus the f5-bigip-k8s-manifest chart
 	// itself (mirrored so an air-gapped install can read it), plus deps (1
 	// cert-manager chart, 5 cert-manager images, 1 node-labeler image).
-	charts, images := bom.Counts()
+	charts, images, _ := bom.Counts()
 	if charts != 5 {
 		t.Errorf("charts = %d, want 5 (3 manifest + 1 manifest-chart + 1 cert-manager)", charts)
 	}

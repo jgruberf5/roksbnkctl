@@ -25,7 +25,7 @@ func TestParseManifest(t *testing.T) {
 	}
 	// 3 charts from the manifest + the f5-bigip-k8s-manifest chart itself (it is
 	// mirrored too, so an air-gapped install pulls it from the mirror).
-	charts, images := bom.Counts()
+	charts, images, _ := bom.Counts()
 	if charts != 4 || images != 2 {
 		t.Fatalf("Counts() = (%d charts, %d images), want (4, 2)", charts, images)
 	}
@@ -73,7 +73,7 @@ func TestBuild_IncludeDeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build(no deps): %v", err)
 	}
-	if c, i := bare.Counts(); c != 4 || i != 2 {
+	if c, i, _ := bare.Counts(); c != 4 || i != 2 {
 		t.Errorf("no-deps Counts() = (%d, %d), want (4, 2)", c, i)
 	}
 
@@ -82,7 +82,7 @@ func TestBuild_IncludeDeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build(deps): %v", err)
 	}
-	if c, i := full.Counts(); c != 5 || i != 8 {
+	if c, i, _ := full.Counts(); c != 5 || i != 8 {
 		t.Fatalf("deps Counts() = (%d, %d), want (5 charts, 8 images)", c, i)
 	}
 

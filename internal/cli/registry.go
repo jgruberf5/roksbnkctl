@@ -527,9 +527,17 @@ func registryEngine(t mirror.Target, in registryBOMInputs, registryCA string) *m
 // ── bom ─────────────────────────────────────────────────────────────────────
 
 func printBOMTable(bom *bnkbom.BOM) {
-	charts, images := bom.Counts()
-	fmt.Fprintf(os.Stderr, "BNK manifest %s — %d charts, %d images (%d total)\n",
-		bom.ManifestVersion, charts, images, len(bom.Artifacts))
+	charts, images, files := bom.Counts()
+	// Only mention files when there are any, so the common BNK BOM reads exactly
+	// as it did before — but never omit them when present, or the parts stop
+	// summing to the total shown beside them.
+	if files > 0 {
+		fmt.Fprintf(os.Stderr, "BNK manifest %s — %d charts, %d images, %d files (%d total)\n",
+			bom.ManifestVersion, charts, images, files, len(bom.Artifacts))
+	} else {
+		fmt.Fprintf(os.Stderr, "BNK manifest %s — %d charts, %d images (%d total)\n",
+			bom.ManifestVersion, charts, images, len(bom.Artifacts))
+	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "KIND\tORIGIN\tSOURCE\tNAME\tTAG")
 	for _, a := range bom.Artifacts {

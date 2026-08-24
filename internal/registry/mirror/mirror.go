@@ -228,6 +228,9 @@ func (e *Engine) Replicate(ctx context.Context, bom *bnkbom.BOM) []Result {
 }
 
 func (e *Engine) copyOne(ctx context.Context, a bnkbom.Artifact) Result {
+	if a.Kind == bnkbom.KindFile {
+		return e.copyFile(ctx, a)
+	}
 	if a.SourceHost == classicHelmHost {
 		return e.copyClassicHelmChart(ctx, a)
 	}
