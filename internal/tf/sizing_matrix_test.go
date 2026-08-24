@@ -47,7 +47,7 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 				sizing, nodes, perZone, line)
 		}
 		// The post-install assertion must expect the same total.
-		if !regexp.MustCompile(`(?m)^\s*`+sizing+`\)\s+WANT_NODES=`+itoa(nodes)+`\s*;;`).MatchString(script) {
+		if !regexp.MustCompile(`(?m)^\s*` + sizing + `\)\s+WANT_NODES=` + itoa(nodes) + `\s*;;`).MatchString(script) {
 			t.Errorf("%s: appendix says %d worker nodes, script's WANT_NODES row disagrees",
 				sizing, nodes)
 		}
