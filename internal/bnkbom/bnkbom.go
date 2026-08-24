@@ -28,6 +28,23 @@ type Kind string
 const (
 	KindChart Kind = "chart"
 	KindImage Kind = "image"
+
+	// KindFile is a plain file that must reach a disconnected cluster, carried
+	// as a single-layer OCI image so any registry can hold it — including IBM
+	// Container Registry, which need not accept non-image OCI artifacts.
+	//
+	// It exists for the Gateway API bundle (#185): 2.4 mTLS requires applying
+	// kubernetes-sigs/gateway-api standard-install.yaml, which is 8 CRDs plus an
+	// admission policy and NO container images. Nothing to pull at runtime, but
+	// the file itself still has to get there — and in the CI path roksbnkctl runs
+	// as a pod IN the cluster, so its egress is the cluster's. Fetching from
+	// github.com is not an option for exactly the estates that want mTLS.
+	//
+	// Carrying it in the BOM rather than beside it means `registry bom` lists it,
+	// `registry replicate` copies it and `registry verify` proves it arrived —
+	// the same three guarantees every chart and image already gets. A file staged
+	// by hand has none of them.
+	KindFile Kind = "file"
 )
 
 // ManifestChartName is the repository path of the f5-bigip-k8s-manifest chart
@@ -58,6 +75,16 @@ type Artifact struct {
 	Tag        string `json:"tag"`
 	Origin     Origin `json:"origin"`
 	Digest     string `json:"digest,omitempty"` // set by the mirror at copy time
+
+	// SourceURL is where a KindFile artifact is fetched FROM on the connected
+	// side, before being pushed into the mirror. Empty for charts and images,
+	// which are pulled from SourceHost/Name:Tag by digest.
+	SourceURL string `json:"source_url,omitempty"`
+
+	// SHA256 pins a KindFile's content. Applying a megabyte of CRDs fetched over
+	// a network without verifying it is the supply-chain gap the embedded
+	// provider lockfile closed; this is the same guarantee for this artifact.
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 // Ref is the source pull reference, "<host>/<name>:<tag>".
@@ -71,16 +98,25 @@ type BOM struct {
 }
 
 // Counts returns how many charts and images the BOM contains.
-func (b *BOM) Counts() (charts, images int) {
+// Counts returns how many charts, images and files the BOM contains.
+//
+// The signature names every kind deliberately. An earlier version returned only
+// (charts, images), so adding a third kind would have left it silently
+// uncounted — a BOM whose parts no longer sum to its whole, and callers
+// reporting a total that quietly excluded an artifact the install needs. A
+// compile error at every call site is the right failure mode for a new kind.
+func (b *BOM) Counts() (charts, images, files int) {
 	for _, a := range b.Artifacts {
 		switch a.Kind {
 		case KindChart:
 			charts++
 		case KindImage:
 			images++
+		case KindFile:
+			files++
 		}
 	}
-	return charts, images
+	return charts, images, files
 }
 
 // sortArtifacts orders the BOM deterministically (kind, host, name, tag) so
@@ -114,6 +150,21 @@ type Options struct {
 	CertManagerVersion string
 	// NodeLabelerImageTag tags the bitnami/kubectl node-labeler image.
 	NodeLabelerImageTag string
+
+	// GatewayAPIBundleVersion, when non-empty, unions the upstream Gateway API
+	// standard-install bundle (#185) at that version.
+	//
+	// Deliberately NOT folded into IncludeDeps. --include-deps says whether to
+	// carry the two non-F5 artifacts EVERY install pulls; the bundle is carried
+	// on a different question entirely — 2.4 with mTLS — and one flag answering
+	// both would either drag a megabyte of CRDs into every 2.3 mirror or drop it
+	// from the one install that cannot proceed without it.
+	GatewayAPIBundleVersion string
+
+	// GatewayAPIBundleURL overrides where the bundle is FETCHED from (an internal
+	// proxy of the upstream release). Empty derives the upstream URL. It does not
+	// change the sha256 the bytes must match.
+	GatewayAPIBundleURL string
 }
 
 // Build parses the f5-bigip-k8s-manifest and, when opts.IncludeDeps is set,
@@ -125,6 +176,18 @@ func Build(manifest []byte, opts Options) (*BOM, error) {
 	}
 	if opts.IncludeDeps {
 		bom.Artifacts = append(bom.Artifacts, Deps(opts.CertManagerVersion, opts.NodeLabelerImageTag)...)
+	}
+	// The Gateway API bundle, when this install needs it. An unpinned version
+	// fails the BUILD rather than being dropped: a BOM silently missing the one
+	// artifact an mTLS install cannot start without would be replicated, verified
+	// and reported complete, and the omission would surface much later as a
+	// cluster whose CRDs never arrived.
+	if opts.GatewayAPIBundleVersion != "" {
+		a, err := GatewayAPIBundle(opts.GatewayAPIBundleVersion, opts.GatewayAPIBundleURL)
+		if err != nil {
+			return nil, err
+		}
+		bom.Artifacts = append(bom.Artifacts, a)
 	}
 	bom.sortArtifacts()
 	return bom, nil

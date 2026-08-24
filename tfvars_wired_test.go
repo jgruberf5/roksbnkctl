@@ -20,6 +20,15 @@ import (
 // defect this test exists to catch.
 var validationOnlyRootVars = map[string]string{
 	"cluster_network_mode": "single-nic/multi-nic is applied by the Go cluster phase; the HCL keeps it only to reject a bad value early",
+	// #185. The Gateway API bundle is fetched, sha256-checked and
+	// server-side-applied by the Go BNK phase, inside the admission-policy sweep
+	// window — terraform installs nothing from it. But roksbnkctl RENDERS the
+	// value into terraform.tfvars like every other config field, and terraform
+	// fails an apply outright on a value for an undeclared variable, so the
+	// declaration is mandatory whether or not any HCL reads it. Given it must
+	// exist, its validation block earns its keep: a malformed URL is rejected at
+	// plan time instead of surfacing as a fetch failure mid-apply.
+	"gateway_api_bundle_url": "the Go BNK phase fetches and applies the bundle; the HCL keeps the variable so a malformed URL is rejected at plan time and a rendered tfvar has something to bind to",
 }
 
 // TestEveryRootVariableIsRead catches the defect class that has now shipped

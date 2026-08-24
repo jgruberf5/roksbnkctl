@@ -142,6 +142,18 @@ check flo_namespace       "f5_bnk"   reject "RFC 1123"
 check flo_namespace       "-f5-bnk"  reject "RFC 1123"
 check flo_namespace       ""         reject "RFC 1123"
 
+# The Gateway API bundle source (#185). roksbnkctl fetches and applies the
+# bundle, so terraform's only job here is to reject a value that would fail the
+# fetch — which otherwise happens after the apply is under way, with the
+# admission-policy sweep already running and a cluster half-configured.
+#
+# The empty default is the normal case: it means "derive the upstream release".
+check gateway_api_bundle_url ""                                                accept
+check gateway_api_bundle_url "https://proxy.example.com/gw/standard-install.yaml" accept
+check gateway_api_bundle_url "http://proxy.example.com/gw/standard-install.yaml"  reject "must be empty"
+check gateway_api_bundle_url "https://proxy.example.com/gw/standard-install.tgz"  reject "must be empty"
+check gateway_api_bundle_url "proxy.example.com/standard-install.yaml"            reject "must be empty"
+
 if (( fails )); then
   echo "==> $fails variable-validation case(s) FAILED"
   exit 1

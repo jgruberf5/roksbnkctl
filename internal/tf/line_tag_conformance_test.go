@@ -484,8 +484,19 @@ func TestEveryLineTagHasEvidence(t *testing.T) {
 	// TestTwoFourSweepsOnlyForMTLS exercise it from both sides: on 2.3 the sweep
 	// runs whatever the field says, on 2.4 the field is what decides. Anything
 	// else added here needs the same: a named test that runs the behaviour.
-	goSideEvidence := map[string]string{
-		"BNKCfg.gateway_api_mtls": "internal/orchestration: TestTheSweepAlwaysRunsOnTwoThree + TestTwoFourSweepsOnlyForMTLS",
+	// A Go-side gate needs BOTH the test that exercises it and the line the tag is
+	// expected to claim. Recording only the test left the tag itself unverified:
+	// flipping gateway_api_bundle_url to "2.3" still passed, because the entry
+	// exempted the field from every check rather than from the terraform probe
+	// alone. The reference would then have published the wrong line.
+	goSideEvidence := map[string]struct{ line, test string }{
+		"BNKCfg.gateway_api_mtls": {"2.4",
+			"internal/orchestration: TestTheSweepAlwaysRunsOnTwoThree + TestTwoFourSweepsOnlyForMTLS"},
+		// Consumed only when GatewayAPIBundleNeeded() is true — the 2.4 line AND
+		// gateway_api_mtls. That gate is in Go, not a terraform count, so no
+		// lineProbe can reach it: the tfvar it renders is validation-only.
+		"BNKCfg.gateway_api_bundle_url": {"2.4",
+			"internal/config: TestGatewayAPIBundleIsNeededOnlyOnTwoFourWithMTLS"},
 	}
 
 	var untested []string
@@ -493,7 +504,14 @@ func TestEveryLineTagHasEvidence(t *testing.T) {
 		if line == "both" {
 			continue
 		}
-		if probed[name] || goSideEvidence[name] != "" {
+		if ev, ok := goSideEvidence[name]; ok {
+			if ev.line != line {
+				t.Errorf("%s is tagged %q but its Go-side evidence claims %q (%s). "+
+					"The reference publishes the tag, so the two must agree.", name, line, ev.line, ev.test)
+			}
+			continue
+		}
+		if probed[name] {
 			continue
 		}
 		untested = append(untested, name+" -> "+line)

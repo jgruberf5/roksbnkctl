@@ -134,15 +134,21 @@ func (e *Engine) craneOpts(ctx context.Context) []crane.Option {
 // with no OS trust for the mirror can still replicate into it. The additive
 // pool is deliberate — contrast forge.New, which pins EXCLUSIVELY because that
 // client talks to exactly one server; do not "harmonize" the two.
-func (e *Engine) caTransport() http.RoundTripper {
-	if strings.TrimSpace(e.RegistryCA) == "" {
+func (e *Engine) caTransport() http.RoundTripper { return CATransport(e.RegistryCA) }
+
+// CATransport is that transport, as a free function: the install-time pull of a
+// KindFile artifact (PullFile) needs exactly the same private-CA trust as the
+// replicate-time push, and it runs with no Engine in hand. One implementation,
+// so a mirror that replicate could reach cannot become one the install cannot.
+func CATransport(caPEM string) http.RoundTripper {
+	if strings.TrimSpace(caPEM) == "" {
 		return nil
 	}
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
 	}
-	if !pool.AppendCertsFromPEM([]byte(e.RegistryCA)) {
+	if !pool.AppendCertsFromPEM([]byte(caPEM)) {
 		return nil // unparseable CA — fall back to the default transport
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -228,6 +234,9 @@ func (e *Engine) Replicate(ctx context.Context, bom *bnkbom.BOM) []Result {
 }
 
 func (e *Engine) copyOne(ctx context.Context, a bnkbom.Artifact) Result {
+	if a.Kind == bnkbom.KindFile {
+		return e.copyFile(ctx, a)
+	}
 	if a.SourceHost == classicHelmHost {
 		return e.copyClassicHelmChart(ctx, a)
 	}

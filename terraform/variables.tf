@@ -1177,6 +1177,33 @@ variable "cneinstance_gateway_api_version" {
   default     = "1.5.0"
 }
 
+variable "gateway_api_bundle_url" {
+  description = <<-EOT
+    Where the Gateway API standard-install bundle is FETCHED from when the
+    workspace has no registry mirror recorded (2.4 + gateway_api_mtls). Empty
+    derives the upstream release asset for cneinstance_gateway_api_version.
+
+    Terraform installs nothing from this. roksbnkctl fetches the bundle, checks
+    it against the sha256 it pins for that version, and server-side-applies it
+    inside the window where the gateway-api admission-policy sweep is running —
+    which is the only window in which the apply survives the OpenShift ingress
+    operator recreating its policy.
+
+    It is declared here so terraform REJECTS a malformed URL at plan time.
+    Without the declaration, roksbnkctl rendering the value into terraform.tfvars
+    would fail the apply outright ("value for undeclared variable"); with it but
+    without the validation, a typo would instead surface as a fetch failure once
+    the apply was already under way.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gateway_api_bundle_url == "" || can(regex("^https://[^[:space:]]+\\.(yaml|yml)$", var.gateway_api_bundle_url))
+    error_message = "gateway_api_bundle_url must be empty (derive the upstream release) or an https:// URL ending in .yaml/.yml. Plain http is refused: the bundle is applied to the cluster with --force-conflicts, and its sha256 pin authenticates the CONTENT, not the peer that served it."
+  }
+}
+
 variable "cneinstance_demo_mode" {
   description = <<-EOT
     advanced.demoMode.enabled.

@@ -42,6 +42,12 @@ import (
 //	ROKSBNKCTL_GATEWAY_API_MTLS     → bnk.gateway_api_mtls (bool) — install the
 //	                                  Gateway API bundle 2.4 needs for mTLS; off by
 //	                                  default, ignored on 2.3
+//	ROKSBNKCTL_GATEWAY_API_BUNDLE_URL → bnk.gateway_api_bundle_url — where that
+//	                                  bundle is fetched from when no mirror is
+//	                                  recorded; empty derives the upstream release
+//	                                  for bnk.gateway_api_version. The sha256 pin
+//	                                  still applies, so this changes only WHERE
+//	                                  the bytes come from
 //
 // BNK 2.4 conformance with F5's reference CNEInstance. All 2.4-only; unset means
 // the terraform default, which is F5's reference value.
@@ -851,6 +857,12 @@ var stringOverrides = []stringOverride{
 	{"ROKSBNKCTL_WORKER_FLAVOR", "cluster.worker_flavor", func(ws *Workspace, v string) { ws.Cluster.WorkerFlavor = v }},
 	{"ROKSBNKCTL_FLO_NAMESPACE", "bnk.flo_namespace", func(ws *Workspace, v string) { ws.BNK.FLONamespace = v }},
 	{"ROKSBNKCTL_FLO_UTILS_NAMESPACE", "bnk.flo_utils_namespace", func(ws *Workspace, v string) { ws.BNK.FLOUtilsNamespace = v }},
+	// Where the Gateway API bundle is fetched from when no mirror is recorded
+	// (#185). An estate that blocks github.com but proxies it internally has no
+	// other way to say so, and `init --non-interactive` builds config.yaml from
+	// the environment alone — so without this row the setting cannot reach a
+	// blueprint at all.
+	{"ROKSBNKCTL_GATEWAY_API_BUNDLE_URL", "bnk.gateway_api_bundle_url", func(ws *Workspace, v string) { ws.BNK.GatewayAPIBundleURL = v }},
 	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
 	{"ROKSBNKCTL_GTM_USERNAME", "bnk.gtm.username", func(ws *Workspace, v string) { gtmCfg(ws).Username = v }},
 	// The registry mirror. A CI job needs to name its registry without a
