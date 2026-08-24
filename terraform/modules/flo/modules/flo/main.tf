@@ -168,7 +168,22 @@ locals {
     # creates TMM's internal macvlan NAD (#189) — while every other signal reports
     # healthy. The 3/3 TMM pods that made installs look fine were a side effect of
     # that failure: the controller never got far enough to ask for TMM's volume.
-    containerPlatform        = "OCP"
+    # IBM, not OCP, and not the chart's Generic default.
+    #
+    # F5's chart documents "Generic, OCP, Robin, AON" — but its own
+    # values.schema.json accepts "AWS" and "IBM" too, and engineering's approved
+    # reference cluster (staging-small-8c-20g) runs IBM. Verified by reading its
+    # live F5Tmm: containerPlatform: IBM.
+    #
+    # The difference is not cosmetic. Under OCP the lifecycle operator creates 16
+    # component CRs and SILENTLY SKIPS CSRC — no CSRC CR, no f5-spk-csrc pods, and
+    # therefore no macvlan-internal NetworkAttachmentDefinition, which CSRC creates
+    # at runtime. Nothing is logged. Under IBM, CSRC is created (6-pod DaemonSet)
+    # and macvlan-internal appears.
+    #
+    # Under Generic the controller looks for the kubeadm-config ConfigMap that only
+    # kubeadm-built clusters have and aborts at Reconciled=False (#189).
+    containerPlatform        = "IBM"
     sharedComponentNamespace = var.utils_namespace
 
     image = {
