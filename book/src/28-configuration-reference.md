@@ -97,7 +97,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `subscription_jwt_local_file` | `string` | 2.3 + 2.4 | — | no | SubscriptionJWTLocalFile is the F5 subscription JWT as a LOCAL file, the companion to FarAuthLocalFile above. |
 | `trusted_profile` | `*BNKTrustedProfileCfg` | 2.3 + 2.4 | — | no | TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller assumes to manage its own cluster's VPC. |
 | `flo_namespace` | `string` | 2.3 + 2.4 | `f5-bnk` | no | FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle Operator and its utility components install into (rendered as flo_namespace / flo_utils_namespace). |
-| `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no | FLOUtilsNamespace is where FLO's shared utility components install — coremond, the observer, the licence. |
+| `flo_utils_namespace` | `string` | 2.3 + 2.4 | `f5-utils` | no | FLOUtilsNamespace is where FLO's SHARED utility components install — coremond, the observer, the licence — as opposed to FLONamespace, which holds the BNK instance itself. |
 | `gateway_api_mtls` | `bool` | 2.4 | — | no | GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS (#170). |
 | `tmm_replicas` | `int` | 2.4 | `3` | no | TMMReplicas is the number of f5-tmm data-plane replicas. |
 | `watch_namespaces` | `[]string` | 2.4 | `All` | no | WatchNamespaces are the namespaces the CNE controller watches. |
@@ -116,7 +116,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `demo_mode` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | DemoMode sets advanced.demoMode.enabled. |
 | `whole_cluster` | `*bool` | 2.3 + 2.4 | `false on 2.4, true on 2.3` | no | TCPSettings overrides fields on the data-plane F5BigTcpSetting CR. |
 | `hugepages` | `*HugepagesCfg` | 2.3 + 2.4 | — | no | Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator. |
-| `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {"idleTimeout": "300"}. |
+| `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {"congestionControl": "bbr", "delayedAcks": "true"} — the key is the CR's own spec field. |
 | `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |

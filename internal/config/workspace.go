@@ -619,9 +619,10 @@ type BNKCfg struct {
 	// these for multi-tenant clusters or to avoid namespace collisions.
 	FLONamespace string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
 
-	// FLOUtilsNamespace is where FLO's shared utility components install —
-	// coremond, the observer, the licence. Separate from FLONamespace because the
-	// two have different lifetimes: the utils namespace outlives a BNK reinstall.
+	// FLOUtilsNamespace is where FLO's SHARED utility components install —
+	// coremond, the observer, the licence — as opposed to FLONamespace, which
+	// holds the BNK instance itself. Two namespaces because the shared components
+	// are cluster-scoped concerns that more than one instance can sit behind.
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
@@ -739,7 +740,8 @@ type BNKCfg struct {
 	Hugepages *HugepagesCfg `yaml:"hugepages,omitempty"`
 
 	// TCPSettings overrides individual fields on the data-plane F5BigTcpSetting
-	// CR by name, e.g. {"idleTimeout": "300"}. Empty leaves F5's defaults. A map
+	// CR by name, e.g. {"congestionControl": "bbr", "delayedAcks": "true"} —
+	// the key is the CR's own spec field. Empty leaves F5's defaults. A map
 	// rather than typed fields so a setting F5 adds needs no code change here.
 	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
 
