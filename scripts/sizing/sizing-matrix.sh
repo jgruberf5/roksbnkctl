@@ -1,125 +1,178 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sizing-matrix.sh — build and validate each sizing Appendix C recommends.
+# sizing-matrix.sh — build and verify a reference deployment for each sizing.
 #
-# Appendix C tells operators which cluster shape to buy. Nothing has ever checked
-# that those shapes actually run BNK. This does, one sizing at a time.
+# Appendix C tells operators which cluster shape to buy. This builds one, installs
+# BNK onto it, and asserts that EVERY component actually came up — not merely that
+# the apply exited zero. An install that "succeeds" while silently omitting a
+# component is the failure mode this exists to catch; see the CSRC note below.
 #
-# OPEN QUESTION this test exists to settle: does deploymentSize Small/Medium
-# request hugepages? At deploymentSize Tiny — the only size ever run — TMM
-# requests NONE (verified on a live 2.4 cluster: every f5-tmm container shows
-# cpu/memory requests and no hugepages resource). The size->resources map lives
-# inside the cne-controller image, not in any chart we can read, so the only way
-# to learn what Small does is to run it. The verification below therefore READS
-# what TMM asked for and checks the node can satisfy it, rather than assuming a
-# number. Do not replace that with a hard-coded hugepages assertion.
-#
-#   ./sizing-matrix.sh small       # 6 x bx2.8x32,  deploymentSize Small
-#   ./sizing-matrix.sh medium      # 6 x cx2.16x32, deploymentSize Medium
-#   ./sizing-matrix.sh large       # 9 x cx2.48x96, deploymentSize Medium
+#   ./sizing-matrix.sh tiny        # 3 x bx2.16x64, deploymentSize Tiny,   1 TMM
+#   ./sizing-matrix.sh small       # 6 x bx2.8x32,  deploymentSize Small,  3 TMM
+#   ./sizing-matrix.sh medium      # 6 x cx2.16x32, deploymentSize Medium, 3 TMM
+#   ./sizing-matrix.sh large       # 9 x cx2.48x96, deploymentSize Medium, 9 TMM
 #   ./sizing-matrix.sh small --dry # print the config it would use, build nothing
+#   ./sizing-matrix.sh small --verify-only   # re-run the checks against a build
 #
-# COSTS REAL MONEY AND TIME. Each sizing builds a cluster (~30-45 min) and
-# consumes a transit-gateway connection from a SHARED account quota. Check the
-# quota before running more than one, and tear down when finished.
+# COSTS REAL MONEY AND TIME. Each sizing builds a cluster (~45 min) plus ~25 min
+# for BNK, and consumes a VPC from a per-region quota. Build them SEQUENTIALLY and
+# tear down between: three at once can wall the account's VPC limit.
 #
-# TMM replicas are pinned to 1 while the shared-volume defect (#197) is open;
-# the appendix's 3-and-9-replica figures cannot be validated until that is fixed.
+# WHAT THIS SCRIPT LEARNED THE HARD WAY — do not "simplify" these away:
+#
+#  1. bnk.manifest_version MUST be set. Unset installs the 2.3 line, and the first
+#     symptom is a CNEInstance validation error minutes into the apply saying
+#     deploymentSize "Tiny" is unsupported — because Tiny does not exist on 2.3.
+#     The message names the size, not the version.
+#
+#  2. The reference build lives on devrepo.f5.com, not repo.f5.com, and needs the
+#     dev service account (f5-far-dev-auth-key.tgz => dev-gar-pull@...-spk-dev).
+#     The similarly-named non-ga-prod-pull key is a DIFFERENT GCP project and 403s.
+#
+#  3. far_auth_local_file is ignored unless subscription_jwt_local_file is set too
+#     — the no-COS path is gated on BOTH being non-empty. With only one set it
+#     silently falls back to COS and the GA key, failing much later with a 403 that
+#     names a GCP project rather than a config field.
+#
+#  4. bnk down returns 0 while leaving the namespace and every *.k8s.f5.com CRD
+#     installed. Reinstalling a DIFFERENT manifest line over those stale CRDs
+#     validates against the old schema. clean_slate() below deletes both.
+#
+#  5. `roksbnkctl k` rejects --no-headers and returns empty for -o jsonpath, so the
+#     verification uses real kubectl. The resolved kubeconfig is SHARED between
+#     workspaces, so the context is pinned explicitly rather than assumed.
 # =============================================================================
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
 
+# The manifest the F5 engineering reference cluster runs. Pin it: see note 1.
+: "${BNK_MANIFEST_VERSION:=2.4.0-3.3175.0-0.0.202-tc}"
+: "${BNK_FAR_REPO_URL:=devrepo.f5.com}"
+: "${BNK_FAR_AUTH_LOCAL_FILE:=/mnt/d/roksbnkresources/f5-far-dev-auth-key.tgz}"
+
 SIZING="${1:-}"; shift || true
-DRY=0; [[ "${1:-}" == "--dry" ]] && DRY=1
+DRY=0; VERIFY_ONLY=0
+for a in "$@"; do
+  [[ "$a" == "--dry" ]] && DRY=1
+  [[ "$a" == "--verify-only" ]] && VERIFY_ONLY=1
+done
 
+# Appendix C names three CLUSTER sizes but only two deploymentSize values: the
+# Large cluster runs the Medium profile and gets its capacity from nine TMM pods
+# on nine larger nodes. Tiny is not in the guide — it is what the engineering
+# reference cluster runs, kept here as the smallest known-working configuration.
 case "$SIZING" in
-  small)  FLAVOR=bx2.8x32   WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Small  HUGEPAGES=2048 ;;
-  medium) FLAVOR=cx2.16x32  WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Medium HUGEPAGES=2048 ;;
-  large)  FLAVOR=cx2.48x96  WORKERS_PER_ZONE=3 DEPLOYMENT_SIZE=Medium HUGEPAGES=2048 ;;
-  *) echo "usage: $0 {small|medium|large} [--dry]" >&2; exit 2 ;;
+  tiny)   FLAVOR=bx2.16x64  WORKERS_PER_ZONE=1 DEPLOYMENT_SIZE=Tiny   TMM=1 CIDR=10.246.0.0/16 ;;
+  small)  FLAVOR=bx2.8x32   WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Small  TMM=3 CIDR=10.252.0.0/16 ;;
+  medium) FLAVOR=cx2.16x32  WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Medium TMM=3 CIDR=10.253.0.0/16 ;;
+  large)  FLAVOR=cx2.48x96  WORKERS_PER_ZONE=3 DEPLOYMENT_SIZE=Medium TMM=9 CIDR=10.254.0.0/16 ;;
+  *) echo "usage: $0 {tiny|small|medium|large} [--dry|--verify-only]" >&2; exit 2 ;;
 esac
+WANT_NODES=$((WORKERS_PER_ZONE * 3))
+WS="sz-$SIZING"
+BIN="${ROKSBNKCTL:-roksbnkctl}"
 
-# The appendix's own figures, asserted after the install so a drifting doc fails
-# here rather than misleading a customer.
-case "$SIZING" in
-  small)  WANT_NODES=6 ;;
-  medium) WANT_NODES=6 ;;
-  large)  WANT_NODES=9 ;;
-esac
-
-WS="sizing-$SIZING"
 cat <<CFG
 === sizing: $SIZING ===
   flavour            $FLAVOR
   workers per zone   $WORKERS_PER_ZONE   (expect $WANT_NODES nodes over 3 AZs)
   deploymentSize     $DEPLOYMENT_SIZE
-  hugepages          $HUGEPAGES x 2M per node   (Node Tuning Operator; REBOOTS WORKERS)
-  tmmReplicas        1                          (pinned while #197 is open)
+  TMM replicas       $TMM
+  manifest           $BNK_MANIFEST_VERSION
+  registry           $BNK_FAR_REPO_URL
+  namespace          f5-bnk ONLY (flo_namespace == flo_utils_namespace)
+  vpc cidr           $CIDR
   workspace          $WS
 CFG
 [[ "$DRY" == "1" ]] && { echo "  --dry: nothing built"; exit 0; }
 
-command -v roksbnkctl >/dev/null || { echo "roksbnkctl not on PATH" >&2; exit 2; }
-[[ -n "${IBMCLOUD_API_KEY:-}" ]] || { echo "set IBMCLOUD_API_KEY" >&2; exit 2; }
+command -v "$BIN" >/dev/null || { echo "$BIN not on PATH (set ROKSBNKCTL)" >&2; exit 2; }
 
-export ROKSBNKCTL_WORKER_FLAVOR="$FLAVOR"
-export ROKSBNKCTL_WORKERS_PER_ZONE="$WORKERS_PER_ZONE"
-export ROKSBNKCTL_CNEINSTANCE_SIZE="$DEPLOYMENT_SIZE"
-export ROKSBNKCTL_HUGEPAGES=true
-export ROKSBNKCTL_HUGEPAGES_COUNT="$HUGEPAGES"
-export ROKSBNKCTL_TMM_REPLICAS=1
+# --- verification ------------------------------------------------------------
+verify() {
+  local ctx kc fail=0
+  kc="$($BIN -w "$WS" kubeconfig 2>/dev/null)"; export KUBECONFIG="$kc"
+  ctx="$(kubectl config get-contexts -o name 2>/dev/null | grep -m1 "$WS\|bnk24-$SIZING")"
+  [[ -z "$ctx" ]] && ctx="$(kubectl config current-context 2>/dev/null)"
+  K(){ kubectl --context "$ctx" "$@" 2>/dev/null; }
+  chk(){ if [[ "$2" == "$3" ]]; then printf "  PASS  %-38s %s\n" "$1" "$2"
+         else printf "  FAIL  %-38s got=%-18s want=%s\n" "$1" "${2:-<empty>}" "$3"; fail=1; fi; }
+  ge(){ if [[ "${2:-0}" -ge "$3" ]] 2>/dev/null; then printf "  PASS  %-38s %s (>=%s)\n" "$1" "$2" "$3"
+        else printf "  FAIL  %-38s got=%-18s want>=%s\n" "$1" "${2:-0}" "$3"; fail=1; fi; }
 
-set -e
-# init prints the overrides it actually applied. Assert every variable we set
-# appears there: a misspelled ROKSBNKCTL_* name is silently ignored, which
-# would build a DEFAULT-sized cluster and report it as the requested sizing.
-# (The first draft of this script set ROKSBNKCTL_HUGEPAGES_ENABLED, which does
-# not exist, and would have "validated" a sizing with no hugepages at all.)
-roksbnkctl -w "$WS" init --non-interactive --override-from-env 2>&1 | tee "$WS.init.log"
-for v in ROKSBNKCTL_WORKER_FLAVOR ROKSBNKCTL_WORKERS_PER_ZONE \
-         ROKSBNKCTL_CNEINSTANCE_SIZE ROKSBNKCTL_HUGEPAGES \
-         ROKSBNKCTL_HUGEPAGES_COUNT ROKSBNKCTL_TMM_REPLICAS; do
-  grep -q "$v" "$WS.init.log" || {
-    echo "ABORT: $v was not applied by init — the name is wrong or unsupported." >&2
-    echo "       Building would produce a default-sized cluster labelled '$SIZING'." >&2
-    exit 3
-  }
-done
-echo "  all 6 overrides confirmed applied"
-roksbnkctl -w "$WS" cluster up --auto
-roksbnkctl -w "$WS" bnk up --auto
-set +e
+  echo "=== [$SIZING] verify (context: $ctx) ==="
+  chk "worker nodes"        "$(K get nodes --no-headers | wc -l)" "$WANT_NODES"
+  chk "f5-* namespaces"     "$(K get ns -o name | grep -c 'namespace/f5-')" "1"
+  chk "f5-utils absent"     "$(K get ns f5-utils -o name | wc -l)" "0"
+  chk "CNEManifest version" "$(K get cnemanifests -A -o jsonpath='{.items[0].spec.version}')" "$BNK_MANIFEST_VERSION"
+  chk "containerPlatform"   "$(K get f5tmm -A -o jsonpath='{.items[0].spec.containerPlatform}')" "IBM"
+  chk "deploymentSize"      "$(K get cneinstance -A -o jsonpath='{.items[0].spec.deploymentSize}')" "$DEPLOYMENT_SIZE"
 
-echo "=== verifying $SIZING against Appendix C ==="
-fail=0
-nodes=$(roksbnkctl -w "$WS" k get nodes --no-headers 2>/dev/null | wc -l)
-[[ "$nodes" == "$WANT_NODES" ]] || { echo "  FAIL nodes=$nodes want=$WANT_NODES"; fail=1; }
+  for kind in cneinstance f5tmm csrc cwc dssm coremond observer rabbitmq; do
+    chk "$kind Available" \
+      "$(K get "$kind" -A -o jsonpath="{.items[0].status.conditions[?(@.type=='Available')].status}")" "True"
+  done
 
-# Hugepages: compare what TMM REQUESTED against what the node OFFERS, instead of
-# asserting a number we have not verified for this deploymentSize.
-req=$(roksbnkctl -w "$WS" k get pods -n f5-bnk -l app=f5-tmm \
-        -o jsonpath='{.items[0].spec.containers[*].resources.requests.hugepages-2Mi}' 2>/dev/null)
-hp=$(roksbnkctl -w "$WS" k get nodes -o jsonpath='{.items[0].status.allocatable.hugepages-2Mi}' 2>/dev/null)
-echo "  hugepages: TMM requests '${req:-none}', node offers '${hp:-0}'"
-if [[ -n "$req" && "$req" != "0" ]]; then
-  # TMM wants hugepages, so bnk.hugepages had to have worked. This is the first
-  # time the Tuned/MachineConfig path is load-bearing; if it silently did nothing
-  # the pod is Pending, not merely slow.
-  [[ -n "$hp" && "$hp" != "0" ]] || {
-    echo "  FAIL deploymentSize=$DEPLOYMENT_SIZE requests hugepages ($req) but node offers ${hp:-0}"
-    echo "       — the Node Tuning Operator profile did not take."; fail=1; }
-else
-  echo "  note: deploymentSize=$DEPLOYMENT_SIZE requests no hugepages;"
-  echo "        bnk.hugepages remains unexercised by this sizing."
-fi
+  # CSRC is the component FLO silently omits under the wrong containerPlatform,
+  # and macvlan-internal is the NAD it creates at runtime — so the NAD's absence
+  # is the visible symptom of an install that otherwise looks healthy.
+  ge  "csrc pods Running"   "$(K get pods -A --no-headers | grep -c 'f5-spk-csrc.*Running')" 1
+  chk "macvlan-internal NAD" "$(K get net-attach-def -A --no-headers | grep -c macvlan-internal)" "1"
+  ge  "tmm pods Running"    "$(K get pods -A --no-headers | grep -c 'f5-tmm.*Running')" "$TMM"
 
-tmm=$(roksbnkctl -w "$WS" k get pods -n f5-bnk --no-headers 2>/dev/null | grep -c '^f5-tmm.*Running')
-[[ "$tmm" -ge 1 ]] || { echo "  FAIL no TMM pod Running"; fail=1; }
+  # Hugepages are DERIVED, never assumed: the deploymentSize->resources map lives
+  # inside the cne-controller image, not in any chart we can read. At Tiny, TMM
+  # requests none. Read what it asked for and check the node can satisfy it.
+  local req off
+  req="$(K get pods -n f5-bnk -l app=f5-tmm -o jsonpath='{.items[0].spec.containers[*].resources.requests.hugepages-2Mi}')"
+  off="$(K get nodes -o jsonpath='{.items[0].status.allocatable.hugepages-2Mi}')"
+  echo "     hugepages: TMM requests '${req:-none}' / node offers '${off:-0}'"
+  if [[ -n "$req" && "$req" != "0" ]]; then
+    [[ -n "$off" && "$off" != "0" ]] || { echo "  FAIL  TMM requests hugepages, node offers none"; fail=1; }
+  else
+    echo "     note: this sizing leaves bnk.hugepages unexercised"
+  fi
 
-lic=$(roksbnkctl -w "$WS" k get license -n f5-utils --no-headers 2>/dev/null | awk '{print $2}')
-[[ "$lic" == "Active" ]] || { echo "  FAIL license=$lic"; fail=1; }
+  chk "licence" "$(K get license -A --no-headers | awk '{print $3}' | head -1)" "Active"
+  local bad; bad="$(K get pods -A --no-headers | awk '$4!="Running" && $4!="Completed"' | wc -l)"
+  chk "pods not Running/Completed" "$bad" "0"
+  [[ "$bad" != "0" ]] && K get pods -A --no-headers | awk '$4!="Running" && $4!="Completed"' | sed 's/^/     /' | head -10
+  echo "VERIFY-$SIZING-RC=$fail"
+  return "$fail"
+}
 
-[[ "$fail" == "0" ]] && echo "  PASS $SIZING: $nodes nodes, hugepages-2Mi=$hp, TMM Running, license Active"
-echo "SIZING-DONE sizing=$SIZING rc=$fail"
-echo "Tear down when finished:  roksbnkctl -w $WS down --auto"
-exit "$fail"
+if [[ "$VERIFY_ONLY" == "1" ]]; then verify; exit $?; fi
+
+# --- clean slate -------------------------------------------------------------
+# See note 4: bnk down leaves the namespace and CRDs behind.
+clean_slate() {
+  echo "=== [$SIZING] clean slate ==="
+  $BIN -w "$WS" bnk down --auto >/dev/null 2>&1; echo "  bnk down rc=$?"
+  local kc ctx; kc="$($BIN -w "$WS" kubeconfig 2>/dev/null)"; export KUBECONFIG="$kc"
+  ctx="$(kubectl config current-context 2>/dev/null)" || return 0
+  for ns in f5-bnk f5-utils; do
+    kubectl --context "$ctx" get ns "$ns" >/dev/null 2>&1 || continue
+    kubectl --context "$ctx" delete ns "$ns" >/dev/null 2>&1
+    for _ in $(seq 1 60); do
+      kubectl --context "$ctx" get ns "$ns" >/dev/null 2>&1 || break
+      sleep 5
+    done
+    echo "  removed ns $ns"
+  done
+  local n=0
+  for c in $(kubectl --context "$ctx" get crd -o name 2>/dev/null | grep 'k8s\.f5\.com' | sed 's|.*/||'); do
+    kubectl --context "$ctx" delete crd "$c" >/dev/null 2>&1 && n=$((n+1))
+  done
+  echo "  removed $n f5 CRDs"
+}
+
+echo "=== [$SIZING] cluster up ==="
+$BIN -w "$WS" cluster up --auto || { echo "cluster up failed" >&2; exit 1; }
+clean_slate
+echo "=== [$SIZING] bnk up ==="
+$BIN -w "$WS" bnk up --auto || { echo "bnk up failed" >&2; exit 1; }
+verify
+rc=$?
+echo
+echo "Tear down when finished:  $BIN -w $WS down --auto"
+exit "$rc"

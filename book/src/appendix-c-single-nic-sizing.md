@@ -52,6 +52,58 @@ worker node's NIC — so higher-performance nodes become worth adding in a way t
 are not here. Treat this appendix as describing the single-NIC case only, and do
 not extrapolate it.
 
+## Reference deployments
+
+The figures above are F5's. This section is ours: one clean deployment per
+sizing, on ROKS, recorded so a reader can tell what has actually been run from
+what has only been reproduced from a guide.
+
+Every run below is a fresh install onto a fresh cluster, pinned to the same
+manifest F5's engineering reference cluster runs (`2.4.0-3.3175.0-0.0.202-tc`,
+pulled from `devrepo.f5.com`), with `containerPlatform: IBM` and **one
+namespace** for every component. A run counts as verified only if all of the
+following hold at once:
+
+- exactly one `f5-*` namespace exists, and no `f5-utils`
+- the `CNEManifest` version matches the reference build exactly
+- every component CR reports `Available=True` — `CNEInstance`, `F5Tmm`, `CSRC`,
+  `Cwc`, `DSSM`, `Coremond`, `Observer`, `RabbitMQ`
+- CSRC pods are Running and the `macvlan-internal`
+  NetworkAttachmentDefinition exists — CSRC creates it at runtime, so its
+  absence is the visible symptom of a wrong `containerPlatform`
+- the licence reports `Active`
+- no pod anywhere is outside `Running`/`Completed`
+
+`scripts/sizing/sizing-matrix.sh` builds and checks one sizing per invocation.
+
+| | Tiny | Small | Medium | Large |
+|---|---|---|---|---|
+| Worker nodes | 3 (1 per AZ) | 6 (2 per AZ) | 6 (2 per AZ) | 9 (3 per AZ) |
+| Flavour | `bx2.16x64` | `bx2.8x32` | `cx2.16x32` | `cx2.48x96` |
+| `deploymentSize` | `Tiny` | `Small` | `Medium` | `Medium` |
+| TMM pods | 1 | 3 | 3 | 9 |
+| Verified | **yes** | pending | pending | pending |
+
+`Tiny` is not in F5's sizing guide — it is the profile the engineering reference
+cluster itself runs, recorded here as the smallest configuration known to work
+end to end, not as a recommendation for production traffic.
+
+### Two things worth knowing before you reproduce these
+
+**Set `bnk.manifest_version` explicitly.** A workspace that leaves it unset
+installs the **2.3** line, and the first sign of it is a `CNEInstance`
+validation error several minutes into the apply complaining that
+`deploymentSize: Tiny` is unsupported — because `Tiny` does not exist on 2.3.
+The message names the size, not the version, which sends you looking in the
+wrong place entirely.
+
+**`bnk down` does not leave a clean cluster.** It returns success while leaving
+the namespace and all of BNK's CRDs installed. That is harmless when
+reinstalling the same release line, and actively misleading when changing
+manifest versions, because the previous line's CRD schema stays in force. To
+reinstall from genuinely clean state, delete the BNK namespace and the
+`*.k8s.f5.com` CRDs after `bnk down` and before the next `bnk up`.
+
 ## What this looks like for a real deployment
 
 The sizing above assumes you are building the cluster. Most deployments are not

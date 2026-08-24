@@ -46,10 +46,13 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 			t.Errorf("%s: appendix says %d nodes (%d per AZ), script's case line has %q",
 				sizing, nodes, perZone, line)
 		}
-		// The post-install assertion must expect the same total.
-		if !regexp.MustCompile(`(?m)^\s*` + sizing + `\)\s+WANT_NODES=` + itoa(nodes) + `\s*;;`).MatchString(script) {
-			t.Errorf("%s: appendix says %d worker nodes, script's WANT_NODES row disagrees",
-				sizing, nodes)
+		// The post-install node assertion is DERIVED from the per-zone count rather
+		// than restated per sizing, so what this guards is the derivation itself: if
+		// it stops being "per-zone x 3", the per-zone checks above no longer imply
+		// the appendix's totals and this test would silently mean less.
+		if !regexp.MustCompile(`WANT_NODES=\$\(\(WORKERS_PER_ZONE \* 3\)\)`).MatchString(script) {
+			t.Error("sizing-matrix.sh no longer derives WANT_NODES as WORKERS_PER_ZONE * 3; " +
+				"the per-zone assertions above stop implying the appendix's node totals")
 		}
 	}
 }
