@@ -68,8 +68,10 @@ func TestUndocumentedConfigFieldsDoNotGrow(t *testing.T) {
 		t.Skipf("chapter unreadable: %v", err)
 	}
 
-	// 19 rows carry no description today. The ratchet only ever goes DOWN.
-	const ceiling = 19
+	// ZERO rows carry no description. Every config field the reference publishes
+	// now says what it does. The ceiling is the floor: any new field without a doc
+	// comment on the struct fails the build.
+	const ceiling = 0
 
 	lines := strings.Split(string(b), "\n")
 

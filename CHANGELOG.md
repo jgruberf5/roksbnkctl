@@ -8,6 +8,25 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **Every config field in the reference now has a description** (#181). 75 of
+  215 rows shipped blank; the count is now **zero**, and the ratchet's ceiling is
+  zero — a new field without a doc comment on the struct fails the build.
+
+  They were filled in order of what a wrong answer costs, not what was quickest.
+  `bnk.manifest_version` is the single field selecting the 2.3 or 2.4 model and
+  had no description at all; `resources.cert_manager` now says why you would set
+  `create: false` and what fails if you do not;
+  `gateway.client_subnet_remote` records that getting it wrong does not fail the
+  apply — traffic simply never returns; `tf_source.ref` records that pinning a
+  branch lets two applies days apart deploy different infrastructure from
+  identical config.
+
+  Several were blank for a reason worth noting: a shared comment describing two
+  fields attaches to only one of them, orphaning the rest. `MinWorkerVCPUCount`,
+  `SubscriptionJWTLocalFile`, `FLOUtilsNamespace`, `VLANPrefixLenInternal` and
+  the jumphost sizing pair were all documented in prose that the generator could
+  not see.
+
 - **A 2.4 install was still rendering the 2.3 network surface** (#187). The
   `cloud-network-mapping` ConfigMap, both `F5SPKVlan` CRs, and the
   `CLOUD_NETWORK_CONFIGMAP` env pointing at them were gated on

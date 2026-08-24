@@ -213,8 +213,11 @@ type ExecToolCfg struct {
 // the runtime Target type in internal/remote keeps the dep direction
 // clean (remote → config, never the reverse).
 type TargetCfg struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port,omitempty"` // default 22
+	// Host is the target's address, reached over SSH.
+	Host string `yaml:"host"`
+	// Port is its SSH port. 0 → 22.
+	Port int `yaml:"port,omitempty" default:"22"`
+	// User is the SSH login.
 	User      string `yaml:"user"`
 	KeyPath   string `yaml:"key_path,omitempty"`   // file path (PEM)
 	KeySource string `yaml:"key_source,omitempty"` // "agent" | "tf-output:<name>"
@@ -435,8 +438,13 @@ type ResourcesCfg struct {
 	// testing_min_vcpu_count / testing_min_memory_gb; 0 → the terraform defaults of
 	// 4 vCPU / 8 GB). An explicit profile wins over the minimums.
 	TestingJumphostProfile string `yaml:"testing_jumphost_profile,omitempty"`
-	TestingMinVCPUCount    int    `yaml:"testing_min_vcpu_count,omitempty" default:"4"`
-	TestingMinMemoryGB     int    `yaml:"testing_min_memory_gb,omitempty" default:"8"`
+
+	// TestingMinVCPUCount is the vCPU floor for the jumphost auto-select. Ignored
+	// when TestingJumphostProfile names a profile outright.
+	TestingMinVCPUCount int `yaml:"testing_min_vcpu_count,omitempty" default:"4"`
+
+	// TestingMinMemoryGB is the memory floor for the same auto-select.
+	TestingMinMemoryGB int `yaml:"testing_min_memory_gb,omitempty" default:"8"`
 	// Security-group source CIDRs, following the flp_vsi module's split between
 	// a management plane and an in-fabric plane.
 	//
@@ -497,8 +505,13 @@ func DefaultResources() *ResourcesCfg {
 // resource (under its prefix-derived name); Create=false reuses an existing
 // one named by Existing (when a live dependent consumes it).
 type ResourceToggle struct {
-	Create   bool   `yaml:"create"`
-	Existing string `yaml:"existing,omitempty"` // existing name/ID when Create=false
+	// Create decides whether roksbnkctl provisions this resource or adopts one
+	// that already exists. false means adopt, and Existing then names it.
+	Create bool `yaml:"create"`
+	// Existing is the name or ID of the resource to adopt when Create is false.
+	// Which of the two it wants varies by resource and is documented on each —
+	// cluster_vpc takes a VPC *ID*, transit_gateway takes a name or an id.
+	Existing string `yaml:"existing,omitempty"`
 }
 
 // Default{ManifestVersion,FARAuthFile,SubscriptionJWTFile} mirror the
@@ -587,7 +600,10 @@ type BNKCfg struct {
 	// false), so no orchestration COS instance/bucket is needed. `init` sets these
 	// automatically when the COS supply-chain check fails or is declined. When empty,
 	// the phase falls back to COS (FarAuthFile / SubscriptionJWTFile).
-	FarAuthLocalFile         string `yaml:"far_auth_local_file,omitempty"`
+	FarAuthLocalFile string `yaml:"far_auth_local_file,omitempty"`
+
+	// SubscriptionJWTLocalFile is the F5 subscription JWT as a LOCAL file, the
+	// companion to FarAuthLocalFile above. Both must be set for the no-COS path.
 	SubscriptionJWTLocalFile string `yaml:"subscription_jwt_local_file,omitempty"`
 
 	// TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller
@@ -601,7 +617,11 @@ type BNKCfg struct {
 	// Operator and its utility components install into (rendered as flo_namespace /
 	// flo_utils_namespace). Empty → the terraform defaults (f5-bnk / f5-utils). Set
 	// these for multi-tenant clusters or to avoid namespace collisions.
-	FLONamespace      string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
+	FLONamespace string `yaml:"flo_namespace,omitempty" default:"f5-bnk"`
+
+	// FLOUtilsNamespace is where FLO's shared utility components install —
+	// coremond, the observer, the licence. Separate from FLONamespace because the
+	// two have different lifetimes: the utils namespace outlives a BNK reinstall.
 	FLOUtilsNamespace string `yaml:"flo_utils_namespace,omitempty" default:"f5-utils"`
 
 	// GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS
@@ -718,6 +738,9 @@ type BNKCfg struct {
 	// fast with a diagnosis naming this setting.
 	Hugepages *HugepagesCfg `yaml:"hugepages,omitempty"`
 
+	// TCPSettings overrides individual fields on the data-plane F5BigTcpSetting
+	// CR by name, e.g. {"idleTimeout": "300"}. Empty leaves F5's defaults. A map
+	// rather than typed fields so a setting F5 adds needs no code change here.
 	TCPSettings map[string]string `yaml:"tcp_settings,omitempty"`
 
 	// TCPSettingsName is the F5BigTcpSetting to write. F5's reference cluster
@@ -955,7 +978,11 @@ type BNKFLPVSICfg struct {
 	// /etc/containers/certs.d/<host>/ca.crt before the pod comes up. Both empty → the
 	// image host is assumed publicly trusted (or StatusImage is unset). Only needed for
 	// a private/self-signed mirror such as the disconnected-deploy Harbor.
-	StatusRegistryHost  string `yaml:"status_registry_host,omitempty"`
+	StatusRegistryHost string `yaml:"status_registry_host,omitempty"`
+
+	// StatusRegistryCAB64 is that registry's CA, base64-encoded, written to
+	// /etc/containers/certs.d/<host>/ca.crt on the VSI. Needed only when the
+	// mirror serves a private or self-signed certificate.
 	StatusRegistryCAB64 string `yaml:"status_registry_ca_b64,omitempty"`
 	// ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP
 	// forward proxy (air-gapped/egress-controlled networks). nil → direct egress.
@@ -965,7 +992,9 @@ type BNKFLPVSICfg struct {
 // BNKFLPForwardProxyCfg describes an egress forward proxy for the FLP VSI's calls to
 // F5's licensing backend (product-s.apis.f5.com).
 type BNKFLPForwardProxyCfg struct {
-	Host     string `yaml:"host,omitempty"`
+	// Host is the forward proxy's address.
+	Host string `yaml:"host,omitempty"`
+	// Port is the forward proxy's port.
 	Port     int    `yaml:"port,omitempty"`
 	Protocol string `yaml:"protocol,omitempty"` // http (default) | https
 }
@@ -1055,6 +1084,9 @@ type BNKNetworkCfg struct {
 	// directly-connected block can be forced and the remainder steered with static
 	// routes.
 	VLANPrefixLenExternal *int `yaml:"vlan_prefixlen_external,omitempty"`
+
+	// VLANPrefixLenInternal is the same override for the INTERNAL VLAN. nil → it
+	// uses VLANPrefixLen.
 	VLANPrefixLenInternal *int `yaml:"vlan_prefixlen_internal,omitempty"`
 	// TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
@@ -1075,8 +1107,10 @@ type BNKNetworkCfg struct {
 // needs no shared volume, with native lockfile locking (terraform >= 1.10).
 // Additive + omitempty — an absent `state:` block loads as the local default.
 type StateCfg struct {
-	Backend string      `yaml:"backend,omitempty"` // "" | "local" | "s3"
-	S3      *StateS3Cfg `yaml:"s3,omitempty"`
+	Backend string `yaml:"backend,omitempty"` // "" | "local" | "s3"
+	// S3 configures an S3-compatible backend (IBM COS) for terraform state, so a
+	// workspace is not tied to one machine's disk. nil keeps state local.
+	S3 *StateS3Cfg `yaml:"s3,omitempty"`
 }
 
 // StateS3Cfg configures the COS/S3 remote backend. The HMAC access/secret
@@ -1309,8 +1343,14 @@ type TestCfg struct {
 //	      gslb-vip:   "169.45.91.5:53"
 //	    default_target: "www.example.com"
 type DNSCfg struct {
-	Resolvers     map[string]string `yaml:"resolvers,omitempty"`
-	DefaultTarget string            `yaml:"default_target,omitempty"`
+	// Resolvers names the DNS servers to query, as name → "<ip>[:<port>]". A
+	// disconnected cluster resolves through its own forwarders, so asking a public
+	// resolver would test the wrong thing.
+	Resolvers map[string]string `yaml:"resolvers,omitempty"`
+
+	// DefaultTarget is the resolver queried when a probe names none. Empty uses
+	// the first entry in Resolvers.
+	DefaultTarget string `yaml:"default_target,omitempty"`
 }
 
 type ThroughputCfg struct {
@@ -1321,6 +1361,9 @@ type ThroughputCfg struct {
 }
 
 type ConnectivityCfg struct {
+	// ExtraHosts are additional targets the connectivity probe tries, beyond the
+	// defaults. Give a disconnected estate something it can actually reach — a
+	// probe against a public host reports a failure that says nothing about it.
 	ExtraHosts []string `yaml:"extra_hosts,omitempty"`
 }
 
@@ -1382,8 +1425,11 @@ type COSCfg struct {
 }
 
 type COSUpload struct {
+	// Source is the local file to upload.
 	Source string `yaml:"source"`
-	Key    string `yaml:"key"`
+	// Key is the object name it is stored under in the bucket. This is the name
+	// the other settings refer to — bnk.far_auth_file names a Key, not a Source.
+	Key string `yaml:"key"`
 }
 
 // ErrWorkspaceNotFound is returned by LoadWorkspace when the workspace's
@@ -1555,5 +1601,7 @@ func rejectPlaintextSecrets(b []byte) error {
 // surfaced today; the CR's advanced block carries more, and this is the shape
 // that lets those arrive without moving what already works.
 type AdvancedComponentCfg struct {
+	// Env sets environment variables on that component's containers, name → value.
+	// Merged over what roksbnkctl renders, so a key here wins.
 	Env map[string]string `yaml:"env,omitempty"`
 }
