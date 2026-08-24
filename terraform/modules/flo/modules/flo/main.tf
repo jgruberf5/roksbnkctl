@@ -157,32 +157,34 @@ locals {
     # reconciling F5Tmm then asks for a persistent volume, and TMM's replicas are
     # pinned to separate nodes across separate zones by the placement F5's own
     # reference prescribes; one ReadWriteOnce zonal volume cannot serve them.
-    # ROKS IS OpenShift — this tool builds and adopts nothing else
-    # (kube_version = local.openshift_version, tags ["terraform","openshift"]).
-    # So OCP is not a choice, it is the only truthful value, and F5's chart says
-    # these platforms "may have specific installation logic in the component
-    # controllers".
+    # containerPlatform is a HARDCODED REQUIREMENT for every roksbnkctl BNK
+    # deployment. It is deliberately not a variable, not a tfvars field and not
+    # an env override: there is one literal here, and local.flo_helm_values is
+    # the only thing fed to the release (values = [yamlencode(...)], no set
+    # blocks, no user passthrough). TestContainerPlatformIsHardcodedIBM enforces
+    # all of that.
     #
-    # Under "Generic" the CNE controller looks for the kubeadm-config ConfigMap
-    # that only kubeadm-built clusters have, aborts at Reconciled=False, and never
-    # creates TMM's internal macvlan NAD (#189) — while every other signal reports
-    # healthy. The 3/3 TMM pods that made installs look fine were a side effect of
-    # that failure: the controller never got far enough to ask for TMM's volume.
-    # IBM, not OCP, and not the chart's Generic default.
+    # IBM is the value. F5's chart documents only "Generic, OCP, Robin, AON",
+    # but its own values.schema.json accepts "AWS" and "IBM", and engineering's
+    # approved reference cluster (staging-small-8c-20g) runs IBM — verified by
+    # reading its live F5Tmm.
     #
-    # F5's chart documents "Generic, OCP, Robin, AON" — but its own
-    # values.schema.json accepts "AWS" and "IBM" too, and engineering's approved
-    # reference cluster (staging-small-8c-20g) runs IBM. Verified by reading its
-    # live F5Tmm: containerPlatform: IBM.
+    # The other candidates are not merely suboptimal, they are broken:
     #
-    # The difference is not cosmetic. Under OCP the lifecycle operator creates 16
-    # component CRs and SILENTLY SKIPS CSRC — no CSRC CR, no f5-spk-csrc pods, and
-    # therefore no macvlan-internal NetworkAttachmentDefinition, which CSRC creates
-    # at runtime. Nothing is logged. Under IBM, CSRC is created (6-pod DaemonSet)
-    # and macvlan-internal appears.
+    #   OCP     — the lifecycle operator creates 16 component CRs and SILENTLY
+    #             SKIPS CSRC. No CSRC CR, no f5-spk-csrc pods, and therefore no
+    #             macvlan-internal NetworkAttachmentDefinition, which CSRC
+    #             creates at runtime. Nothing is logged. Under IBM, CSRC is
+    #             created (6-pod DaemonSet) and macvlan-internal appears.
+    #             ROKS being OpenShift is what made OCP look right; but this
+    #             field selects F5's platform integration, not the cluster's
+    #             distribution.
     #
-    # Under Generic the controller looks for the kubeadm-config ConfigMap that only
-    # kubeadm-built clusters have and aborts at Reconciled=False (#189).
+    #   Generic — the CNE controller looks for the kubeadm-config ConfigMap that
+    #             only kubeadm-built clusters have, aborts at Reconciled=False,
+    #             and never creates TMM's internal macvlan NAD (#189), while
+    #             every other signal reports healthy.
+    #
     containerPlatform        = "IBM"
     sharedComponentNamespace = var.utils_namespace
 
