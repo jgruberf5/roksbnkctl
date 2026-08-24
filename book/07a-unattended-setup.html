@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
+            window.path_to_searchindex_js = "searchindex-f6934f8b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a118ce28.js"></script>
+        <script src="toc-4242b368.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -335,6 +335,9 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_TGW_JUMPHOST_CREATE</code></td><td><code>resources.tgw_jumphost.create</code></td><td>bool — the optional testing jumphost. Defaults <strong>off</strong>, as the interview does.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLIENT_VPC_CREATE</code></td><td><code>resources.client_vpc.create</code></td><td>bool — the testing client VPC. Defaults <strong>off</strong>; it consumes a Transit Gateway connection.</td></tr>
 <tr><td><code>ROKSBNKCTL_CLIENT_VPC_NAME</code></td><td><code>resources.client_vpc.existing</code></td><td>Adopt an existing client VPC instead of creating one — the env equivalent of the interview’s <em>“Existing client VPC name”</em>. Required if you enable the jumphost without creating a VPC.</td></tr>
+<tr><td><code>ROKSBNKCTL_CERT_MANAGER_CREATE</code></td><td><code>resources.cert_manager.create</code></td><td>bool — set <strong><code>false</code></strong> to adopt the cert-manager the cluster already runs instead of installing one. An adopted customer cluster very often has one; without this, <code>bnk up</code> fails with <code>namespaces "cert-manager" already exists</code>, which names the collision but not the setting that resolves it.</td></tr>
+<tr><td><code>ROKSBNKCTL_REGISTRY_COS_CREATE</code></td><td><code>resources.registry_cos.create</code></td><td>bool — set <code>false</code> when the mirror registry’s object storage already exists (or the registry is external, such as Artifactory or Harbor, and needs none).</td></tr>
+<tr><td><code>ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE</code></td><td><code>resources.cluster_jumphosts.create</code></td><td>bool — the per-cluster jumphosts. Defaults <strong>off</strong>.</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_URL</code></td><td><code>bnk.cis.bigip_url</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_USERNAME</code></td><td><code>bnk.cis.bigip_username</code></td><td>verbatim</td></tr>
 <tr><td><code>ROKSBNKCTL_BIGIP_PASSWORD</code></td><td><code>bnk.cis.bigip_password_b64</code></td><td>raw, base64-encoded</td></tr>

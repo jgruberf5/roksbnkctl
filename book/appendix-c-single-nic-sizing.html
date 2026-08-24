@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Sharing a Transit Gateway across clusters - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
+        <title>C — Single-NIC sizing - Deploying and Testing BIG-IP Next for Kubernetes with roksbnkctl</title>
 
 
         <!-- Custom HTML head -->
@@ -177,149 +177,89 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="sharing-a-transit-gateway-across-clusters"><a class="header" href="#sharing-a-transit-gateway-across-clusters">Sharing a Transit Gateway across clusters</a></h1>
-<p>A Transit Gateway (TGW) routes between VPCs. By default <code>roksbnkctl cluster up</code>
-creates a prefix-named gateway for the cluster it builds. But you often want the
-opposite: <strong>one gateway that several clusters share</strong>, so they can reach each
-other — the shape behind a <a href="./10c-flp-licensing.html#flow-c--a-shared-licensing-cluster">shared licensing cluster</a>,
-a central services VPC, or cross-cluster testing.</p>
-<p>roksbnkctl attaches a cluster’s VPC to an <strong>existing</strong> Transit Gateway — by name
-or by id, at create time or after — as its own small phase. Each workspace owns
-its own connection, so N clusters can point at the one gateway.</p>
-<h2 id="first-give-each-cluster-vpc-its-own-address-block"><a class="header" href="#first-give-each-cluster-vpc-its-own-address-block">First: give each cluster VPC its own address block</a></h2>
-<p>Decide this <strong>before</strong> <code>cluster up</code>, because it cannot be changed afterwards.</p>
-<p>A Transit Gateway routes on VPC <strong>address prefixes</strong>. Two attached VPCs claiming
-the same block make routing ambiguous, and the gateway resolves that by silently
-dropping traffic for one of them. Nothing logs an error. What you see instead is
-<em>intermittent</em> image-pull timeouts against a mirror while every security group and
-network ACL in the path plainly allows the traffic — which is why this is worth a
-minute up front.</p>
-<p>It is easy to hit by accident. IBM’s default address prefix management is <code>auto</code>,
-which assigns <strong>every</strong> VPC in a region the same three per-zone prefixes:</p>
-<pre><code>10.241.0.0/18   10.241.64.0/18   10.241.128.0/18
-</code></pre>
-<p>So a second roksbnkctl-created cluster joining a shared gateway collides by
-construction, not by bad luck. Give each one a distinct block:</p>
-<pre><code class="language-yaml">cluster:
-  create: true
-  name: acme-eu-roks
-  vpc_cidr: 10.242.0.0/16     # this cluster's own block
-</code></pre>
-<p>or <code>ROKSBNKCTL_CLUSTER_VPC_CIDR=10.242.0.0/16</code> for CI. The block is split into
-three per-zone prefixes (a <code>/16</code> becomes three <code>/18</code>s), so <strong><code>/18</code> is the smallest
-usable value</strong>. Leaving it blank keeps IBM’s auto assignment, and the default
-<code>10.241.0.0/16</code> produces byte-identical prefixes to what <code>auto</code> gives today — so
-setting it explicitly on a <em>first</em> cluster changes no addresses.</p>
-<p>A worked allocation for a shared gateway:</p>
+                        <h1 id="c--single-nic-sizing"><a class="header" href="#c--single-nic-sizing">C — Single-NIC sizing</a></h1>
+<p>Sizing figures here come from F5’s <em>BIG-IP Next for Kubernetes 2.3.1 on Red Hat
+OpenShift on IBM Cloud — Single-NIC Sizing Guide</em>, which derives them from
+reference testing of BNK 2.3.1/2.3.2 on ROKS. They are reproduced rather than
+computed: <code>roksbnkctl</code> does not model throughput, and nothing here is our
+measurement.</p>
+<h2 id="only-small-and-medium-are-ever-needed"><a class="header" href="#only-small-and-medium-are-ever-needed">Only Small and Medium are ever needed</a></h2>
+<p>The CNEInstance’s <code>deploymentSize</code> accepts <code>Tiny</code>, <code>Small</code>, <code>Medium</code>, <code>Large</code> and
+<code>Max</code>. <strong>The reference designs use only <code>Small</code> and <code>Medium</code>.</strong> That is the single
+most useful thing to know about sizing, and it is easy to miss, because F5’s
+guide names three <em>cluster</em> sizes — Small, Medium and Large — and those names do
+not mean the same thing as <code>deploymentSize</code>.</p>
+<p>The Large <strong>cluster</strong> runs the <strong>Medium</strong> BNK profile. It reaches ~31 Gbit/s not
+by asking BNK for a bigger profile, but by putting nine TMM pods on nine larger
+nodes, three per availability zone. Capacity comes from pod count and node size,
+not from a larger <code>deploymentSize</code>. So if you find yourself reaching for
+<code>deploymentSize: Large</code>, the guide’s answer is almost certainly more nodes
+instead.</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>VPC</th><th><code>vpc_cidr</code></th><th>Per-zone prefixes</th></tr>
+<tr><th></th><th>Small</th><th>Medium</th><th>Large</th></tr>
 </thead>
 <tbody>
-<tr><td>services (Harbor, FLP)</td><td><em>existing, <code>10.243.0.0/24</code></em></td><td>—</td></tr>
-<tr><td>first cluster</td><td><code>10.241.0.0/16</code></td><td><code>10.241.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
-<tr><td>second cluster</td><td><code>10.242.0.0/16</code></td><td><code>10.242.0.0/18</code>, <code>.64.0/18</code>, <code>.128.0/18</code></td></tr>
+<tr><td>Worker nodes</td><td>6 (2 per AZ)</td><td>6 (2 per AZ)</td><td>9 (3 per AZ)</td></tr>
+<tr><td>Reference-tested flavour</td><td><code>cx3d.8x20</code></td><td><code>cx2.16x32</code></td><td><code>cx2.48x96</code></td></tr>
+<tr><td><strong>Recommended flavour</strong></td><td><strong><code>bx2.8x32</code></strong></td><td><code>cx2.16x32</code></td><td><code>cx2.48x96</code></td></tr>
+<tr><td><code>deploymentSize</code></td><td><code>Small</code></td><td><code>Medium</code></td><td><strong><code>Medium</code></strong></td></tr>
+<tr><td>TMM pods</td><td>3 (1 per AZ)</td><td>3 (1 per AZ)</td><td>9 (3 per AZ)</td></tr>
+<tr><td>CPU free for applications</td><td>38.8 %</td><td>60 %</td><td>82.9 %</td></tr>
+<tr><td>L4 ingress per AZ</td><td>~2.6 Gbit/s</td><td>~3.5 Gbit/s</td><td>~10.4 Gbit/s</td></tr>
+<tr><td>L4 ingress, cluster</td><td>~7.8 Gbit/s</td><td>~10.4 Gbit/s</td><td>~31 Gbit/s</td></tr>
 </tbody>
 </table>
 </div>
-<p>roksbnkctl checks this for you. <code>cluster up</code> refuses <strong>before</strong> terraform creates
-anything when the VPC it is about to build would overlap a VPC already on the
-gateway, and <code>tgw connect</code> refuses before attaching an existing VPC that would
-overlap — each naming the other VPC and the colliding prefixes. If the check
-cannot reach the API it warns and continues rather than blocking the build.</p>
-<p><strong>Already built two overlapping clusters?</strong> The prefixes of a live VPC can’t be
-edited — moving a subnet’s CIDR replaces the subnet, which destroys the cluster on
-it. Either keep only one of them attached at a time (<code>tgw disconnect</code> on the
-other; the cluster itself survives), or rebuild one with <code>vpc_cidr</code> set.</p>
-<h2 id="attach-when-creating-the-interview"><a class="header" href="#attach-when-creating-the-interview">Attach when creating (the interview)</a></h2>
-<p>Decline to create a gateway, and <code>init</code> <strong>discovers the transit gateways already
-in your account</strong> and lets you pick one by number — name, location, and status —
-so you don’t have to remember a name or id (since <code>v1.25.0</code>):</p>
-<pre><code class="language-console">$ roksbnkctl -w prod init
-...
-Create Transit Gateway? [Y/n] n
-→ Discovering existing transit gateways...
-  Existing transit gateways in this account:
-     1) shared-tgw            (us-south, available)
-     2) prod-tgw-eu           (eu-de, available)
-Attach an existing Transit Gateway — pick a number (0 = none / attach later): 1
-</code></pre>
-<p>Picking <code>0</code> (or if the account has none) leaves the cluster unattached, to connect
-later with <code>tgw connect</code>; if the discovery call fails it falls back to a free-text
-name/ID prompt.</p>
-<p><code>cluster up</code> (or <code>cluster register</code>) then attaches the cluster’s VPC to
-<code>shared-tgw</code> automatically — no extra step. In config that is:</p>
-<pre><code class="language-yaml">resources:
-  transit_gateway:
-    create: false
-    existing: shared-tgw      # a NAME or an ID — either is resolved
-</code></pre>
-<p>or, for CI, the environment variable <code>ROKSBNKCTL_TRANSIT_GATEWAY_NAME=shared-tgw</code>
-(it too accepts a name or an id).</p>
-<h2 id="attach-or-detach-after-the-fact"><a class="header" href="#attach-or-detach-after-the-fact">Attach (or detach) after the fact</a></h2>
-<p><code>tgw connect</code> works on a cluster that already exists — one roksbnkctl built, <strong>or
-one you registered</strong> — because it reads the cluster’s VPC from
-<code>cluster-outputs.json</code>, not from any terraform state:</p>
-<pre><code class="language-bash">roksbnkctl -w prod tgw connect shared-tgw       # by name
-roksbnkctl -w prod tgw connect 2f28a749-fcc0-…  # or by id
-</code></pre>
-<p>Run it in several workspaces with the same gateway and each cluster gets its own
-connection to it:</p>
-<pre><code class="language-bash">roksbnkctl -w app-a tgw connect shared-tgw
-roksbnkctl -w app-b tgw connect shared-tgw      # same gateway, second cluster
-</code></pre>
-<p>Detach removes <strong>only this cluster’s</strong> connection — the gateway and every other
-cluster’s connection stay:</p>
-<pre><code class="language-bash">roksbnkctl -w prod tgw disconnect
-</code></pre>
-<h2 id="status--the-connected-state-id-and-name"><a class="header" href="#status--the-connected-state-id-and-name">Status — the connected state, id, and name</a></h2>
-<p><code>tgw status</code> shows the gateway identity and the <strong>live</strong> connection state, queried
-from IBM (not just what was recorded at apply time):</p>
-<pre><code class="language-console">$ roksbnkctl -w prod tgw status
-transit_gateway_id:    2f28a749-fcc0-43d7-97dd-403a6b00b56f
-transit_gateway_name:  shared-tgw
-connection_name:       prod
-connection_id:         a1b2c3d4-…
-cluster_vpc:           r010-072ad88a-…
-connection_state:      attached
-</code></pre>
-<p><code>connection_state</code> is the live attachment: <code>attached</code>, <code>pending</code>, or <code>detached</code>
-(no connection for this VPC on the gateway). <code>roksbnkctl -w prod cluster config</code>
-shows the same block alongside the rest of the cluster identity.</p>
-<h2 id="how-it-works-and-what-to-know"><a class="header" href="#how-it-works-and-what-to-know">How it works, and what to know</a></h2>
-<ul>
-<li><strong>It’s its own phase</strong> (<code>state-tgw/</code>), separate from cluster / BNK / testing /
-gateway / FLP. So <code>tgw connect</code>/<code>disconnect</code> never touch anything else, and the
-connection survives a <code>bnk down</code> or a re-applied trial.</li>
-<li><strong>Name or id</strong> is resolved against your account’s gateway list, so an ambiguous
-name (two gateways sharing it) is an error, not an arbitrary pick — pass the id.</li>
-<li><strong>One VPC, one connection per gateway.</strong> Clusters that share a <em>VPC</em> (rare) can’t
-each hold a separate connection to the same gateway; clusters in <em>distinct</em> VPCs
-each get their own, which is the normal shared-gateway case.</li>
-<li><strong>A global gateway</strong> connects VPCs in any region; a local one only its own
-region. <code>tgw connect</code> attaches to whatever gateway you name — make sure it can
-reach the region your cluster VPC is in.</li>
-<li><strong><code>cluster down</code> refuses</strong> while a connection exists, so the cluster isn’t
-destroyed out from under its own TGW attachment — run <code>tgw disconnect</code> first.
-<strong><code>roksbnkctl down</code> (the composite) auto-detaches for you</strong> (since <code>v1.26.0</code>):
-it removes this cluster’s connection <em>after</em> the BNK/Testing teardown and
-<em>before</em> the cluster, because the connection pins the VPC’s CRN and the VPC
-delete would otherwise fail (<code>VPC still has an attached transit gateway connection</code>). Only <em>this</em> cluster’s connection is removed — the shared gateway
-and every other cluster’s connection stay.</li>
-</ul>
+<p>Two footnotes on the flavours. For Small, the guide recommends <code>bx2.8x32</code> over
+the reference-tested <code>cx3d.8x20</code>: the tested flavour works but leaves only ~24
+GiB cluster-wide for applications, and the balanced variant buys four times that
+for a modest price step.</p>
+<p>At the other end, the guide reports <code>cx2.8x16</code> as leaving <strong>0.1 % memory free</strong>
+and not holding the platform. <code>roksbnkctl</code> does <strong>not</strong> refuse it — you can set
+it, and the tool will build it. It is recorded here so the number is visible
+before you choose, not to make the decision for you. A per-node DaemonSet floor
+of ~2.9 vCPU (OpenShift/Calico, IBM observability, BNK node agents) consumes 36 %
+of an 8-vCPU node before anything of yours is scheduled, which is what makes the
+16 GiB variant tight and why the small flavours generally trade application CPU
+for cost.</p>
+<p>All of this is <strong>single-NIC</strong>. Multi-NIC is expected to change the picture,
+because per-pod throughput is bounded by TMM thread count rather than by the
+worker node’s NIC — so higher-performance nodes become worth adding in a way they
+are not here. Treat this appendix as describing the single-NIC case only, and do
+not extrapolate it.</p>
+<h2 id="what-this-looks-like-for-a-real-deployment"><a class="header" href="#what-this-looks-like-for-a-real-deployment">What this looks like for a real deployment</a></h2>
+<p>The sizing above assumes you are building the cluster. Most deployments are not
+like that. The common shape is that a platform team <strong>already has</strong> the VPC, the
+transit gateway and the ROKS cluster, built to their own standards, and wants
+<code>roksbnkctl</code> to install BNK onto it — <code>cluster register</code> rather than <code>cluster up</code>.</p>
+<p>In that case the table is a specification to check your existing cluster
+<em>against</em>, not a thing to provision. Worth confirming before installing: node
+count and distribution across three AZs, the flavour’s memory variant against the
+“free for applications” column, and that the cluster is not on <code>cx2.8x16</code>.</p>
+<p>Those clusters are also usually <strong>disconnected</strong>: no route to <code>repo.f5.com</code>, so
+BNK images come from a mirrored registry and licensing goes through an FLP rather
+than direct to F5. That combination — adopted cluster, adopted transit gateway,
+mirrored registry, FLP licensing — is the path most installations will actually
+take, and it is the one worth exercising hardest.</p>
+<blockquote>
+<p><strong>Coverage note.</strong> The five-run validation behind the 2.4 support claim used a
+cluster this tool <em>created</em>, with connected licensing. The adopted-cluster,
+disconnected, mirrored-registry, FLP path is supported and has its own demos,
+but it has not had the same repeated-run treatment. Read the 2.4 support status
+with that distinction in mind rather than assuming it covers the shape you are
+most likely to deploy.</p>
+</blockquote>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="09-registering-existing-cluster.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="appendix-b-artifactory-mirror.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="10-deploying-bnk-trials.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -327,13 +267,10 @@ and every other cluster’s connection stay.</li>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="09-registering-existing-cluster.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="appendix-b-artifactory-mirror.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="10-deploying-bnk-trials.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
-                    </a>
             </nav>
 
         </div>

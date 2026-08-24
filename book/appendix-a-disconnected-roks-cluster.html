@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
+            window.path_to_searchindex_js = "searchindex-f6934f8b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a118ce28.js"></script>
+        <script src="toc-4242b368.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -778,6 +778,14 @@ $ roksbnkctl -w bnkdisco bnk up --auto
 $ roksbnkctl -w bnkdisco bnk status
 </code></pre>
 <blockquote>
+<p><strong>An adopted cluster usually already runs cert-manager.</strong> OpenShift estates commonly install it
+as a day-1 add-on, and <code>bnk up</code> then stops with <code>namespaces "cert-manager" already exists</code>. That
+message names the collision but not the fix: set <code>resources.cert_manager: { create: false }</code> to
+adopt the one that is there. From CI, where there is no <code>config.yaml</code> to edit, the same thing is
+<code>-e ROKSBNKCTL_CERT_MANAGER_CREATE=false</code>. Check with
+<code>kubectl get ns cert-manager</code> before the first <code>bnk up</code> rather than after it.</p>
+</blockquote>
+<blockquote>
 <p><strong>Check the addressing before attaching.</strong> The existing cluster’s VPC must be on the same global
 gateway as Harbor <strong>and its address prefixes must not overlap</strong> the services VPC, or the gateway
 blackholes one of them. <code>tgw connect</code> refuses a detectable overlap and names the conflicting
@@ -840,6 +848,13 @@ container module or an argv-only runner: no shell, no prompts, nowhere to stage 
 </tbody>
 </table>
 </div>
+<p>Adoption is environment-only too. A cluster the customer already built usually already has some
+of what <code>bnk up</code> would otherwise create, and each of those is a <code>create</code> toggle:
+<code>ROKSBNKCTL_CERT_MANAGER_CREATE=false</code> (the common one — see
+<a href="#1d-existing-disconnected-cluster-cli">1D</a>), <code>ROKSBNKCTL_REGISTRY_COS_CREATE=false</code> when the
+mirror is external, and <code>ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE</code>. Without these the CI path could
+express “adopt this cluster” but not “adopt what is <em>on</em> it”, and topologies C and D would stop on
+a collision no environment variable could clear.</p>
 <p>Settings that <em>define</em> a topology — <code>ROKSBNKCTL_CLUSTER_CREATE</code>,
 <code>ROKSBNKCTL_CLUSTER_PUBLIC_GATEWAY</code>, <code>ROKSBNKCTL_LICENSE_MODE</code> — are pinned in the workflow YAML
 next to the steps they govern, not in the ConfigMap. That is why the connected and disconnected
@@ -1059,6 +1074,7 @@ appendix:</p>
 <tbody>
 <tr><td><a href="https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/disconnected-cluster-cli-demo"><code>disconnected-cluster-cli-demo</code></a></td><td>Part 0 + topology D from the CLI</td></tr>
 <tr><td><a href="https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/disconnected-cluster-ci-demo"><code>disconnected-cluster-ci-demo</code></a></td><td>the same as a two-Workflow pipeline, plus the k3s + Argo VSI build</td></tr>
+<tr><td><a href="https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/artifactory-adopt-ci-demo"><code>artifactory-adopt-ci-demo</code></a></td><td>topology <strong>D</strong> with nothing created at all — an existing gateway, VPC and cluster, images from a JFrog Artifactory the customer already runs, and <strong>cert-manager adopted</strong>. No <code>config.yaml</code> exists: the workspace is built entirely from <code>docker run -e</code>. This is the shape most customers arrive in.</td></tr>
 <tr><td><a href="https://github.com/jgruberf5/roksbnkctl/tree/main/scripts/demos/blueprint-workflows-ci-demo"><code>blueprint-workflows-ci-demo</code></a></td><td><strong>all four topologies</strong> as Argo Workflows, plus the mirror and FLP prerequisites</td></tr>
 </tbody>
 </table>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
+            window.path_to_searchindex_js = "searchindex-f6934f8b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a118ce28.js"></script>
+        <script src="toc-4242b368.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -300,7 +300,139 @@ quickly, so it is a race. Opt in:</p>
 does not need the newer bundle is a change nobody asked for. Ignored on 2.3,
 where that sweep always runs — there the <code>crd-installer</code> <em>does</em> force its own
 CRDs and is blocked without it.</p>
+<h2 id="conforming-to-f5s-reference-cneinstance"><a class="header" href="#conforming-to-f5s-reference-cneinstance">Conforming to F5’s reference CNEInstance</a></h2>
+<p>The 2.4 spec this tool renders is checked against F5’s own reference install —
+the live capture in <code>/mnt/d/roksbnkctl-gap-2-3-to-2-4</code>. Every default below is
+F5’s value, not an invented one.</p>
+<h3 id="pod-placement-replaced-the-node-labeller"><a class="header" href="#pod-placement-replaced-the-node-labeller">Pod placement replaced the node labeller</a></h3>
+<p>2.4 removed the node-labeler job, and <code>spec.placement</code> is the mechanism that
+took over. For a while this tool had <strong>neither</strong>: the labeller was gone and
+placement was never emitted, so TMM landing one-per-node and spread across zones
+was left to the scheduler’s discretion rather than required.</p>
+<pre><code class="language-yaml">bnk:
+  tmm_anti_affinity: true                                  # one TMM per node
+  tmm_anti_affinity_topology_key: kubernetes.io/hostname   # the ROKS node label
+  tmm_zone_spread: true                                    # spread across zones
+  tmm_zone_topology_key: topology.kubernetes.io/zone       # the ROKS zone label
+  tmm_zone_max_skew: 1
+  tmm_zone_when_unsatisfiable: DoNotSchedule
+  tmm_pod_label: f5-tmm
+</code></pre>
+<p>The topology keys are IBM ROKS node labels, and they are settings rather than
+constants on purpose: hard-coding them is the assumption the node-labeller baked
+in, and a cluster that labels its topology differently should still be
+configurable.</p>
+<p>Turn both toggles off and no <code>placement</code> key is emitted at all — an operator who
+does not want the constraint gets no empty object for the CR to interpret.</p>
+<h3 id="the-rest-of-the-conformance-set"><a class="header" href="#the-rest-of-the-conformance-set">The rest of the conformance set</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>setting</th><th>default</th><th>what it is</th></tr>
+</thead>
+<tbody>
+<tr><td><code>tmm_replicas</code></td><td><code>3</code></td><td>data-plane replica count</td></tr>
+<tr><td><code>watch_namespaces</code></td><td><code>["All"]</code></td><td>namespaces the controller watches</td></tr>
+<tr><td><code>tmm_rolling_update</code></td><td><code>true</code></td><td>pins maxSurge 0 / maxUnavailable 1</td></tr>
+<tr><td><code>external_bigip</code></td><td><code>false</code></td><td>external BIG-IP controller</td></tr>
+<tr><td><code>external_bigip_login_secret</code></td><td><code>f5-bigip-ctlr-login</code></td><td>its credentials secret</td></tr>
+<tr><td><code>cluster_identifier</code></td><td>derived</td><td>passed to that controller</td></tr>
+<tr><td><code>gateway_api_version</code></td><td><code>1.5.0</code></td><td><code>GATEWAY_API_VERSION</code> on the controller</td></tr>
+<tr><td><code>demo_mode</code></td><td><code>false</code> on 2.4</td><td><code>advanced.demoMode.enabled</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Three of these are worth a sentence each.</p>
+<p><strong><code>tmm_rolling_update</code></strong> is the same shape as the cwc Multi-Attach deadlock: an
+unconstrained rolling update on a workload holding a single-attach resource can
+wedge, with the old pod holding the volume the new one is waiting for.</p>
+<p><strong><code>gateway_api_version</code></strong> was previously set nowhere, so the controller ran on
+whatever the operator defaulted to — <code>v1.4.1</code> on the verified cluster, against
+F5’s <code>1.5.0</code>. The 2.4 EA guide requires the 1.5 bundle for mTLS. Note that
+<code>roksbnkctl</code> still does not <em>install</em> the bundle; see the mTLS caveat above.</p>
+<p><strong><code>demo_mode</code></strong> was being set <code>true</code> on every install, on both lines. On 2.4 it
+now defaults to <code>false</code>, matching the reference. On 2.3 it stays <code>true</code> — that is
+what has shipped and been exercised there, and changing a working line’s
+behaviour without a run to back it would be a guess. Set it explicitly to pin it
+on either line.</p>
+<p>Every one of these is a <code>config.yaml</code> field, a <code>ROKSBNKCTL_*</code> override, and a row
+in <a href="./28-configuration-reference.html">Chapter 28</a> with its line and default.</p>
+<h2 id="hugepages-and-why-the-defaults-are-what-they-are"><a class="header" href="#hugepages-and-why-the-defaults-are-what-they-are">Hugepages, and why the defaults are what they are</a></h2>
+<p>The defaults aim at <strong>a working cluster with no overrides at all</strong>. On 2.4 that
+means <code>deploymentSize: Tiny</code>, the <code>cx3d.8x20</code> worker flavour F5’s reference
+cluster uses, OCP 4.21, and <strong>no hugepages</strong>.</p>
+<p>That last one is the interesting default. BNK’s <code>deploymentSize</code> decides how much
+TMM asks for:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>deploymentSize</th><th>hugepages-2Mi requested</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Tiny</code></td><td>none</td></tr>
+<tr><td><code>Small</code></td><td>4Gi</td></tr>
+<tr><td><code>Medium</code> / <code>Large</code> / <code>Max</code></td><td>not yet measured</td></tr>
+</tbody>
+</table>
+</div>
+<p>A stock ROKS worker reports <strong>zero</strong> — including F5’s approved reference cluster,
+which runs <code>Tiny</code> for exactly this reason. So any size above <code>Tiny</code> needs
+hugepages allocated first, or TMM never schedules.</p>
+<h3 id="if-you-want-a-larger-size"><a class="header" href="#if-you-want-a-larger-size">If you want a larger size</a></h3>
+<pre><code class="language-yaml">bnk:
+  cneinstance_size: Small
+  hugepages:
+    enabled: true
+    count: 2048        # × 2M = 4Gi per node
+</code></pre>
+<pre><code class="language-bash">ROKSBNKCTL_HUGEPAGES=true
+ROKSBNKCTL_HUGEPAGES_COUNT=2048
+</code></pre>
+<p>This writes a <code>Tuned</code> profile for the worker pool through the Node Tuning
+Operator, which is already installed on OpenShift and owns node-level kernel
+tuning. A hand-written <code>MachineConfig</code> would put <code>roksbnkctl</code> in competition with
+an operator that is there to do the job.</p>
+<p><strong>Enabling it reboots workers.</strong> The profile sets a bootloader kernel argument,
+so the Machine Config Operator rolls the pool — draining and restarting each node
+in turn. On a live cluster that is a maintenance event, not a configuration
+change. That is why it is off by default: a cluster that does not need hugepages
+should never be rebooted because a default said so.</p>
+<h3 id="what-happens-if-you-forget"><a class="header" href="#what-happens-if-you-forget">What happens if you forget</a></h3>
+<p><code>bnk up</code> fails <strong>immediately</strong>, with the numbers and both options, rather than
+waiting fifteen minutes and reporting <code>Available=False</code>. The scheduler’s verdict
+is already in the CNEInstance condition; the wait now recognises that no amount
+of waiting creates node capacity and stops there.</p>
+<h2 id="tuning-the-data-plane-tcp-profile"><a class="header" href="#tuning-the-data-plane-tcp-profile">Tuning the data-plane TCP profile</a></h2>
+<p>F5’s approved reference cluster carries a hand-applied <code>sys-default-tcp</code>
+<code>F5BigTcpSetting</code> in the BNK namespace. Despite the “sys-default” name it was
+applied by engineering rather than created by the product, which is why it is
+surfaced here.</p>
+<pre><code class="language-yaml">bnk:
+  tcp_settings:
+    idleTimeout: "300"
+    congestionControl: high-speed
+    abc: "true"
+</code></pre>
+<pre><code class="language-bash">ROKSBNKCTL_BNK_TCP_idleTimeout=300
+ROKSBNKCTL_BNK_TCP_congestionControl=high-speed
+</code></pre>
+<p>A map rather than 54 config fields, because the CR has 54 of them across bool,
+int and string. Enumerating each would be 54 rows nobody reads, and it would go
+stale the moment F5 adds one.</p>
+<p>Values are text — a config file and an environment variable cannot carry
+anything else — and are coerced on the way out by YAML’s own scalar rules:
+<code>300</code> becomes an integer, <code>true</code> a boolean, and anything else is quoted as a
+string. <strong>Field names are case-sensitive and used verbatim</strong>, because the CR is
+case-sensitive and guessing a mapping would silently write a field it ignores.</p>
+<p>Setting nothing writes <strong>no CR at all</strong>. The product manages its own default
+profile, and emitting an empty one would fight it.</p>
 <h2 id="per-component-settings"><a class="header" href="#per-component-settings">Per-component settings</a></h2>
+<blockquote>
+<p>Field specs for everything below live in
+<a href="./28-configuration-reference.html">Chapter 28 — Configuration reference</a>, which is
+generated from the struct and test-checked. The <code>line</code> column there says which
+release line each field applies to.</p>
+</blockquote>
 <p>The 2.4 CNEInstance takes an environment list for each of its ~26 components.
 Anything not surfaced as a first-class field is reachable through the
 passthrough, in YAML or from the environment:</p>
@@ -366,10 +498,20 @@ cluster with connected licensing.</p>
 <tbody>
 <tr><td>exercised</td><td><code>bnk up</code> on an adopted cluster — manifest <code>2.4.0-EA</code>, FAR <code>repo.f5.com</code> with the non-GA service account, three workers, single-NIC, connected licensing</td></tr>
 <tr><td>exercised</td><td>the <strong>gateway phase</strong> — <code>gateway up</code> applies <code>Infra</code> and <code>GatewaySettings</code>, and both reach <code>Accepted</code>, <code>ResolvedRefs</code> and <code>Programmed</code> = <code>True</code>, with the CNEInstance still 18/18 and the licence still Active afterwards</td></tr>
+<tr><td>exercised</td><td><strong>five consecutive clean cluster-lifecycle CLI demo runs</strong> on a cluster reproducing F5’s approved reference (6 × <code>cx3d.8x20</code>, OCP 4.21), each a cold start through all six phases</td></tr>
+<tr><td><strong>not</strong> exercised</td><td>the <strong>CI demo</strong> — it is docker-driven and needs its own five runs</td></tr>
 <tr><td><strong>not</strong> exercised</td><td>mTLS, multi-NIC, disconnected licensing, <code>EgressGateway</code> CRs, and the contract boundary</td></tr>
 </tbody>
 </table>
 </div>
+<p>Every conformance setting was confirmed <strong>on the cluster</strong>, not inferred from a
+plan: <code>deploymentSize: Tiny</code>, <code>tmmReplicas: 3</code>, <code>wholeCluster: false</code> paired with
+<code>watchNamespaces: ["All"]</code>, pod placement present, <code>demoMode</code> off,
+<code>GATEWAY_API_VERSION: 1.5.0</code>, and the three TMM environment settings.</p>
+<p>The teardown namespace repair fired in <strong>all five</strong> runs and in every teardown
+between them. That is worth stating plainly: the 2.4 finalizer deadlock is not
+intermittent, so without the repair a 2.4 cluster cannot be reinstalled into at
+all.</p>
 <p>Running the gateway phase is what found the three defects that made it
 impossible before it was run: the gateway plan failed outright on 2.4, nothing
 set <code>USE_GATEWAY_SETTINGS</code> so no controller ever reconciled the CRs, and the

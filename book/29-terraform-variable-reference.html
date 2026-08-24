@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-f377c3d8.js";
+            window.path_to_searchindex_js = "searchindex-f6934f8b.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a118ce28.js"></script>
+        <script src="toc-4242b368.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -199,7 +199,7 @@
 <tr><td><code>deploy_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>When true, the cert_manager module’s helm/null_resource bring-up runs. Forced false by writeBnkPhaseOverrideAt when cluster-outputs.json exists (cluster phase already deployed cert_manager; trial phase consumes it via outputs that resolve to null on the bnk-phase apply, and downstream gates fall back to "direct-apply").</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20). Leave empty to use the latest available.</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.21"</code></td><td>OpenShift cluster version as a BARE major.minor prefix (e.g. “4.20”). Empty uses the latest available.</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
@@ -226,8 +226,9 @@
 <tr><td><code>use_cos_bucket</code></td><td><code>bool</code></td><td><code>true</code></td><td>Download the FAR auth tarball + subscription JWT from the orchestration COS. false = use the injected far_service_account_b64 / f5_cne_subscription_jwt content instead (local files).</td><td>no</td></tr>
 <tr><td><code>far_service_account_b64</code></td><td><code>string</code></td><td><code>""</code></td><td>FAR _json_key_base64 service account (base64 of the .json), injected when use_cos_bucket = false. Empty on the COS path.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>f5_cne_subscription_jwt</code></td><td><code>string</code></td><td><code>""</code></td><td>Subscription/license JWT token content, injected when use_cos_bucket = false. Empty on the COS path (downloaded from COS instead).</td><td><strong>yes</strong></td></tr>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line driving per-release resource gating (2.3 or 2.4). Derived by roksbnkctl from bnk.manifest_version — set it by hand only for a standalone terraform run.</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Kubernetes namespace for the F5 Lifecycle Operator</td><td>no</td></tr>
-<tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license</td><td>no</td></tr>
+<tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td><code>"f5-utils"</code></td><td>Kubernetes namespace for F5 utility components — used by flo, cne_instance, and license. Set equal to flo_namespace to install into ONE namespace.</td><td>no</td></tr>
 <tr><td><code>bigip_username</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP username for the CIS controller</td><td>no</td></tr>
 <tr><td><code>bigip_password</code></td><td><code>string</code></td><td><code>"admin"</code></td><td>BIG-IP password for the CIS controller</td><td><strong>yes</strong></td></tr>
 <tr><td><code>bigip_url</code></td><td><code>string</code></td><td><code>"192.168.1.245"</code></td><td>BIG-IP URL for the CIS controller</td><td>no</td></tr>
@@ -236,7 +237,7 @@
 <tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles granted to the CNE controller’s Trusted Profile, scoped to the cluster’s OWN VPC (serviceName=is, vpcId=<cluster vpc="">).</cluster></td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
-<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
@@ -311,6 +312,35 @@
 <tr><td><code>flp_vsi_vpc_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_subnet_cidr</code></td><td><code>string</code></td><td><code>"10.250.0.0/24"</code></td><td>Address prefix for the VPC created when flp_vsi_create_vpc = true.</td><td>no</td></tr>
 <tr><td><code>cluster_network_mode</code></td><td><code>string</code></td><td><code>"single-nic"</code></td><td>How the cluster’s worker nodes are attached: single-nic (default) or multi-nic.</td><td>no</td></tr>
+<tr><td><code>testing_jumphost_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open; access is key-only). Narrow to the operator’s public /32 on a shared account.</td><td>no</td></tr>
+<tr><td><code>testing_client_vpc_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound to the testing client VPC’s default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway).</td><td>no</td></tr>
+<tr><td><code>cluster_http_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable).</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_default_sg_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC’s default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source.</td><td>no</td></tr>
+<tr><td><code>cneinstance_advanced_env</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>Per-component environment passthrough for the BNK 2.4 CNEInstance’s advanced.<code>&lt;component&gt;</code>.env[] lists (#175).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_replicas</code></td><td><code>number</code></td><td><code>3</code></td><td>Number of f5-tmm data-plane replicas (2.4). Reference: 3.</td><td>no</td></tr>
+<tr><td><code>cneinstance_watch_namespaces</code></td><td><code>list(string)</code></td><td><code>["All"]</code></td><td>Namespaces the CNE controller watches (2.4). Reference: ["All"].</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_anti_affinity</code></td><td><code>bool</code></td><td><code>true</code></td><td>Require f5-tmm pods onto DIFFERENT NODES (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_spread</code></td><td><code>bool</code></td><td><code>true</code></td><td>Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_rolling_update</code></td><td><code>bool</code></td><td><code>true</code></td><td>Pin TMM’s rolling update to maxSurge 0 / maxUnavailable 1 (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_external_bigip</code></td><td><code>bool</code></td><td><code>false</code></td><td>Enable the external BIG-IP controller (2.4). Reference: true.</td><td>no</td></tr>
+<tr><td><code>cneinstance_external_bigip_login_secret</code></td><td><code>string</code></td><td><code>"f5-bigip-ctlr-login"</code></td><td>Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login.</td><td>no</td></tr>
+<tr><td><code>cneinstance_cluster_identifier</code></td><td><code>string</code></td><td><code>""</code></td><td>CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gateway_api_version</code></td><td><code>string</code></td><td><code>"1.5.0"</code></td><td>GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0.</td><td>no</td></tr>
+<tr><td><code>cneinstance_demo_mode</code></td><td><code>string</code></td><td><code>""</code></td><td>advanced.demoMode.enabled.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_pod_label</code></td><td><code>string</code></td><td><code>"f5-tmm"</code></td><td>Value of the <code>app</code> label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_anti_affinity_topology_key</code></td><td><code>string</code></td><td><code>"kubernetes.io/hostname"</code></td><td>Node label the TMM anti-affinity rule spreads across (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_topology_key</code></td><td><code>string</code></td><td><code>"topology.kubernetes.io/zone"</code></td><td>Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_max_skew</code></td><td><code>number</code></td><td><code>1</code></td><td>maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_when_unsatisfiable</code></td><td><code>string</code></td><td><code>"DoNotSchedule"</code></td><td>whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tcp_settings</code></td><td><code>map(string)</code></td><td><code>{}</code></td><td>F5BigTcpSetting field overrides, as a flat map of field name to value.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tcp_settings_name</code></td><td><code>string</code></td><td><code>"sys-default-tcp"</code></td><td>Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp.</td><td>no</td></tr>
+<tr><td><code>cneinstance_whole_cluster_override</code></td><td><code>string</code></td><td><code>""</code></td><td>spec.wholeCluster, as a tri-state.</td><td>no</td></tr>
+<tr><td><code>roks_worker_flavor</code></td><td><code>string</code></td><td><code>""</code></td><td>Exact worker-node flavor, e.g. “cx3d.8x20”. Empty auto-selects.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages</code></td><td><code>bool</code></td><td><code>false</code></td><td>Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_size</code></td><td><code>string</code></td><td><code>"2M"</code></td><td>Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_count</code></td><td><code>number</code></td><td><code>2048</code></td><td>Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_node_role</code></td><td><code>string</code></td><td><code>"worker"</code></td><td>machineconfiguration.openshift.io/role the Tuned profile applies to.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_profile_name</code></td><td><code>string</code></td><td><code>"bnk-hugepages"</code></td><td>Name of the Tuned profile and CR.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -347,6 +377,7 @@
 <tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
 </thead>
 <tbody>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line driving per-release resource gating (“2.3” or “2.4”).</td><td>no</td></tr>
 <tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API Key</td><td><strong>yes</strong></td></tr>
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region where the cluster resides</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
@@ -360,7 +391,7 @@
 <tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>The CNE controller service account; must match what the flo module linked.</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM IAM Trusted Profile ID for provisioning VPC routes</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>mTLS certificate issuer name</td><td>no</td></tr>
-<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>"Small"</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). Tiny is what the BNK 2.4 install guide uses.</td><td>no</td></tr>
+<tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
@@ -380,6 +411,30 @@
 <tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the CNE-instance phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>cneinstance_advanced_env</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>Per-component advanced.<code>&lt;component&gt;</code>.env passthrough (#175). See the root variable of the same name.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_replicas</code></td><td><code>number</code></td><td><code>3</code></td><td>Number of f5-tmm data-plane replicas (2.4). Reference: 3.</td><td>no</td></tr>
+<tr><td><code>cneinstance_watch_namespaces</code></td><td><code>list(string)</code></td><td><code>["All"]</code></td><td>Namespaces the CNE controller watches (2.4). Reference: ["All"].</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_anti_affinity</code></td><td><code>bool</code></td><td><code>true</code></td><td>Require f5-tmm pods onto DIFFERENT NODES (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_spread</code></td><td><code>bool</code></td><td><code>true</code></td><td>Spread f5-tmm pods across zones with maxSkew 1, DoNotSchedule (2.4). Reference: on.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_rolling_update</code></td><td><code>bool</code></td><td><code>true</code></td><td>Pin TMM’s rolling update to maxSurge 0 / maxUnavailable 1 (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_external_bigip</code></td><td><code>bool</code></td><td><code>false</code></td><td>Enable the external BIG-IP controller (2.4). Reference: true.</td><td>no</td></tr>
+<tr><td><code>cneinstance_external_bigip_login_secret</code></td><td><code>string</code></td><td><code>"f5-bigip-ctlr-login"</code></td><td>Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login.</td><td>no</td></tr>
+<tr><td><code>cneinstance_cluster_identifier</code></td><td><code>string</code></td><td><code>""</code></td><td>CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name.</td><td>no</td></tr>
+<tr><td><code>cneinstance_gateway_api_version</code></td><td><code>string</code></td><td><code>"1.5.0"</code></td><td>GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0.</td><td>no</td></tr>
+<tr><td><code>cneinstance_demo_mode</code></td><td><code>string</code></td><td><code>""</code></td><td>advanced.demoMode.enabled.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_pod_label</code></td><td><code>string</code></td><td><code>"f5-tmm"</code></td><td>Value of the <code>app</code> label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_anti_affinity_topology_key</code></td><td><code>string</code></td><td><code>"kubernetes.io/hostname"</code></td><td>Node label the TMM anti-affinity rule spreads across (2.4).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_topology_key</code></td><td><code>string</code></td><td><code>"topology.kubernetes.io/zone"</code></td><td>Node label the TMM zone spread uses (2.4). The IBM ROKS zone label. Reference: topology.kubernetes.io/zone.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_max_skew</code></td><td><code>number</code></td><td><code>1</code></td><td>maxSkew for the TMM zone topology-spread constraint (2.4). Reference: 1.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_zone_when_unsatisfiable</code></td><td><code>string</code></td><td><code>"DoNotSchedule"</code></td><td>whenUnsatisfiable for the TMM zone spread (2.4): DoNotSchedule or ScheduleAnyway. Reference: DoNotSchedule.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tcp_settings</code></td><td><code>map(string)</code></td><td><code>{}</code></td><td>F5BigTcpSetting field overrides, as a flat map of field name to value.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tcp_settings_name</code></td><td><code>string</code></td><td><code>"sys-default-tcp"</code></td><td>Name of the F5BigTcpSetting CR to write. Reference: sys-default-tcp.</td><td>no</td></tr>
+<tr><td><code>cneinstance_whole_cluster_override</code></td><td><code>string</code></td><td><code>""</code></td><td>spec.wholeCluster, as a tri-state.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages</code></td><td><code>bool</code></td><td><code>false</code></td><td>Allocate hugepages on the worker pool via the OpenShift Node Tuning Operator.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_size</code></td><td><code>string</code></td><td><code>"2M"</code></td><td>Hugepage size, e.g. 2M or 1G. TMM requests hugepages-2Mi, so 2M is the matching size.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_count</code></td><td><code>number</code></td><td><code>2048</code></td><td>Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_node_role</code></td><td><code>string</code></td><td><code>"worker"</code></td><td>machineconfiguration.openshift.io/role the Tuned profile applies to.</td><td>no</td></tr>
+<tr><td><code>cneinstance_hugepages_profile_name</code></td><td><code>string</code></td><td><code>"bnk-hugepages"</code></td><td>Name of the Tuned profile and CR.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -391,6 +446,7 @@
 <tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
 </thead>
 <tbody>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line driving per-release resource gating (“2.3” or “2.4”).</td><td>no</td></tr>
 <tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API Key</td><td><strong>yes</strong></td></tr>
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region where the cluster resides</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
@@ -528,6 +584,7 @@
 <tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
 </thead>
 <tbody>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line driving per-release resource gating (“2.3” or “2.4”).</td><td>no</td></tr>
 <tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API key</td><td><strong>yes</strong></td></tr>
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud region the cluster runs in (zone names derive as <code>&lt;region&gt;</code>-1/2/3)</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud resource group</td><td>no</td></tr>
@@ -562,6 +619,11 @@
 <tr><td><code>gateway_client_subnet_local</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Local-VSI client subnet CIDRs the static routes reach (cluster-VPC clients; one F5SPKStaticRoute per entry × zone). Empty = no local client routes.</td><td>no</td></tr>
 <tr><td><code>gateway_client_subnet_remote</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Remote-VSI client subnet CIDRs the static routes reach (client-VPC clients over the TGW; one F5SPKStaticRoute per entry × zone). Empty = no remote client routes.</td><td>no</td></tr>
 <tr><td><code>gateway_static_route_gw_host</code></td><td><code>number</code></td><td><code>1</code></td><td>Host number in ext_vlan_cidr used as each zone’s static-route gateway</td><td>no</td></tr>
+<tr><td><code>gateway_infra_name</code></td><td><code>string</code></td><td><code>"cloud-infra"</code></td><td>Name of the BNK 2.4 Infra CR (gateway.k8s.f5.com/v1alpha1) in the FLO namespace.</td><td>no</td></tr>
+<tr><td><code>gateway_settings_name</code></td><td><code>string</code></td><td><code>"gw-settings-common"</code></td><td>Name of the BNK 2.4 GatewaySettings CR in the FLO namespace.</td><td>no</td></tr>
+<tr><td><code>gateway_nad_name</code></td><td><code>string</code></td><td><code>"ens3-ipvlan-l2"</code></td><td>NetworkAttachmentDefinition the 2.4 Infra CR’s external VLAN attaches to.</td><td>no</td></tr>
+<tr><td><code>gateway_egress_vxlan_port</code></td><td><code>number</code></td><td><code>6789</code></td><td>egressDefaults.port on the 2.4 Infra CR. The CRD default is 4789; the install guide’s worked example uses 6789, which is what this defaults to so a stock install matches the vendor’s own manifest.</td><td>no</td></tr>
+<tr><td><code>gateway_egress_vxlan_subnet</code></td><td><code>string</code></td><td><code>""</code></td><td>egressDefaults.subnet on the 2.4 Infra CR. Empty leaves the controller’s default of 10.0.0.0/16.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -573,6 +635,8 @@
 <tr><th>Variable</th><th>Type</th><th>Default</th><th>Description</th><th>Sensitive</th></tr>
 </thead>
 <tbody>
+<tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace the CNEInstance lives in, for the 2.4 post-licensing health check (#167).</td><td>no</td></tr>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line (‘2.3’ or ‘2.4’) for per-release gating. See PRD 18 §4.</td><td>no</td></tr>
 <tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API Key</td><td><strong>yes</strong></td></tr>
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><code>"ca-tor"</code></td><td>IBM Cloud region where the cluster resides</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>"default"</code></td><td>IBM Cloud Resource Group name (leave empty to use account default)</td><td>no</td></tr>
@@ -615,7 +679,7 @@
 <tr><td><code>create_roks_registry_cos_instance</code></td><td><code>bool</code></td><td><code>true</code></td><td>Create Cloud Object Storage instance for the OpenShift image registry</td><td>no</td></tr>
 <tr><td><code>roks_cluster_vpc_name</code></td><td><code>string</code></td><td><code>"tf-cluster-vpc"</code></td><td>Name of the cluster VPC</td><td>no</td></tr>
 <tr><td><code>openshift_cluster_name</code></td><td><code>string</code></td><td><code>"tf-openshift-cluster"</code></td><td>Name of the OpenShift cluster</td><td>no</td></tr>
-<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version (e.g. 4.20)</td><td>no</td></tr>
+<tr><td><code>openshift_cluster_version</code></td><td><code>string</code></td><td><code>"4.20"</code></td><td>OpenShift cluster version as a BARE major.minor prefix (e.g. “4.20”). Empty uses the latest available.</td><td>no</td></tr>
 <tr><td><code>roks_workers_per_zone</code></td><td><code>number</code></td><td><code>1</code></td><td>Number of worker nodes per availability zone</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_vcpu_count</code></td><td><code>number</code></td><td><code>16</code></td><td>Minimum vCPU count when auto-selecting the worker node flavor</td><td>no</td></tr>
 <tr><td><code>roks_min_worker_memory_gb</code></td><td><code>number</code></td><td><code>64</code></td><td>Minimum memory in GB when auto-selecting the worker node flavor</td><td>no</td></tr>
@@ -629,6 +693,10 @@
 <tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR block the cluster VPC’s per-zone address prefixes are carved from (e.g. “10.241.0.0/16” → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18).</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_subnets</code></td><td><code>bool</code></td><td><code>false</code></td><td>Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC.</td><td>no</td></tr>
 <tr><td><code>existing_cluster_subnet_ids</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Subnet ids to place the cluster in, one per zone, in zone order. Used only when use_existing_cluster_subnets = true. Their zones are read from the subnets themselves.</td><td>no</td></tr>
+<tr><td><code>cluster_http_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0.</td><td>no</td></tr>
+<tr><td><code>cluster_vpc_default_sg_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC’s default security group. Empty → 0.0.0.0/0.</td><td>no</td></tr>
+<tr><td><code>roks_worker_flavor</code></td><td><code>string</code></td><td><code>""</code></td><td>Exact worker-node flavor, e.g. “cx3d.8x20”. Empty auto-selects.</td><td>no</td></tr>
+<tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line (2.3 / 2.4), used to pick a VALIDATED default worker flavor per line.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -660,6 +728,8 @@
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Set to true when the ROKS cluster is being created in this run — skips cluster-VPC-derived data sources that require a pre-existing cluster</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_id</code></td><td><code>string</code></td><td><code>""</code></td><td>ID of the cluster VPC — pass module.roks_cluster.roks_cluster_vpc_id directly; avoids deriving via worker-pool subnet chain which is deferred to apply time</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True only in the standalone FLP-VSI phase: no ROKS cluster exists, so cluster data-source lookups are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>testing_jumphost_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to SSH (:22) to the testing jumphosts. Empty → 0.0.0.0/0 (open — the jumphosts carry a public floating IP and are reached from wherever the operator happens to be; access is key-only). Narrow this to the operator’s public /32 on a shared account.</td><td>no</td></tr>
+<tr><td><code>testing_client_vpc_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound to the testing client VPC’s DEFAULT security group. Empty → the RFC-1918 private ranges, which is where in-fabric test traffic arrives from (the cluster reaches the client VPC over the Transit Gateway). Set explicitly only if a test needs a public source.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
