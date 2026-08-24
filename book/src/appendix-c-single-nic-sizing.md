@@ -86,9 +86,21 @@ following hold at once:
 
 ### Only `Tiny` can run on ROKS today
 
-`deploymentSize: Small` and above request **4 GiB of `hugepages-2Mi` per TMM
-pod**; `Tiny` requests none. TMM validates hugepages against the 2 MB page
-cgroup limit when it starts, and exits if that limit is zero:
+Every size above `Tiny` requests hugepages, and the amount **grows** with the
+profile. Read from the controller-derived `F5Tmm` CR on a live 2.4 cluster by
+changing only `deploymentSize`:
+
+| `deploymentSize` | TMM cpu | TMM memory | `hugepages-2Mi` |
+|---|---|---|---|
+| `Tiny` | — | — | **none** |
+| `Small` | 1 | 1536Mi | **4 GiB** |
+| `Medium` | 4 | 2Gi | **8 GiB** |
+
+The **Large cluster runs the Medium profile**, as the table above this section
+records, so it derives the same 8 GiB and is not a separate case.
+
+TMM validates hugepages against the 2 MB page cgroup limit when it starts, and
+exits if that limit is zero:
 
 ```
 <get_mem_info>  ERROR: No memory available based on 2MB page cgroup limit
