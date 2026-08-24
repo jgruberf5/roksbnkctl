@@ -63,7 +63,7 @@ COS_INSTANCE="${COS_INSTANCE:-bnk-supply-chain}"
 COS_BUCKET="${COS_BUCKET:-}"
 COS_REGION="${COS_REGION:-us-south}"
 
-RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.53.0}"
+RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.53.1}"
 ARGO_NS="${ARGO_NS:-bnk-ci}"
 
 # Everything secret goes through secret() BEFORE it can reach the screen. These

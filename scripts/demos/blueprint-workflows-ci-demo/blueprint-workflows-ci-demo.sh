@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# blueprint-workflows-ci-demo.sh  (roksbnkctl v1.53.0)
+# blueprint-workflows-ci-demo.sh  (roksbnkctl v1.53.1)
 #
 # The six BNK Forge blueprints, as Argo Workflows, driven ENTIRELY by environment
 # variables. Every setting is rendered into a ConfigMap (non-secret) or a Secret
@@ -32,7 +32,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 ARGO_NAMESPACE="${ARGO_NAMESPACE:-bnk-ci}"
-RUNNER_TAG="${RUNNER_TAG:-v1.53.0}"
+RUNNER_TAG="${RUNNER_TAG:-v1.53.1}"
 RUNNER_IMAGE="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 
 # ============================ helpers ========================================

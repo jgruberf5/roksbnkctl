@@ -66,7 +66,7 @@ K3S_CHANNEL="${K3S_CHANNEL:-stable}"
 # the k3s VSI pulls it over the private IP, trusting Harbor's CA via registries.yaml.
 # Mirror it once:  docker pull ghcr.io/jgruberf5/roksbnkctl-tools-runner:<tag>
 #                  docker tag  … <HARBOR_PRIVATE_IP>/bnk-mirror/roksbnkctl-tools-runner:<tag> && docker push …
-RUNNER_IMAGE="${RUNNER_IMAGE:-${HARBOR_PRIVATE_IP}/bnk-mirror/roksbnkctl-tools-runner:${RUNNER_TAG:-v1.53.0}}"
+RUNNER_IMAGE="${RUNNER_IMAGE:-${HARBOR_PRIVATE_IP}/bnk-mirror/roksbnkctl-tools-runner:${RUNNER_TAG:-v1.53.1}}"
 
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=8"
 export IBMCLOUD_API_KEY

@@ -4,9 +4,9 @@ All notable changes to `roksbnkctl` are documented in this file. Format follows 
 
 Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD design specs live under [`docs/prd/`](docs/prd/). This file is the user-facing summary of what changed between releases.
 
-## v1.53.0 — 2026-08-23
+## v1.53.1 — 2026-08-23
 
-### Added
+### Fixed
 
 - **Fourteen reference descriptions were being cut off mid-phrase.** The
   generator ended the published sentence at the first `". "`, so any
@@ -19,6 +19,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   The undocumented-field ratchet cannot catch these: the rows are not blank,
   only cut short. `firstSentence` now recognises abbreviations and single-letter
   initials, with a unit test covering each form.
+
+## v1.53.0 — 2026-08-23
+
+### Added
 
 - **56 of the reference's blank descriptions filled** (#181): every top-level
   config section, the seven `resources.*` create/adopt toggles, the six per-zone

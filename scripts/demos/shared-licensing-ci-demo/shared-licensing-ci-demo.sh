@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# shared-licensing-ci-demo.sh  (roksbnkctl v1.53.0)
+# shared-licensing-ci-demo.sh  (roksbnkctl v1.53.1)
 #
 # The SHARED LICENSING CLUSTER, told the way it actually ships: as TWO CI JOBS.
 # Every step is a `docker run` of the roksbnkctl-tools-runner image, the whole
@@ -64,7 +64,7 @@ REGISTRY_DOMAIN="${REGISTRY_DOMAIN:-}"                 # the private registry ho
 REGISTRY_ADMIN_PASSWORD="${REGISTRY_ADMIN_PASSWORD:-}" # its admin password
 REGISTRY_PROJECT="${REGISTRY_PROJECT:-bnk-mirror}"
 
-RUNNER_TAG="${RUNNER_TAG:-v1.53.0}"
+RUNNER_TAG="${RUNNER_TAG:-v1.53.1}"
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 SVC_WS="${SVC_WS:-ci-svc}"                 # job 1's workspace — owns the proxy
 APP_WS="${APP_WS:-ci-app}"                 # job 2's workspace — owns BNK
