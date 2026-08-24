@@ -340,7 +340,21 @@ func (c conditionMatcher) matched(obj *unstructured.Unstructured) (bool, string)
 		}
 		if fmt.Sprint(m["type"]) == c.typ {
 			st := fmt.Sprint(m["status"])
-			return st == c.status, fmt.Sprintf("%s=%s", c.typ, st)
+			// Carry the condition's reason and message, not just the status.
+			// terminalWaitDiagnosis reads this string, and the scheduler's actual
+			// verdict — "0/6 nodes are available: …" — lives in the message. With
+			// only "Available=False" to look at, a permanently unschedulable pod
+			// was indistinguishable from one still starting, so every such install
+			// burned the full 15-minute timeout and then failed with a terraform
+			// local-exec error naming nothing useful (#189).
+			desc := fmt.Sprintf("%s=%s", c.typ, st)
+			if r := strings.TrimSpace(fmt.Sprint(m["reason"])); r != "" && r != "<nil>" {
+				desc += " reason=" + r
+			}
+			if msg := strings.TrimSpace(fmt.Sprint(m["message"])); msg != "" && msg != "<nil>" {
+				desc += " msg=" + msg
+			}
+			return st == c.status, desc
 		}
 	}
 	return false, fmt.Sprintf("%s not present", c.typ)
@@ -394,6 +408,15 @@ func evalJSONPath(jp *jsonpath.JSONPath, data interface{}) (string, error) {
 // be queried to produce it.
 var unschedulableRe = regexp.MustCompile(`(\d+)/(\d+) nodes are available: .*?Insufficient ([a-zA-Z0-9\-\./]+)`)
 
+// pvNodeAffinityRe recognises the scheduler rejecting every node because the
+// pod's PersistentVolume is bound elsewhere. Requires 0 available nodes: while
+// some node still fits, the scheduler may yet place it.
+var pvNodeAffinityRe = regexp.MustCompile(`0/(\d+) nodes are available:.*didn't match PersistentVolume's node affinity`)
+
+func pvAffinityUnschedulable(desc string) bool {
+	return pvNodeAffinityRe.MatchString(desc)
+}
+
 // terminalWaitDiagnosis reports whether a condition message describes a state
 // that WAITING CANNOT FIX, and returns an explanation if so.
 //
@@ -411,6 +434,25 @@ var unschedulableRe = regexp.MustCompile(`(\d+)/(\d+) nodes are available: .*?In
 // not-yet-created node genuinely may resolve by waiting, and failing those early
 // would trade a slow success for a fast wrong answer.
 func terminalWaitDiagnosis(desc string) (string, bool) {
+	// A shared volume the replicas cannot all reach. Distinct from "Insufficient
+	// <resource>" because no node ever gains the capacity to fix it: the pods are
+	// pinned to separate nodes by anti-affinity while their PersistentVolume is
+	// bound to one zone, so the scheduler is choosing between two constraints
+	// that cannot both hold (#189).
+	if pvAffinityUnschedulable(desc) {
+		return "pods cannot be placed: their PersistentVolume is bound to one zone while " +
+			"anti-affinity requires them on separate nodes, so no placement satisfies both.\n\n" +
+			"  On 2.4 the TMM replicas share one ReadWriteOnce volume (tmm-pvc) while F5's own\n" +
+			"  reference placement pins them to different nodes across different zones. RWO\n" +
+			"  permits many pods on ONE node, which anti-affinity forbids — so at most one\n" +
+			"  replica can ever bind it.\n\n" +
+			"  Nothing in config.yaml resolves this today; see issue #189. What can be tried:\n\n" +
+			"    bnk.storage_class_name: <a ReadWriteMany class>   # e.g. from vpc-file-csi-driver\n" +
+			"    bnk.tmm_replicas: 1                               # one replica, one volume\n\n" +
+			"  Note the controller currently applies storage_class_name to every CNEInstance\n" +
+			"  volume EXCEPT tmm-pvc, so the first may not take effect.", true
+	}
+
 	m := unschedulableRe.FindStringSubmatch(desc)
 	if m == nil {
 		return "", false

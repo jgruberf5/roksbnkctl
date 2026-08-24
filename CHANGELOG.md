@@ -6,6 +6,27 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`bnk up` waited fifteen minutes to say nothing useful** (#189). `tfx wait`
+  built its condition description from the status alone — `Available=False` —
+  and dropped the condition's `reason` and `message`. The scheduler's actual
+  verdict lives in that message, so `terminalWaitDiagnosis` had nothing to read
+  and a **permanently** unschedulable pod was indistinguishable from one still
+  starting. Every such install burned the full timeout and then failed with a
+  terraform local-exec error naming neither the pod nor the cause.
+
+  The description now carries reason and message, and the diagnosis recognises
+  the case 2.4 actually hits: the TMM replicas share one `ReadWriteOnce` volume
+  while F5's own reference placement pins them to different nodes, so no
+  placement satisfies both and no node will ever gain the ability to fix it. It
+  fails immediately, naming the constraint and the two settings worth trying.
+
+  Deliberately still narrow — it requires **0** available nodes. A pod that is
+  Pending for an unbound PVC, an image pull, or a node still joining may
+  genuinely resolve by waiting, and failing those early would trade a slow
+  success for a fast wrong answer.
+
 ### Changed
 
 - **Chapter 12 is no longer a second copy of the configuration schema** (#184).
