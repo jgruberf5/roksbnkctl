@@ -121,6 +121,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {"congestionControl": "bbr", "delayedAcks": "true"} — the key is the CR's own spec field. |
 | `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
+| `tmm_resources` | `map[string]map[string]string` | 2.3 + 2.4 | — | no | TMMResources overrides the TMM pod's resource requests/limits, rendered as the CNEInstance's advanced.tmm.resources (#203). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
 | `gtm` | `*BNKGTMCfg` | 2.3 + 2.4 | — | no | GTM is the BIG-IP DNS the datacenter above registers with (#51). |
 | `cert_manager` | `*BNKCertManagerCfg` | 2.3 + 2.4 | — | no | CertManager overrides cert-manager's namespace + chart version. |

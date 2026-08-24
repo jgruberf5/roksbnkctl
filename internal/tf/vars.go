@@ -486,6 +486,7 @@ func renderClusterSizing(w io.Writer, c config.ClusterCfg) {
 func renderBNKFields(w io.Writer, ws *config.Workspace, mirror *config.RegistryMirror) error {
 	renderBNKLine(w, ws)
 	renderBNKAdvancedEnv(w, ws)
+	renderBNKTMMResources(w, ws)
 	renderBNKTCPSettings(w, ws)
 	renderBNKHugepages(w, ws)
 	renderBNKNamespaces(w, ws)
@@ -1103,4 +1104,45 @@ func renderBNKHugepages(w io.Writer, ws *config.Workspace) {
 	if h.ProfileName != "" {
 		fmt.Fprintf(w, "cneinstance_hugepages_profile_name = %q\n", h.ProfileName)
 	}
+}
+
+// renderBNKTMMResources emits the TMM resource override for advanced.tmm.resources
+// (#203). Sorted for the same reason renderBNKAdvancedEnv sorts: Go map iteration
+// is randomised, and an unsorted render produces a different tfvars byte-for-byte
+// on every run, which defeats the byte-identical-plan comparison.
+func renderBNKTMMResources(w io.Writer, ws *config.Workspace) {
+	if ws == nil || len(ws.BNK.TMMResources) == 0 {
+		return
+	}
+	groups := make([]string, 0, len(ws.BNK.TMMResources))
+	for g := range ws.BNK.TMMResources {
+		groups = append(groups, g)
+	}
+	sort.Strings(groups)
+
+	var b strings.Builder
+	b.WriteString("cneinstance_tmm_resources = {\n")
+	any := false
+	for _, g := range groups {
+		kv := ws.BNK.TMMResources[g]
+		if len(kv) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(kv))
+		for k := range kv {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		any = true
+		fmt.Fprintf(&b, "  %q = {\n", g)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "    %q = %q\n", k, kv[k])
+		}
+		b.WriteString("  }\n")
+	}
+	b.WriteString("}\n")
+	if !any {
+		return
+	}
+	fmt.Fprint(w, b.String())
 }

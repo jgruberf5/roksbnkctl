@@ -601,7 +601,10 @@ locals {
       }, local.adv_env_optional["maintenanceMode"])
       tmm = merge({
         env = local.adv_env["tmm"]
-      }, local.adv_tmm_rolling_24)
+        }, local.adv_tmm_rolling_24,
+        # Empty renders no resources key, leaving the controller's
+        # deploymentSize-derived values alone (#203).
+      length(var.cneinstance_tmm_resources) > 0 ? { resources = var.cneinstance_tmm_resources } : {})
       pseudoCNI = {
         env = local.adv_env["pseudoCNI"]
       }

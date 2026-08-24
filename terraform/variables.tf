@@ -1074,6 +1074,35 @@ variable "cluster_vpc_default_sg_inbound_cidrs" {
   }
 }
 
+variable "cneinstance_tmm_resources" {
+  description = <<-EOT
+    Overrides the TMM pod's resource requests/limits, rendered as the
+    CNEInstance's advanced.tmm.resources (#203).
+
+    The controller derives TMM's resources from deploymentSize, and every size
+    above Tiny asks for hugepages -- Small requests 4Gi of hugepages-2Mi. A
+    stock ROKS worker reports zero and there is no supported way to allocate
+    them: the Node Tuning Operator route needs MachineConfigPools that ROKS
+    does not have, and ROKS deletes a user-created Tuned CR outright.
+
+    F5's own 2.3.1 sizing guide describes the reference-tested Small profile as
+    "TMM: 1 thread, 1 vCPU / 1.5 GiB, hugepages disabled", so running without
+    them is the reference configuration rather than a workaround. Setting this
+    replaces the derived block, which is what drops the hugepages request:
+
+      cneinstance_tmm_resources = {
+        requests = { cpu = "1000m", memory = "1536Mi" }
+        limits   = { cpu = "1000m", memory = "1536Mi" }
+      }
+
+    Empty renders no resources key at all, leaving the controller's derived
+    values untouched, so a workspace that does not set this plans exactly as
+    it did before.
+  EOT
+  type        = map(map(string))
+  default     = {}
+}
+
 variable "cneinstance_advanced_env" {
   description = <<-EOT
     Per-component environment passthrough for the BNK 2.4 CNEInstance's

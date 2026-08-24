@@ -310,6 +310,12 @@ variable "roksbnkctl_binary" {
   default     = ""
 }
 
+variable "cneinstance_tmm_resources" {
+  description = "TMM resource requests/limits override; rendered as advanced.tmm.resources (#203)."
+  type        = map(map(string))
+  default     = {}
+}
+
 variable "cneinstance_advanced_env" {
   description = "Per-component advanced.<component>.env passthrough (#175). See the root variable of the same name."
   type        = map(map(string))
