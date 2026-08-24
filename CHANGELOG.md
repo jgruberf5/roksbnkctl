@@ -8,6 +8,31 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **FLO installed BNK without CSRC, and said nothing** (found while
+  investigating #197; fixed in #198, guarded in #201). `containerPlatform` was
+  set to `OCP` on the reasoning that ROKS is OpenShift. That reasoning applies
+  to the *cluster* distribution; the field selects F5's *platform integration*,
+  and under `OCP` the lifecycle operator creates its sixteen component CRs and
+  **silently skips CSRC** — `csrcs=0`, no `f5-spk-csrc` pods, and therefore no
+  `macvlan-internal` NetworkAttachmentDefinition, which CSRC creates at
+  runtime. Nothing is logged. Every other signal reports healthy.
+
+  The value is now hardcoded to `IBM`, which is what F5's own reference cluster
+  runs and what produces `csrcs=1`, a six-pod CSRC DaemonSet and the NAD.
+  `Generic` is not an alternative: the controller aborts looking for a
+  `kubeadm-config` ConfigMap that no ROKS cluster has.
+
+  It is deliberately **not** configurable — no variable, no tfvars field, no
+  `ROKSBNKCTL_*` override — because the failure is silent, so an operator who
+  could change it would have no signal that they had broken the install. The
+  guard asserts the literal, that there is exactly one of them, and that it is
+  not reachable through `var.`/`local.`/`coalesce`/`try`/`lookup`.
+
+  **#197 remains open.** The commit subject for #198 carries `(#197)` because
+  the investigation started there, not because it fixes the shared
+  `ReadWriteOnce` volume that issue describes.
+
+
 - **`bnk up` waited fifteen minutes to say nothing useful** (#189). `tfx wait`
   built its condition description from the status alone — `Available=False` —
   and dropped the condition's `reason` and `message`. The scheduler's actual
