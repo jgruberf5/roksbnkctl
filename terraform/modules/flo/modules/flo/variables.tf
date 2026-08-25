@@ -135,13 +135,6 @@ variable "kube_token" {
   sensitive   = true
 }
 
-variable "jwt_token" {
-  description = "JWT token for license authentication (unused — fetched from COS)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 variable "cluster_issuer_name" {
   description = "Name of the cluster issuer for certificates"
   type        = string
