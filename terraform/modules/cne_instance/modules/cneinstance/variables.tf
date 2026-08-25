@@ -24,12 +24,6 @@ variable "utils_namespace" {
   default     = "f5-utils"
 }
 
-variable "cneinstance_spec" {
-  description = "Full CNEInstance specification (if empty, will be generated from individual variables)"
-  type        = any
-  default     = {}
-}
-
 # Individual spec configuration variables (used if cneinstance_spec is not provided)
 variable "f5_bigip_k8s_manifest_version" {
   description = "F5 BIG-IP Kubernetes manifest version"

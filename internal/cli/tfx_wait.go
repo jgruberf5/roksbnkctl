@@ -122,6 +122,9 @@ func runTFXWait(ctx context.Context, ri dynamic.ResourceInterface, name string, 
 	case err == nil:
 		return nil
 	case errors.Is(err, errTFXWaitTimeout):
+		if d, ok := vanishedTunedDiagnosis(flagWaitGVR); ok {
+			return fmt.Errorf("%s never appeared: %s", name, d)
+		}
 		return fmt.Errorf("timed out after %s waiting for %s to satisfy [%s]", timeout, name, m)
 	case ctx.Err() != nil:
 		return err // caller cancelled — don't retry
@@ -481,4 +484,35 @@ func terminalWaitDiagnosis(desc string) (string, bool) {
 			"  change. That is why it is off by default and you are reading this instead."
 	}
 	return msg, true
+}
+
+// vanishedTunedDiagnosis explains a Tuned CR that never appears (#203).
+//
+// bnk.hugepages applies a Tuned profile to allocate hugepages for TMM. On ROKS
+// that cannot work, and the way it fails is uniquely unhelpful: the API accepts
+// the create and returns a real object, then the next read is NotFound, which
+// terraform reports as "Provider produced inconsistent result after apply ...
+// Root object was present, but now absent" -- blaming the provider and saying
+// nothing about hugepages or the platform.
+//
+// A wait on the CR turns that into a message the operator can act on. Keyed on
+// the resource rather than the error text because the failure has no
+// distinguishing error at all -- the object is simply gone.
+func vanishedTunedDiagnosis(gvr string) (string, bool) {
+	if !strings.Contains(gvr, "tuned.openshift.io") {
+		return "", false
+	}
+	return "the Tuned CR was accepted by the API and then removed.\n\n" +
+		"  ROKS deletes user-created Tuned CRs in openshift-cluster-node-tuning-operator,\n" +
+		"  so bnk.hugepages cannot allocate hugepages there. It is also unable to take\n" +
+		"  effect a second way: the profile sets a [bootloader] kernel argument, which\n" +
+		"  needs the Machine Config Operator to roll the worker pool, and ROKS reports\n" +
+		"  ZERO MachineConfigPools because IBM manages the worker OS.\n\n" +
+		"  Do not reach for bnk.hugepages on ROKS. deploymentSize above Tiny requests\n" +
+		"  hugepages that the platform cannot provide (Small 4Gi, Medium 8Gi), and TMM\n" +
+		"  validates the 2MB page cgroup limit at startup and exits if it is zero.\n\n" +
+		"  Capacity comes from replicas and node size instead:\n\n" +
+		"    bnk.cneinstance_size: Tiny    # or leave unset; Tiny is the 2.4 default\n" +
+		"    bnk.tmm_replicas: <n>         # one TMM per worker node\n\n" +
+		"  See Appendix C for the verified cluster shapes, and issue #203.", true
 }

@@ -75,12 +75,6 @@ variable "openshift_cluster_name" {
   default     = "tf-cluster"
 }
 
-variable "worker_pool_name" {
-  description = "Worker pool name"
-  type        = string
-  default     = "tf-worker-pool"
-}
-
 variable "worker_flavor" {
   description = "Worker node flavor (optional - will auto-select based on min requirements if not specified)"
   type        = string

@@ -43,25 +43,39 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 		t.Fatalf("walking terraform: %v", err)
 	}
 
-	// PRE-EXISTING, NOT BLESSED. Each of these was already unread when this guard
-	// was written; the list exists so the guard can start catching NEW ones today
-	// instead of waiting for 21 separate triages. Some are probably legitimate --
-	// a variable passed purely to create a dependency edge does its work in the
-	// PARENT's module block and needs no reference in the child -- and some are
-	// probably the same no-op defect this test exists to stop. They are tracked
-	// for triage in #204.
+	// TRIAGED (#204). Four genuinely dead ones have been deleted:
 	//
-	// The list is self-cleaning: an entry that becomes read is reported as stale,
-	// so it cannot outlive the problem it records.
+	//   wait_for_deployment, worker_pool_name  zero references anywhere
+	//   cneinstance_spec                       shadowed by a LOCAL of the same
+	//                                          name doing the real work, so the
+	//                                          variable could never be read
+	//   cert_manager_crd_ready                 passed by its parent as a literal
+	//                                          `true`, which creates no dependency
+	//                                          edge; a comment already said to
+	//                                          drop it
+	//
+	// What remains is passed by a parent and read by nothing in the child, which
+	// splits two ways this test cannot tell apart:
+	//
+	//   - dependency edges (flo_deployment_id, roks_cluster_dependency_id): the
+	//     ordering is created in the PARENT by `x = module.foo.id`, so the child
+	//     never mentions it. Legitimate -- removing them would silently drop an
+	//     ordering constraint.
+	//   - data the child ignores (kube_host, kube_token, jwt_token,
+	//     helm_registry_config, ibmcloud_api_key, ...): dead weight, and several
+	//     are SECRETS handed to a module that never uses them.
+	//
+	// The second group needs each call site read before its `= var.x` can go from
+	// the parent too, so they stay listed rather than guessed at.
+	//
+	// The list is self-cleaning: an entry that becomes read (or is deleted) is
+	// reported as stale, so it cannot outlive the problem it records.
 	knownUnread := map[string]bool{
 		"terraform/modules/cert_manager/modules/cert-manager: kube_host":               true,
 		"terraform/modules/cert_manager/modules/cert-manager: kube_token":              true,
 		"terraform/modules/cert_manager/modules/cert-manager: post_deployment_delay":   true,
-		"terraform/modules/cert_manager/modules/cert-manager: wait_for_deployment":     true,
-		"terraform/modules/cne_instance/modules/cneinstance: cneinstance_spec":         true,
 		"terraform/modules/cne_instance/modules/cneinstance: flo_deployment_id":        true,
 		"terraform/modules/cne_instance/modules/cneinstance: registry_mirror_username": true,
-		"terraform/modules/flo/modules/flo: cert_manager_crd_ready":                    true,
 		"terraform/modules/flo/modules/flo: f5_cne_subscription_jwt_file":              true,
 		"terraform/modules/flo/modules/flo: helm_registry_config":                      true,
 		"terraform/modules/flo/modules/flo: jwt_token":                                 true,
@@ -72,7 +86,6 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 		"terraform/modules/gateway: ibmcloud_resource_group":                           true,
 		"terraform/modules/gateway: roks_cluster_dependency_id":                        true,
 		"terraform/modules/roks_cluster/modules/cluster: ibmcloud_api_key":             true,
-		"terraform/modules/roks_cluster/modules/cluster: worker_pool_name":             true,
 		"terraform: cluster_network_mode":                                              true,
 		"terraform: gateway_api_bundle_url":                                            true,
 	}

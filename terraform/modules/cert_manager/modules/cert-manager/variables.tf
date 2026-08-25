@@ -34,12 +34,6 @@ variable "image_repository" {
   default     = ""
 }
 
-variable "wait_for_deployment" {
-  description = "Wait for cert-manager deployment to be ready"
-  type        = bool
-  default     = true
-}
-
 variable "timeout" {
   description = "Timeout for helm release (in seconds). 600s (not 300) gives an air-gapped cluster margin: cert-manager's images pull from a private mirror over the Transit Gateway and the startupapicheck hook must then issue a test Certificate, which can exceed 5 min on a cold cluster."
   type        = number
