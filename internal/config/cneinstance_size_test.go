@@ -45,3 +45,46 @@ func TestCNEInstanceSizeIsNotValidatedAgainstAFixedList(t *testing.T) {
 			"and a hardcoded list would refuse sizes the product supports")
 	}
 }
+
+// The surface stays configurable ON PURPOSE, and the default carries the load.
+//
+// On ROKS, Tiny is the only deploymentSize that can run: everything above it
+// requests hugepages (Small 4Gi, Medium 8Gi) that the platform has no supported
+// way to allocate (#203). The tempting fix is to hardcode Tiny and drop the
+// field. That would be wrong: if IBM ships a worker profile supporting
+// hugepages, the platform's answer changes and nothing about this tool's surface
+// should have to. So the field and its ROKSBNKCTL_* override stay, and Tiny is
+// reached by DEFAULT rather than by removal of the choice.
+//
+// This pins both halves of that bargain: the field must stay settable, and
+// leaving it unset must not silently pick a size ROKS cannot run.
+func TestCNEInstanceSizeStaysConfigurableSoTinyIsADefaultNotAHardcode(t *testing.T) {
+	// Half one: an explicit value still reaches the config untouched, so a
+	// future hugepage-capable worker needs no change here.
+	for _, size := range []string{"Small", "Medium", "Max"} {
+		t.Setenv("ROKSBNKCTL_CNEINSTANCE_SIZE", size)
+		ws := &Workspace{}
+		OverrideFromEnv(ws)
+		if ws.BNK.CNEInstanceSize != size {
+			t.Errorf("explicit %q did not reach the config (got %q); the field must stay "+
+				"settable, or a platform that gains hugepage support would need a code change",
+				size, ws.BNK.CNEInstanceSize)
+		}
+	}
+
+	// Half two: unset stays EMPTY here rather than being filled in with a size.
+	// Empty is the tri-state the terraform side reads to apply the line default
+	// (Small on 2.3, Tiny on 2.4). If this layer ever substituted a concrete
+	// value, the 2.4 default would become unreachable and every workspace would
+	// carry whatever this layer chose.
+	// t.Setenv restores at test END, not between iterations, so the loop above
+	// leaves its last value set. Clear it explicitly or this asserts against
+	// whatever the loop happened to finish on.
+	t.Setenv("ROKSBNKCTL_CNEINSTANCE_SIZE", "")
+	ws := &Workspace{}
+	OverrideFromEnv(ws)
+	if ws.BNK.CNEInstanceSize != "" {
+		t.Errorf("unset cneinstance_size became %q; it must stay empty so the terraform "+
+			"line default (Tiny on 2.4) applies", ws.BNK.CNEInstanceSize)
+	}
+}

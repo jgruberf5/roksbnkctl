@@ -567,10 +567,30 @@ var DefaultBNKNetworkZones = []BNKZoneCfg{
 
 type BNKCfg struct {
 	// CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium,
-	// Large or Max. It decides how much TMM asks for, INCLUDING hugepages — Tiny
-	// requests none, Small requests 4Gi of hugepages-2Mi, and a stock ROKS worker
-	// reports zero, so anything above Tiny needs bnk.hugepages to allocate them
-	// first or the TMM pods stay Pending. See Appendix C for the sizing table.
+	// Large or Max. Empty takes the line default — Small on 2.3, Tiny on 2.4,
+	// which is what the BNK 2.4 IBM install guide and F5's reference cluster use.
+	//
+	// ON ROKS, Tiny IS THE ONLY VALUE THAT CAN RUN. deploymentSize decides how
+	// much TMM asks for, including hugepages: Tiny requests none, Small 4Gi of
+	// hugepages-2Mi, Medium 8Gi. A ROKS worker reports zero and there is no
+	// supported way to change that — the Node Tuning Operator route needs
+	// MachineConfigPools that ROKS does not have, ROKS deletes a user-created
+	// Tuned CR outright, and a hugepage allocated at runtime is invisible to
+	// kubelet, which only reads them at startup (#203).
+	//
+	// Do NOT reach for bnk.hugepages here. It is what the scheduling failure
+	// recommends and it is a no-op on ROKS. Nor does forcing the request to zero
+	// via bnk.tmm_resources help: TMM validates hugepages against the 2MB page
+	// cgroup limit at startup and exits — cleanly, code 0 — so the pod reports
+	// 4/5 Running and the Deployment simply never becomes Available.
+	//
+	// The field stays configurable rather than hardcoded so that a future IBM
+	// worker profile supporting hugepages needs no change to config.yaml or the
+	// ROKSBNKCTL_* surface — only the platform's answer changes. Capacity today
+	// comes from bnk.tmm_replicas and node size, not from a larger
+	// deploymentSize; Appendix C's Large cluster makes the same point, reaching
+	// ~31 Gbit/s with nine TMM pods on nine larger nodes at the Medium profile
+	// rather than by asking BNK for a bigger one.
 	CNEInstanceSize string `yaml:"cneinstance_size,omitempty"`
 
 	// FARRepoURL is the F5 Artifact Repository charts are pulled from. Empty uses
