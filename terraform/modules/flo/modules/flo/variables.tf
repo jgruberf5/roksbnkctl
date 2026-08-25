@@ -129,12 +129,6 @@ variable "utils_namespace" {
   default     = "f5-utils"
 }
 
-variable "kube_host" {
-  description = "Kubernetes API server URL"
-  type        = string
-  sensitive   = true
-}
-
 variable "kube_token" {
   description = "Kubernetes bearer token (used as the OCI chart-pull credential for the OpenShift in-cluster registry route)"
   type        = string
@@ -241,12 +235,6 @@ variable "f5_cne_far_auth_file" {
   default     = "f5-far-auth-key.tgz"
 }
 
-variable "f5_cne_subscription_jwt_file" {
-  description = "Subscription JWT filename in COS bucket"
-  type        = string
-  default     = "subscription.jwt"
-}
-
 # ==============================================================================
 # IBM IAM Trusted Profile Variables
 # ==============================================================================
@@ -289,8 +277,3 @@ variable "roksbnkctl_binary" {
   default     = ""
 }
 
-variable "helm_registry_config" {
-  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
-  type        = string
-  default     = ""
-}

@@ -693,6 +693,14 @@ func RunDown(ctx context.Context, in *LifecycleInputs) error {
 func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	// VarFiles is already chokepoint-normalized (PersistentPreRunE).
 	if spec, ok := terraformBackendSpec(in); ok && spec != "local" {
+		// The webhook deadlock (#208) is a property of the CLUSTER, not of which
+		// process runs terraform, so the containerised path needs the same sweep
+		// and it must happen BEFORE the destroy starts. tfws is nil here;
+		// resolveClusterIdentity falls back to cluster-outputs.json, which is
+		// what a second-phase workspace has.
+		if dcctx, derr := config.New(in.Workspace); derr == nil {
+			sweepTeardownWebhooks(ctx, dcctx, nil, in.errOut())
+		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "destroy")
 	}
 	cctx, tfws, err := openTF(ctx, in, true)
@@ -722,6 +730,10 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// Remove the admission webhook served from the BNK namespace before the
+	// destroy reaches it, or the namespace hangs in Terminating forever (#208).
+	sweepTeardownWebhooks(ctx, cctx, tfws, w)
+
 	// Auto-layer the trial phase's applied-tfvars replay as a low-precedence
 	// var-file so bare `down -w <ws>` (no --var-file) destroys cleanly.
 	// Returns nil when no snapshot exists.

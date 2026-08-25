@@ -71,23 +71,16 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 	// The list is self-cleaning: an entry that becomes read (or is deleted) is
 	// reported as stale, so it cannot outlive the problem it records.
 	knownUnread := map[string]bool{
-		"terraform/modules/cert_manager/modules/cert-manager: kube_host":               true,
-		"terraform/modules/cert_manager/modules/cert-manager: kube_token":              true,
-		"terraform/modules/cert_manager/modules/cert-manager: post_deployment_delay":   true,
-		"terraform/modules/cne_instance/modules/cneinstance: flo_deployment_id":        true,
-		"terraform/modules/cne_instance/modules/cneinstance: registry_mirror_username": true,
-		"terraform/modules/flo/modules/flo: f5_cne_subscription_jwt_file":              true,
-		"terraform/modules/flo/modules/flo: helm_registry_config":                      true,
-		"terraform/modules/flo/modules/flo: jwt_token":                                 true,
-		"terraform/modules/flo/modules/flo: kube_host":                                 true,
-		"terraform/modules/flp: helm_registry_config":                                  true,
-		"terraform/modules/flp: roks_cluster_dependency_id":                            true,
-		"terraform/modules/flp_vsi: flp_vsi_reach":                                     true,
-		"terraform/modules/gateway: ibmcloud_resource_group":                           true,
-		"terraform/modules/gateway: roks_cluster_dependency_id":                        true,
-		"terraform/modules/roks_cluster/modules/cluster: ibmcloud_api_key":             true,
-		"terraform: cluster_network_mode":                                              true,
-		"terraform: gateway_api_bundle_url":                                            true,
+		"terraform/modules/cne_instance/modules/cneinstance: flo_deployment_id": true,
+		"terraform/modules/flo/modules/flo: jwt_token":                          true,
+		"terraform/modules/flp: helm_registry_config":                           true,
+		"terraform/modules/flp: roks_cluster_dependency_id":                     true,
+		"terraform/modules/flp_vsi: flp_vsi_reach":                              true,
+		"terraform/modules/gateway: ibmcloud_resource_group":                    true,
+		"terraform/modules/gateway: roks_cluster_dependency_id":                 true,
+		"terraform/modules/roks_cluster/modules/cluster: ibmcloud_api_key":      true,
+		"terraform: cluster_network_mode":                                       true,
+		"terraform: gateway_api_bundle_url":                                     true,
 	}
 	stillUnread := map[string]bool{}
 
