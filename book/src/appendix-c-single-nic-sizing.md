@@ -100,7 +100,13 @@ following hold at once:
 | Flavour | `bx2.16x64` | `bx2.8x32` | `cx2.16x32` | `cx2.48x96` |
 | `deploymentSize` | `Tiny` | `Tiny` | `Tiny` | `Tiny` |
 | `tmmReplicas` | 1 | 3 | 3 | 9 |
-| Verified | **yes** | **yes** | pending | pending |
+| Verified | **yes** | **yes** | **yes** | **yes** |
+
+All four are verified: every component CR reporting `Available=True`, every TMM
+pod `5/5 Running`, `macvlan-internal` present, licence `Active`, and nothing
+outside `Running`/`Completed`. On the Large cluster the nine TMM pods land on
+nine distinct nodes, three per availability zone, which is the anti-affinity and
+topology-spread arrangement F5's reference configuration specifies.
 
 Note the third row. **`deploymentSize` is `Tiny` everywhere** — the column
 headings are *cluster* sizes, and the thing that changes between them is the
