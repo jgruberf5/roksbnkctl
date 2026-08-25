@@ -18,7 +18,7 @@ nowhere to stage a file.
 | An IBM Cloud API key | able to create VPCs, clusters and Transit Gateways |
 | IBM Cloud Object Storage | holding your F5 FAR auth key and subscription JWT |
 | A Transit Gateway | existing, for the disconnected use cases |
-| The runner image | `ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.53.1` or later |
+| The runner image | `ghcr.io/jgruberf5/roksbnkctl-tools-runner:v1.54.0` or later |
 
 Everything else — the services VPC, the private registry, the licence proxy, even the
 Argo controller itself — is built for you by `bootstrap`.
