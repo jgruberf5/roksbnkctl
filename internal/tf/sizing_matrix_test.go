@@ -61,6 +61,21 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 // stripped of the markdown emphasis and code ticks the table uses for emphasis.
 func parseAppendixRows(t *testing.T, md string) map[string][]string {
 	t.Helper()
+	// Scope to the canonical sizing table, identified by its header row. Other
+	// four-column tables exist in this appendix (the measured per-deploymentSize
+	// figures, for one) and some carry the same row labels -- parsing every
+	// four-cell row let a LATER table silently overwrite this one's values, which
+	// is exactly how this guard first broke.
+	const header = "| | Small | Medium | Large |"
+	start := strings.Index(md, header)
+	if start < 0 {
+		t.Fatalf("appendix C: canonical sizing table header %q not found", header)
+	}
+	md = md[start:]
+	if end := strings.Index(md, "\n\n"); end > 0 {
+		md = md[:end]
+	}
+
 	rows := map[string][]string{}
 	for _, line := range strings.Split(md, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
