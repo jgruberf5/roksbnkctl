@@ -67,7 +67,7 @@ BNK_VERSION="${BNK_VERSION:-2.4.0-EA}"
 FAR_AUTH_FILE="${FAR_AUTH_FILE:-}"                # required — the F5 service-account .tgz
 SUBSCRIPTION_JWT_FILE="${SUBSCRIPTION_JWT_FILE:-}"   # required — the subscription JWT
 
-RUNNER_TAG="${RUNNER_TAG:-v1.53.1}"
+RUNNER_TAG="${RUNNER_TAG:-v1.54.0}"
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"
 WS="${CI_WORKSPACE:-bnk-adopt}"
 WORK="${CI_WORK:-$HOME/bnk-adopt-state}"          # the state volume — mounted at /work

@@ -6,6 +6,20 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.54.0 — 2026-08-25
+
+**BNK 2.4 on ROKS is verified at four cluster sizes, and `deploymentSize` is not
+the knob you scale with.** All four shapes in Appendix C — 3, 6, 6 and 9 workers
+— run `deploymentSize: Tiny` with `tmmReplicas` of 1, 3, 3 and 9. Capacity comes
+from pod count and node size. Sizes above `Tiny` request hugepages that ROKS has
+no supported way to allocate, which is why `bnk.hugepages` now refuses with an
+explanation instead of applying a `Tuned` CR the platform deletes.
+
+Two silent installs are fixed: FLO was skipping the CSRC component entirely
+under `containerPlatform: OCP`, and `bnk down` was leaving the namespace stuck
+in `Terminating` behind a webhook whose service it had already deleted.
+
+
 ### Removed
 
 - **`bnk.flp.vsi.reach` did nothing, and is gone** (#210). It had a config
