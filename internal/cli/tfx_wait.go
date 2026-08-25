@@ -499,15 +499,23 @@ func terminalWaitDiagnosis(desc string) (string, bool) {
 // the resource rather than the error text because the failure has no
 // distinguishing error at all -- the object is simply gone.
 func vanishedTunedDiagnosis(gvr string) (string, bool) {
-	if !strings.Contains(gvr, "tuned.openshift.io") {
+	// Two resources reach here, and both mean the same thing for the operator.
+	// The MachineConfigPool wait is the one that actually fires on ROKS: it runs
+	// BEFORE the Tuned apply, because the apply itself errors when the CR is
+	// deleted between write and read-back, which would skip anything ordered
+	// after it. The Tuned case is kept for a platform that accepts the CR and
+	// then discards it.
+	if !strings.Contains(gvr, "tuned.openshift.io") &&
+		!strings.Contains(gvr, "machineconfiguration.openshift.io") {
 		return "", false
 	}
-	return "the Tuned CR was accepted by the API and then removed.\n\n" +
-		"  ROKS deletes user-created Tuned CRs in openshift-cluster-node-tuning-operator,\n" +
-		"  so bnk.hugepages cannot allocate hugepages there. It is also unable to take\n" +
-		"  effect a second way: the profile sets a [bootloader] kernel argument, which\n" +
-		"  needs the Machine Config Operator to roll the worker pool, and ROKS reports\n" +
-		"  ZERO MachineConfigPools because IBM manages the worker OS.\n\n" +
+	return "bnk.hugepages cannot take effect on this cluster.\n\n" +
+		"  The profile sets a [bootloader] kernel argument, which needs the Machine\n" +
+		"  Config Operator to render a MachineConfig and roll the worker pool. ROKS\n" +
+		"  reports ZERO MachineConfigPools because IBM manages the worker OS, so the\n" +
+		"  argument would be written and never applied. ROKS also DELETES user-created\n" +
+		"  Tuned CRs outright -- the API returns a real object and the next read is\n" +
+		"  NotFound, which terraform reports as a provider bug and is not one.\n\n" +
 		"  Do not reach for bnk.hugepages on ROKS. deploymentSize above Tiny requests\n" +
 		"  hugepages that the platform cannot provide (Small 4Gi, Medium 8Gi), and TMM\n" +
 		"  validates the 2MB page cgroup limit at startup and exits if it is zero.\n\n" +

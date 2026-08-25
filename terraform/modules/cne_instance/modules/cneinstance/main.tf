@@ -996,10 +996,42 @@ depends_on = [kubectl_manifest.cneinstance]
 #
 # THIS WOULD REBOOT WORKERS on a platform where it applies: the Machine Config
 # Operator drains and restarts each node in turn. Hence off by default.
+# Can this platform apply a bootloader Tuned profile at all? (#203)
+#
+# Ordering matters here. An after-the-fact read-back of the Tuned CR would never
+# run: on ROKS the kubectl_manifest apply itself ERRORS ("Root object was
+# present, but now absent") because the CR is deleted between apply and read, so
+# anything depending on it is skipped. The check has to come FIRST.
+#
+# What it checks is the MachineConfigPool the profile targets. The profile sets a
+# [bootloader] kernel argument, which only means something if the Machine Config
+# Operator can render a MachineConfig and roll that pool. ROKS reports ZERO
+# MachineConfigPools -- IBM manages the worker OS -- so the argument would be
+# written and never applied.
+#
+# Keyed on the pool rather than on "is this ROKS" so a platform that gains the
+# capability starts working without a code change here.
+resource "null_resource" "hugepages_supported" {
+  count = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
+
+  triggers = {
+    role = var.cneinstance_hugepages_node_role
+  }
+
+  provisioner "local-exec" {
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr machineconfiguration.openshift.io/v1/machineconfigpools --name ${var.cneinstance_hugepages_node_role} --for jsonpath=metadata.name=${var.cneinstance_hugepages_node_role} --timeout 30s"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
+  }
+}
+
 resource "kubectl_manifest" "hugepages_tuned" {
   count             = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
   server_side_apply = true
   force_conflicts   = true
+
+  depends_on = [null_resource.hugepages_supported]
 
   yaml_body = yamlencode({
     apiVersion = "tuned.openshift.io/v1"
@@ -1038,31 +1070,3 @@ resource "kubectl_manifest" "hugepages_tuned" {
   })
 }
 
-# Did the Tuned CR actually survive? (#203)
-#
-# On ROKS it does not: the API accepts the create and the object is gone by the
-# next read, which terraform reports as "Provider produced inconsistent result
-# after apply ... Root object was present, but now absent" -- a message that
-# blames the provider and tells the operator nothing about hugepages, the
-# platform, or what to do instead.
-#
-# This reads the CR back and fails with the real explanation. It is a READ, so
-# it costs nothing on a platform where the profile sticks; there, the CR is
-# found and this is a no-op.
-resource "null_resource" "hugepages_tuned_verify" {
-  count = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
-
-  triggers = {
-    tuned = kubectl_manifest.hugepages_tuned[0].id
-  }
-
-  provisioner "local-exec" {
-    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr tuned.openshift.io/v1/tuneds --ns openshift-cluster-node-tuning-operator --name ${var.cneinstance_hugepages_profile_name} --for jsonpath=metadata.name=${var.cneinstance_hugepages_profile_name} --timeout 60s"
-    environment = {
-      KUBE_TOKEN = var.kube_token
-    }
-    on_failure = fail
-  }
-
-  depends_on = [kubectl_manifest.hugepages_tuned]
-}

@@ -14,12 +14,24 @@ import (
 // for anything else: a diagnosis attached to the wrong timeout is worse than
 // none, because it sends the reader somewhere unrelated with confidence.
 func TestVanishedTunedDiagnosisFiresOnlyForTuned(t *testing.T) {
-	got, ok := vanishedTunedDiagnosis("tuned.openshift.io/v1/tuneds")
+	// Both resources must produce it. The MachineConfigPool wait is the one that
+	// actually fires on ROKS -- it runs BEFORE the Tuned apply, which errors and
+	// would skip anything ordered after it.
+	for _, gvr := range []string{
+		"tuned.openshift.io/v1/tuneds",
+		"machineconfiguration.openshift.io/v1/machineconfigpools",
+	} {
+		if _, ok := vanishedTunedDiagnosis(gvr); !ok {
+			t.Fatalf("no diagnosis for %s; that is the wait this exists to explain", gvr)
+		}
+	}
+	got, ok := vanishedTunedDiagnosis("machineconfiguration.openshift.io/v1/machineconfigpools")
 	if !ok {
-		t.Fatal("no diagnosis for a tuned.openshift.io wait; the whole point is to explain this one")
+		t.Fatal("unreachable")
 	}
 	for _, want := range []string{
-		"ROKS deletes user-created Tuned CRs",
+		"ZERO MachineConfigPools",
+		"DELETES user-created",
 		"ZERO MachineConfigPools",
 		"bnk.tmm_replicas",
 		"#203",
