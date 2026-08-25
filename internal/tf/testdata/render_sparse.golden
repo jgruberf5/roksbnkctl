@@ -42,7 +42,6 @@ flp_vsi_name_prefix = "flp"
 flp_vsi_profile = "bx2-2x8"
 flp_vsi_zone = "z"
 flp_vsi_boot_size_gb = 100
-flp_vsi_reach = "public"
 flp_vsi_management_allowed_cidrs = ["10.0.0.0/8"]
 flp_vsi_licensing_allowed_cidrs = ["10.1.0.0/16"]
 flp_vsi_ssh_key = "k"

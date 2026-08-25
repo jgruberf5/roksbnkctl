@@ -59,14 +59,7 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 	//                                not by terraform. Its own description says
 	//                                "Terraform installs nothing from this."
 	//
-	//   flp_vsi_reach                genuinely inert -- rendered into tfvars and
-	//                                read by no terraform. NOT deleted here
-	//                                because removing it end to end means
-	//                                dropping a documented config field and
-	//                                ROKSBNKCTL_* override, which is a product
-	//                                decision. Tracked as #210.
-	//
-	// Fifteen were removed across #207, #209 and this change. Two constraints
+	// Sixteen were removed across #207, #209, #211 and #210. Two constraints
 	// cost a full revert and are worth knowing before automating any of it: a
 	// bulk regex on `^\s*name\s*=` also matches `name = var.name` INSIDE a
 	// provider block, which is provider configuration and not a module pass; and
@@ -78,7 +71,6 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 	knownUnread := map[string]bool{
 		"terraform/modules/cne_instance/modules/cneinstance: flo_deployment_id": true,
 		"terraform/modules/flp: roks_cluster_dependency_id":                     true,
-		"terraform/modules/flp_vsi: flp_vsi_reach":                              true,
 		"terraform/modules/gateway: roks_cluster_dependency_id":                 true,
 		"terraform: cluster_network_mode":                                       true,
 		"terraform: gateway_api_bundle_url":                                     true,

@@ -200,7 +200,6 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_FLP_VSI_PROFILE` | `bnk.flp.vsi.profile` | VSI instance profile; blank → `bx2-4x16` (the FLP's 4 vCPU / 8 GB floor) |
 | `ROKSBNKCTL_FLP_VSI_SSH_KEY` | `bnk.flp.vsi.ssh_key` | name of an existing IBM Cloud VPC SSH key |
 | `ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB` | `bnk.flp.vsi.boot_size_gb` | integer; blank → 100 |
-| `ROKSBNKCTL_FLP_VSI_REACH` | `bnk.flp.vsi.reach` | `private` (default) \| `floating` — the address the CWC dials |
 | `ROKSBNKCTL_FLP_VSI_FLOATING_IP` | `bnk.flp.vsi.floating_ip` | bool; an unparseable value leaves the **module default (true)** rather than pinning false |
 | `ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS` | `bnk.flp.vsi.management_allowed_cidrs` | **comma-separated** list — gates the `:80` status UI |
 | `ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS` | `bnk.flp.vsi.licensing_allowed_cidrs` | **comma-separated** list — gates the `:8443` proxy + `:22` |

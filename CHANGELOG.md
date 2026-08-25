@@ -6,6 +6,30 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Removed
+
+- **`bnk.flp.vsi.reach` did nothing, and is gone** (#210). It had a config
+  field, a `ROKSBNKCTL_FLP_VSI_REACH` override, a book entry and a tfvars
+  render — and no terraform read it. Setting it changed the generated tfvars
+  and nothing else.
+
+  It is not superseded, it is obsolete. The FLP VSI module decided the question
+  the setting was asking: `local.reach_ip` is *always* the private VPC address,
+  with the comment "the consuming cluster reaches the proxy privately (same VPC
+  or over a Transit Gateway)". The floating IP that `reach: floating` would have
+  selected is a **management** path — remote `flp status` and the `:80` web UI —
+  explicitly "NOT the CWC endpoint". `bnk.flp.vsi.floating_ip` still controls
+  that, and is unaffected.
+
+  A workspace or blueprint carrying `bnk.flp.vsi.reach` needs no edit: an
+  unrecognised key is ignored, and it was expressing nothing before. Removing
+  it is visible only in that the tool no longer advertises a setting it does not
+  honour.
+
+  Third of this shape after `cneinstance_advanced_env` (#175) and
+  `install_cert_manager` (#186), and the first found by the guard added for
+  #204 rather than by an operator hitting it.
+
 ### Fixed
 
 - **FLO installed BNK without CSRC, and said nothing** (found while

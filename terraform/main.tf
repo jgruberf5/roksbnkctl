@@ -440,7 +440,6 @@ module "flp_vsi" {
   flp_status_registry_ca_b64       = var.flp_status_registry_ca_b64
   flp_vsi_zone                     = var.flp_vsi_zone
   flp_vsi_boot_size_gb             = var.flp_vsi_boot_size_gb
-  flp_vsi_reach                    = var.flp_vsi_reach
   flp_vsi_floating_ip              = var.flp_vsi_floating_ip
   flp_vsi_management_allowed_cidrs = var.flp_vsi_management_allowed_cidrs
   flp_vsi_licensing_allowed_cidrs  = var.flp_vsi_licensing_allowed_cidrs

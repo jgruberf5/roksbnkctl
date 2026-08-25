@@ -1007,9 +1007,6 @@ type BNKFLPVSICfg struct {
 	Zone string `yaml:"zone,omitempty"`
 	// BootSizeGB is the boot volume size. 0 → 100 (clears the FLP's >80 GB requirement).
 	BootSizeGB int `yaml:"boot_size_gb,omitempty"`
-	// Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP,
-	// for a CWC in the same/peered VPC) or "floating" (a public floating IP).
-	Reach string `yaml:"reach,omitempty"`
 	// ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80
 	// flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries
 	// no secrets). Rendered as flp_vsi_management_allowed_cidrs.

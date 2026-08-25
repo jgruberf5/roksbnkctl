@@ -40,12 +40,6 @@ variable "flp_vsi_boot_size_gb" {
   default     = 100
 }
 
-variable "flp_vsi_reach" {
-  description = "How the CWC dials the proxy: private (VSI VPC IP) or floating (public floating IP)."
-  type        = string
-  default     = "private"
-}
-
 variable "flp_vsi_floating_ip" {
   description = "Attach an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true."
   type        = bool
