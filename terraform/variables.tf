@@ -866,11 +866,6 @@ variable "flp_vsi_boot_size_gb" {
   type        = number
   default     = 100
 }
-variable "flp_vsi_reach" {
-  description = "How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating."
-  type        = string
-  default     = "private"
-}
 variable "flp_vsi_floating_ip" {
   description = "Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true."
   type        = bool

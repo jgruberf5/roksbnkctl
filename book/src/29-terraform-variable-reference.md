@@ -112,7 +112,6 @@ Source: `terraform/variables.tf`
 | `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile for the FLP (>= 4 vCPU / 8 GB). | no |
 | `flp_vsi_zone` | `string` | `""` | Zone for the FLP VSI. Empty → `<region>`-1. | no |
 | `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size (GB) for the FLP VSI (>= 80). | no |
-| `flp_vsi_reach` | `string` | `"private"` | How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating. | no |
 | `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true. | no |
 | `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open). | no |
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges. | no |
@@ -341,7 +340,6 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile (>= 4 vCPU / 8 GB). | no |
 | `flp_vsi_zone` | `string` | `""` | Zone for the VSI (e.g. us-south-1). Empty → `<region>`-1. | no |
 | `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size in GB (>= 80). | no |
-| `flp_vsi_reach` | `string` | `"private"` | How the CWC dials the proxy: private (VSI VPC IP) or floating (public floating IP). | no |
 | `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true. | no |
 | `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :80 flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries no secrets). | no |
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway). | no |

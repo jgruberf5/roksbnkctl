@@ -147,7 +147,7 @@ func fullyPopulatedWorkspace(t *testing.T) *config.Workspace {
 	ws.BNK.FLP = &config.BNKFLPCfg{
 		Mode: "vsi", Namespace: "flp-ns", ChartVersion: "v1", StorageClass: "sc",
 		VSI: &config.BNKFLPVSICfg{
-			NamePrefix: "flp", VPC: "vpc", Zone: "z", BootSizeGB: 100, Reach: "public",
+			NamePrefix: "flp", VPC: "vpc", Zone: "z", BootSizeGB: 100,
 			SSHKey: "k", FloatingIP: &tr, Profile: "bx2-2x8",
 			ManagementAllowedCIDRs: []string{"10.0.0.0/8"},
 			LicensingAllowedCIDRs:  []string{"10.1.0.0/16"},

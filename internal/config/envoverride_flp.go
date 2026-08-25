@@ -33,7 +33,6 @@ import (
 //	ROKSBNKCTL_FLP_VSI_PROFILE              → bnk.flp.vsi.profile
 //	ROKSBNKCTL_FLP_VSI_SSH_KEY              → bnk.flp.vsi.ssh_key
 //	ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB         → bnk.flp.vsi.boot_size_gb (int)
-//	ROKSBNKCTL_FLP_VSI_REACH                → bnk.flp.vsi.reach (private | floating)
 //	ROKSBNKCTL_FLP_VSI_FLOATING_IP          → bnk.flp.vsi.floating_ip (bool)
 //	ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS → bnk.flp.vsi.management_allowed_cidrs (comma list)
 //	ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS  → bnk.flp.vsi.licensing_allowed_cidrs (comma list)
@@ -62,7 +61,6 @@ var flpVSIStringOverrides = []struct {
 	{"ROKSBNKCTL_FLP_VSI_ZONE", "bnk.flp.vsi.zone", func(c *BNKFLPVSICfg, v string) { c.Zone = v }},
 	{"ROKSBNKCTL_FLP_VSI_PROFILE", "bnk.flp.vsi.profile", func(c *BNKFLPVSICfg, v string) { c.Profile = v }},
 	{"ROKSBNKCTL_FLP_VSI_SSH_KEY", "bnk.flp.vsi.ssh_key", func(c *BNKFLPVSICfg, v string) { c.SSHKey = v }},
-	{"ROKSBNKCTL_FLP_VSI_REACH", "bnk.flp.vsi.reach", func(c *BNKFLPVSICfg, v string) { c.Reach = v }},
 	// #60 gave the proxy its own VPC; #64 makes that reachable from a
 	// blueprint, which until now it was not — the field existed only in a
 	// config.yaml the Forge modules never write.

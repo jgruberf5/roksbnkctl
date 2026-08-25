@@ -179,7 +179,6 @@ BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running t
 | `profile` | `string` | 2.3 + 2.4 | — | no | Profile is the IBM Cloud VSI instance profile. |
 | `zone` | `string` | 2.3 + 2.4 | — | no | Zone the VSI lands in (e.g. us-south-1). |
 | `boot_size_gb` | `int` | 2.3 + 2.4 | — | no | BootSizeGB is the boot volume size. |
-| `reach` | `string` | 2.3 + 2.4 | — | no | Reach selects the address the CWC dials: "private" (default — the VSI's VPC IP, for a CWC in the same/peered VPC) or "floating" (a public floating IP). |
 | `management_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80 flp-status web UI (read-only status). |
 | `licensing_allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | LicensingAllowedCIDRs are the source CIDRs permitted to reach the :8443 licensing proxy (and :22 SSH). |
 | `allowed_cidrs` | `[]string` | 2.3 + 2.4 | — | no | AllowedCIDRs is DEPRECATED — a legacy single list. |

@@ -806,9 +806,6 @@ func renderBNKFLP(w io.Writer, ws *config.Workspace) {
 			if vsi.BootSizeGB > 0 {
 				fmt.Fprintf(w, "flp_vsi_boot_size_gb = %d\n", vsi.BootSizeGB)
 			}
-			if vsi.Reach != "" {
-				fmt.Fprintf(w, "flp_vsi_reach = %q\n", vsi.Reach)
-			}
 			// Per-plane SG source CIDRs: management (:80, default open) + licensing
 			// (:8443/:22, default RFC-1918). The legacy allowed_cidrs seeds both when set.
 			if len(vsi.ManagementAllowedCIDRs) > 0 {
