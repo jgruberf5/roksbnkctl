@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -142,4 +143,55 @@ func namesUsedUnder(t *testing.T, dir string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// The companion check, in the other direction.
+//
+// TestDemoEnvAllowlistCoversEveryOverride asks whether every supported override
+// appears in .env.example. It cannot see the opposite drift: an entry naming an
+// override that no longer EXISTS. That happens whenever a setting is removed —
+// the file keeps exporting a variable nothing reads, and the failure is silent
+// in the same way, because an unrecognised ROKSBNKCTL_* is simply ignored.
+//
+// It happened immediately: removing bnk.flp.vsi.reach (#210) left
+// ROKSBNKCTL_FLP_VSI_REACH in the demo's allowlist, and the whole suite stayed
+// green. A reader of that file would reasonably conclude the setting still does
+// something.
+func TestDemoEnvAllowlistHasNoEntriesForOverridesThatNoLongerExist(t *testing.T) {
+	root := repoRootForDemoTest(t)
+	envExample := filepath.Join(root, "scripts/demos/blueprint-workflows-ci-demo/.env.example")
+
+	supported := map[string]bool{}
+	for _, n := range SupportedOverrideNames() {
+		supported[n] = true
+	}
+
+	// Only the ROKSBNKCTL_* namespace is ours. The file also carries the demo's
+	// own driver variables (ARGO_NAMESPACE, DRY_RUN, KUBECONFIG, ...), which the
+	// tool never reads and which are none of this test's business.
+	//
+	// ROKSBNKCTL_VERSION is the exception inside our own prefix: it selects which
+	// release the demo installs, and is consumed by the demo script rather than
+	// by the tool's override machinery.
+	demoOwn := map[string]bool{
+		"ROKSBNKCTL_VERSION": true,
+	}
+
+	var stale []string
+	for name := range declaredInEnvExample(t, envExample) {
+		if !strings.HasPrefix(name, "ROKSBNKCTL_") {
+			continue
+		}
+		if supported[name] || demoOwn[name] {
+			continue
+		}
+		stale = append(stale, name)
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("the demo's .env.example declares %d ROKSBNKCTL_* name(s) that are not "+
+			"supported overrides, so setting them does nothing and the file advertises "+
+			"settings the tool does not honour:\n  %s",
+			len(stale), strings.Join(stale, "\n  "))
+	}
 }
