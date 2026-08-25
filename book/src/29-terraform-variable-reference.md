@@ -224,7 +224,6 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_dependency_id` | `string` | `null` | flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered | no |
 | `deploy_bnk` | `bool` | `true` | Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created | no |
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/cne_instance"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
-| `registry_mirror_username` | `string` | `""` | Basic-auth username for an external registry mirror (private Harbor/Artifactory). | no |
 | `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously. | **yes** |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
@@ -279,7 +278,6 @@ Source: `terraform/modules/flo/variables.tf`
 | `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
 | `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing the FAR auth key and JWT files | no |
 | `f5_cne_far_auth_file` | `string` | `"f5-far-auth-key.tgz"` | FAR auth key filename in the COS bucket (.tgz) | no |
-| `f5_cne_subscription_jwt_file` | `string` | `"subscription.jwt"` | Subscription JWT filename in the COS bucket | no |
 | `flo_trusted_profile_sa_name` | `string` | `""` | Service account the CNE controller Trusted Profile is linked to. | no |
 | `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC. | no |
 | `flo_namespace` | `string` | `"f5-bnk"` | Namespace for F5 Lifecycle Operator | no |
@@ -295,7 +293,6 @@ Source: `terraform/modules/flo/variables.tf`
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/flo"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
 | `scratch_dir` | `string` | `"/work/.bnk/scratch"` | Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
-| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
 
 ## Module: `flp`

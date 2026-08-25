@@ -141,7 +141,6 @@ module "flo" {
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
-  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   flo_namespace                 = var.flo_namespace
   flo_trusted_profile_sa_name   = var.flo_trusted_profile_sa_name
   flo_trusted_profile_roles     = var.flo_trusted_profile_roles
@@ -156,7 +155,6 @@ module "flo" {
   kubeconfig_dir                = "${var.kubeconfig_dir}/flo"
   scratch_dir                   = var.scratch_dir
   roksbnkctl_binary             = var.roksbnkctl_binary
-  helm_registry_config          = var.helm_registry_config
 }
 
 locals {
@@ -262,7 +260,6 @@ module "cne_instance" {
   flo_dependency_id          = module.flo.flo_ready_id
   deploy_bnk                 = var.deploy_bnk
   kubeconfig_dir             = "${var.kubeconfig_dir}/cne_instance"
-  registry_mirror_username   = var.registry_mirror_username
   registry_mirror_password   = var.registry_mirror_password
   roksbnkctl_binary          = var.roksbnkctl_binary
 }

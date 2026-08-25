@@ -40,25 +40,6 @@ variable "timeout" {
   default     = 600
 }
 
-variable "post_deployment_delay" {
-  description = "Delay after cert-manager deployment (in seconds) to ensure CRDs are registered"
-  type        = number
-  default     = 30
-}
-
-variable "kube_host" {
-  description = "Kubernetes API server URL (used by kubectl/helm local-exec provisioners)"
-  type        = string
-  default     = ""
-}
-
-variable "kube_token" {
-  description = "Kubernetes bearer token (used by kubectl/helm local-exec provisioners)"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "registry_mirror_username" {
   description = "Basic-auth username for an external registry mirror (a private Harbor/Artifactory). Empty → no mirror pull secret is created."
   type        = string

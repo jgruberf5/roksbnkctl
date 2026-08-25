@@ -722,6 +722,10 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// Remove the admission webhook served from the BNK namespace before the
+	// destroy reaches it, or the namespace hangs in Terminating forever (#208).
+	sweepTeardownWebhooks(ctx, cctx, tfws, w)
+
 	// Auto-layer the trial phase's applied-tfvars replay as a low-precedence
 	// var-file so bare `down -w <ws>` (no --var-file) destroys cleanly.
 	// Returns nil when no snapshot exists.

@@ -77,7 +77,6 @@ module "flo" {
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
-  f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
 
   # FLO Configuration
   f5_bigip_k8s_manifest_version = var.f5_bigip_k8s_manifest_version
@@ -85,7 +84,6 @@ module "flo" {
   trusted_profile_sa_name       = var.flo_trusted_profile_sa_name
   trusted_profile_roles         = var.flo_trusted_profile_roles
   utils_namespace               = var.flo_utils_namespace
-  kube_host                     = try(data.ibm_container_cluster_config.runtime_config[0].host, "")
   kube_token                    = try(data.ibm_container_cluster_config.runtime_config[0].token, "")
 
   # BIG-IP CIS Configuration
@@ -111,7 +109,6 @@ module "flo" {
   # Certificate Manager
   cert_manager_namespace = var.cert_manager_namespace
   roksbnkctl_binary      = var.roksbnkctl_binary
-  helm_registry_config   = var.helm_registry_config
 }
 
 # Sentinel: token rotates on every apply, so this null_resource is replaced every apply.

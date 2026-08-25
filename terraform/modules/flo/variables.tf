@@ -144,12 +144,6 @@ variable "f5_cne_far_auth_file" {
   default     = "f5-far-auth-key.tgz"
 }
 
-variable "f5_cne_subscription_jwt_file" {
-  description = "Subscription JWT filename in the COS bucket"
-  type        = string
-  default     = "subscription.jwt"
-}
-
 # ============================================================
 # FLO Namespace Configuration
 # ============================================================
@@ -260,12 +254,6 @@ variable "scratch_dir" {
 
 variable "roksbnkctl_binary" {
   description = "Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
-  type        = string
-  default     = ""
-}
-
-variable "helm_registry_config" {
-  description = "Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login."
   type        = string
   default     = ""
 }
