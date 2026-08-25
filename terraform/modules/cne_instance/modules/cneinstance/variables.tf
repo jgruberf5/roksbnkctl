@@ -24,12 +24,6 @@ variable "utils_namespace" {
   default     = "f5-utils"
 }
 
-variable "cneinstance_spec" {
-  description = "Full CNEInstance specification (if empty, will be generated from individual variables)"
-  type        = any
-  default     = {}
-}
-
 # Individual spec configuration variables (used if cneinstance_spec is not provided)
 variable "f5_bigip_k8s_manifest_version" {
   description = "F5 BIG-IP Kubernetes manifest version"
@@ -308,6 +302,12 @@ variable "roksbnkctl_binary" {
   description = "Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH."
   type        = string
   default     = ""
+}
+
+variable "cneinstance_tmm_resources" {
+  description = "TMM resource requests/limits override; rendered as advanced.tmm.resources (#203)."
+  type        = map(map(string))
+  default     = {}
 }
 
 variable "cneinstance_advanced_env" {

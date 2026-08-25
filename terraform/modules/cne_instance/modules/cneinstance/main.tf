@@ -601,7 +601,10 @@ locals {
       }, local.adv_env_optional["maintenanceMode"])
       tmm = merge({
         env = local.adv_env["tmm"]
-      }, local.adv_tmm_rolling_24)
+        }, local.adv_tmm_rolling_24,
+        # Empty renders no resources key, leaving the controller's
+        # deploymentSize-derived values alone (#203).
+      length(var.cneinstance_tmm_resources) > 0 ? { resources = var.cneinstance_tmm_resources } : {})
       pseudoCNI = {
         env = local.adv_env["pseudoCNI"]
       }
@@ -963,24 +966,72 @@ depends_on = [kubectl_manifest.cneinstance]
 # ── hugepages on the worker pool ─────────────────────────────────────────────
 #
 # BNK's deploymentSize decides how much TMM asks for: Tiny requests none, Small
-# requests 4Gi of hugepages-2Mi. A stock ROKS worker reports zero — including
-# F5's approved reference cluster, which runs Tiny for exactly that reason. So
-# any size above Tiny needs hugepages allocated, or TMM never schedules.
+# 4Gi of hugepages-2Mi, Medium 8Gi. So any size above Tiny needs hugepages
+# allocated, or TMM never schedules.
 #
-# A Tuned profile rather than a MachineConfig: the Node Tuning Operator is
-# already installed on OpenShift (the reference cluster has tuned/default), it
-# owns the node-level kernel tuning surface, and it renders the MachineConfig
-# itself. Writing a MachineConfig by hand would put this tree in competition
-# with an operator that is already there to do it.
+# ON ROKS THIS CANNOT WORK, AND IT FAILS SILENTLY (#203). Two independent
+# reasons, both measured on live 4.21 clusters:
 #
-# THIS REBOOTS WORKERS. `cmdline_hugepages` is a bootloader argument, so the
-# Machine Config Operator rolls the pool to apply it — draining and restarting
-# each node in turn. Hence off by default: a cluster that does not need
-# hugepages should never be rebooted because a default said so.
+#   1. `cmdline_hugepages` is a bootloader argument, so it needs the Machine
+#      Config Operator to render a MachineConfig and roll the pool. ROKS reports
+#      ZERO MachineConfigPools and zero MachineConfigs -- IBM manages the worker
+#      OS -- so there is no pool to match and the reboot below never happens.
+#
+#   2. ROKS DELETES the Tuned CR. `kubectl create` returns a real object with a
+#      uid and resourceVersion, and the next read is NotFound. That is what
+#      surfaces as terraform's "Provider produced inconsistent result after
+#      apply ... Root object was present, but now absent", which reads like a
+#      provider bug and is not one. A [sysctl] vm.nr_hugepages profile, which
+#      would need neither MCO nor a reboot, is removed the same way.
+#
+# Allocating at runtime does work -- a privileged pod can write
+# /proc/sys/vm/nr_hugepages -- but kubelet only discovers hugepages at startup,
+# so the node keeps advertising allocatable 0.
+#
+# This is left in place rather than deleted because the block is correct for a
+# platform whose Tuned CRs survive; only ROKS's answer is missing. What is added
+# below is a check that says so out loud instead of letting the operator read a
+# provider bug report. See Appendix C: capacity comes from tmm_replicas and node
+# size, and deploymentSize stays Tiny.
+#
+# THIS WOULD REBOOT WORKERS on a platform where it applies: the Machine Config
+# Operator drains and restarts each node in turn. Hence off by default.
+# Can this platform apply a bootloader Tuned profile at all? (#203)
+#
+# Ordering matters here. An after-the-fact read-back of the Tuned CR would never
+# run: on ROKS the kubectl_manifest apply itself ERRORS ("Root object was
+# present, but now absent") because the CR is deleted between apply and read, so
+# anything depending on it is skipped. The check has to come FIRST.
+#
+# What it checks is the MachineConfigPool the profile targets. The profile sets a
+# [bootloader] kernel argument, which only means something if the Machine Config
+# Operator can render a MachineConfig and roll that pool. ROKS reports ZERO
+# MachineConfigPools -- IBM manages the worker OS -- so the argument would be
+# written and never applied.
+#
+# Keyed on the pool rather than on "is this ROKS" so a platform that gains the
+# capability starts working without a code change here.
+resource "null_resource" "hugepages_supported" {
+  count = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
+
+  triggers = {
+    role = var.cneinstance_hugepages_node_role
+  }
+
+  provisioner "local-exec" {
+    command = "${local.roksbnkctl_bin} tfx wait --kube-host ${var.kube_host} --insecure --gvr machineconfiguration.openshift.io/v1/machineconfigpools --name ${var.cneinstance_hugepages_node_role} --for jsonpath=metadata.name=${var.cneinstance_hugepages_node_role} --timeout 30s"
+    environment = {
+      KUBE_TOKEN = var.kube_token
+    }
+  }
+}
+
 resource "kubectl_manifest" "hugepages_tuned" {
   count             = local.use_kubectl && var.cneinstance_hugepages ? 1 : 0
   server_side_apply = true
   force_conflicts   = true
+
+  depends_on = [null_resource.hugepages_supported]
 
   yaml_body = yamlencode({
     apiVersion = "tuned.openshift.io/v1"
@@ -1018,3 +1069,4 @@ resource "kubectl_manifest" "hugepages_tuned" {
     }
   })
 }
+

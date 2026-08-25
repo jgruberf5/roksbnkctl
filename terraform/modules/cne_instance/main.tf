@@ -72,6 +72,7 @@ module "cneinstance" {
   cneinstance_pseudocni         = true
   cneinstance_env_discovery     = false
   cneinstance_advanced_env      = var.cneinstance_advanced_env
+  cneinstance_tmm_resources     = var.cneinstance_tmm_resources
 
   cneinstance_tcp_settings           = var.cneinstance_tcp_settings
   cneinstance_hugepages              = var.cneinstance_hugepages

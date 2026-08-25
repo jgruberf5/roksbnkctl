@@ -29,12 +29,6 @@ variable "scratch_dir" {
   default     = "/work/.bnk/scratch"
 }
 
-variable "cert_manager_crd_ready" {
-  description = "Set to true when cert-manager has been applied and its CRDs are registered"
-  type        = bool
-  default     = false
-}
-
 variable "far_repo_url" {
   description = "FAR Repository URL for docker and helm registry"
   type        = string

@@ -138,6 +138,7 @@ Source: `terraform/variables.tf`
 | `testing_client_vpc_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound to the testing client VPC's default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway). | no |
 | `cluster_http_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable). | no |
 | `cluster_vpc_default_sg_inbound_cidrs` | `list(string)` | `[]` | Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC's default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source. | no |
+| `cneinstance_tmm_resources` | `map(map(string))` | `{}` | Overrides the TMM pod's resource requests/limits, rendered as the CNEInstance's advanced.tmm.resources (#203). | no |
 | `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component environment passthrough for the BNK 2.4 CNEInstance's advanced.`<component>`.env[] lists (#175). | no |
 | `cneinstance_tmm_replicas` | `number` | `3` | Number of f5-tmm data-plane replicas (2.4). Reference: 3. | no |
 | `cneinstance_watch_namespaces` | `list(string)` | `["All"]` | Namespaces the CNE controller watches (2.4). Reference: [\"All\"]. | no |
@@ -227,6 +228,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `registry_mirror_password` | `string` | `""` | Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously. | **yes** |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the CNE-instance phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
+| `cneinstance_tmm_resources` | `map(map(string))` | `{}` | TMM resource requests/limits override; rendered as advanced.tmm.resources (#203). | no |
 | `cneinstance_advanced_env` | `map(map(string))` | `{}` | Per-component advanced.`<component>`.env passthrough (#175). See the root variable of the same name. | no |
 | `cneinstance_tmm_replicas` | `number` | `3` | Number of f5-tmm data-plane replicas (2.4). Reference: 3. | no |
 | `cneinstance_watch_namespaces` | `list(string)` | `["All"]` | Namespaces the CNE controller watches (2.4). Reference: [\"All\"]. | no |
