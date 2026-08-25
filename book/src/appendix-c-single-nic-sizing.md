@@ -114,6 +114,89 @@ node flavour and `tmmReplicas`, not the BNK profile. The "Baseline" column is
 the shape the BNK 2.4 IBM install guide itself describes (a 3-node 16-vCPU
 cluster); the other three are F5's sizing-guide cluster shapes.
 
+### The configuration for each
+
+Common to all four. `manifest_version` must be set explicitly — leaving it out
+installs the **2.3** line, and the first symptom is a `CNEInstance` validation
+error minutes into the apply complaining that `deploymentSize: Tiny` is
+unsupported, because `Tiny` does not exist on 2.3.
+
+```yaml
+bnk:
+  manifest_version: 2.4.0-EA
+  far_auth_local_file: /path/to/non-ga-prod-pull-key.tgz
+  subscription_jwt_local_file: /path/to/subscription.jwt
+  flo_namespace: f5-bnk
+  flo_utils_namespace: f5-bnk      # same name = one namespace for everything
+  cneinstance_size: Tiny           # every size below; see the section above
+```
+
+`far_auth_local_file` and `subscription_jwt_local_file` are a pair — the no-COS
+path is gated on **both** being set. With only one, the tool silently falls back
+to the COS supply chain and the GA key, which fails much later with a 403 naming
+a GCP project rather than a config field.
+
+Then the part that differs. Only two settings change between sizes, plus the
+node flavour:
+
+**Baseline** — 3 nodes, the shape the BNK 2.4 IBM install guide describes:
+
+```yaml
+cluster: {workers_per_zone: 1, worker_flavor: bx2.16x64}
+bnk:     {tmm_replicas: 1}
+```
+
+**Small cluster** — 6 nodes, ~7.8 Gbit/s L4 ingress:
+
+```yaml
+cluster: {workers_per_zone: 2, worker_flavor: bx2.8x32}
+bnk:     {tmm_replicas: 3}
+```
+
+**Medium cluster** — 6 nodes, ~10.4 Gbit/s:
+
+```yaml
+cluster: {workers_per_zone: 2, worker_flavor: cx2.16x32}
+bnk:     {tmm_replicas: 3}
+```
+
+**Large cluster** — 9 nodes, ~31 Gbit/s:
+
+```yaml
+cluster: {workers_per_zone: 3, worker_flavor: cx2.48x96}
+bnk:     {tmm_replicas: 9}
+```
+
+#### As environment overrides
+
+Every field above has a `ROKSBNKCTL_*` override, so a blueprint or CI job can
+select a sizing without editing `config.yaml`. `init --non-interactive
+--override-from-env` builds the workspace from these alone:
+
+```sh
+# common
+export ROKSBNKCTL_MANIFEST_VERSION=2.4.0-EA
+export ROKSBNKCTL_FAR_AUTH_LOCAL_FILE=/path/to/non-ga-prod-pull-key.tgz
+export ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE=/path/to/subscription.jwt
+export ROKSBNKCTL_FLO_NAMESPACE=f5-bnk
+export ROKSBNKCTL_FLO_UTILS_NAMESPACE=f5-bnk
+export ROKSBNKCTL_CNEINSTANCE_SIZE=Tiny
+
+# per sizing — baseline / small / medium / large
+export ROKSBNKCTL_WORKERS_PER_ZONE=1  ROKSBNKCTL_WORKER_FLAVOR=bx2.16x64 ROKSBNKCTL_TMM_REPLICAS=1
+export ROKSBNKCTL_WORKERS_PER_ZONE=2  ROKSBNKCTL_WORKER_FLAVOR=bx2.8x32  ROKSBNKCTL_TMM_REPLICAS=3
+export ROKSBNKCTL_WORKERS_PER_ZONE=2  ROKSBNKCTL_WORKER_FLAVOR=cx2.16x32 ROKSBNKCTL_TMM_REPLICAS=3
+export ROKSBNKCTL_WORKERS_PER_ZONE=3  ROKSBNKCTL_WORKER_FLAVOR=cx2.48x96 ROKSBNKCTL_TMM_REPLICAS=9
+```
+
+`ROKSBNKCTL_CNEINSTANCE_SIZE` is listed for completeness rather than necessity:
+leaving it unset reaches `Tiny` on the 2.4 line anyway, and unset is what lets
+the line default apply. Set it when you want the choice recorded explicitly.
+
+If the cluster shares a transit gateway, `ROKSBNKCTL_CLUSTER_VPC_CIDR` also
+matters — two VPCs with overlapping prefixes cannot both be routed, and the
+gateway blackholes one silently.
+
 ### `deploymentSize` stays `Tiny`; capacity comes from replicas and node size
 
 This is the single most important thing to know about running BNK 2.4 on ROKS,
