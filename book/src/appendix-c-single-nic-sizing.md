@@ -58,10 +58,28 @@ The figures above are F5's. This section is ours: one clean deployment per
 sizing, on ROKS, recorded so a reader can tell what has actually been run from
 what has only been reproduced from a guide.
 
-Every run below is a fresh install onto a fresh cluster, pinned to the same
-manifest F5's engineering reference cluster runs (`2.4.0-3.3175.0-0.0.202-tc`,
-pulled from `devrepo.f5.com`), with `containerPlatform: IBM` and **one
-namespace** for every component. A run counts as verified only if all of the
+Every run below is a fresh install onto a fresh cluster, pinned to the manifest
+the BNK 2.4 IBM install guide documents — **`2.4.0-EA`**, pulled from
+`repo.f5.com` — with `containerPlatform: IBM` and **one namespace** for every
+component.
+
+One trap worth naming: **BNK 2.4 is Early Access, and the ordinary production
+FAR token cannot see it.** Both keys live in the same production project, so
+this is a GA-versus-non-GA content split rather than a prod-versus-test one:
+
+| FAR key | can pull |
+|---|---|
+| `cne-gar-pull` (standard production) | `2.3.0` only — no 2.4 version resolves |
+| `non-ga-prod-pull` (non-GA production grant) | `2.4.0-EA` |
+
+`2.4.0`, `2.4.0-GA` and `2.4.1` do not resolve with either key, so until 2.4
+goes GA the non-GA production grant is required. The failure mode is
+misleading: the wrong key authenticates happily and then reports
+`f5-bigip-k8s-manifest:2.4.0-EA: not found`, which reads like a wrong version
+rather than a wrong credential.
+
+When 2.4 GAs this becomes a two-line change — `bnk.manifest_version` and the
+key file. Nothing about the configuration shape depends on it. A run counts as verified only if all of the
 following hold at once:
 
 - exactly one `f5-*` namespace exists, and no `f5-utils`
@@ -76,18 +94,35 @@ following hold at once:
 
 `scripts/sizing/sizing-matrix.sh` builds and checks one sizing per invocation.
 
-| | Tiny | Small | Medium | Large |
+| | Baseline | Small cluster | Medium cluster | Large cluster |
 |---|---|---|---|---|
 | Worker nodes | 3 (1 per AZ) | 6 (2 per AZ) | 6 (2 per AZ) | 9 (3 per AZ) |
 | Flavour | `bx2.16x64` | `bx2.8x32` | `cx2.16x32` | `cx2.48x96` |
-| `deploymentSize` | `Tiny` | `Small` | `Medium` | `Medium` |
-| TMM pods | 1 | 3 | 3 | 9 |
-| Verified | **yes** | see below | see below | see below |
+| `deploymentSize` | `Tiny` | `Tiny` | `Tiny` | `Tiny` |
+| `tmmReplicas` | 1 | 3 | 3 | 9 |
+| Verified | **yes** | **yes** | pending | pending |
 
-### Only `Tiny` can run on ROKS today
+Note the third row. **`deploymentSize` is `Tiny` everywhere** — the column
+headings are *cluster* sizes, and the thing that changes between them is the
+node flavour and `tmmReplicas`, not the BNK profile. The "Baseline" column is
+the shape the BNK 2.4 IBM install guide itself describes (a 3-node 16-vCPU
+cluster); the other three are F5's sizing-guide cluster shapes.
 
-Every size above `Tiny` requests hugepages, and the amount **grows** with the
-profile. Read from the controller-derived `F5Tmm` CR on a live 2.4 cluster by
+### `deploymentSize` stays `Tiny`; capacity comes from replicas and node size
+
+This is the single most important thing to know about running BNK 2.4 on ROKS,
+and it is easy to get wrong because F5's sizing guide names its *cluster* sizes
+Small, Medium and Large — the same words `deploymentSize` uses.
+
+**They are not the same setting.** The BNK 2.4 IBM install guide uses
+`deploymentSize: "Tiny"` with `tmmReplicas: 3`, and that is what every cluster
+size below runs. Capacity comes from **how many TMM pods and how big the nodes
+are**, never from a larger `deploymentSize` — which is exactly the point this
+appendix already makes about the Large cluster running the Medium profile.
+
+`deploymentSize` above `Tiny` cannot run on ROKS at all, and the reason is worth
+recording because the failure is silent. Every size above `Tiny` requests
+hugepages, and the amount **grows** with the profile. Read from the controller-derived `F5Tmm` CR on a live 2.4 cluster by
 changing only `deploymentSize`:
 
 | `deploymentSize` | TMM cpu | TMM memory | `hugepages-2Mi` |
