@@ -22,9 +22,10 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 	rows := parseAppendixRows(t, book)
 
 	// column index per sizing in the appendix table (0 = Small, 1 = Medium, 2 = Large)
-	for col, sizing := range []string{"small", "medium", "large"} {
-		flavour := rows["Recommended flavour"][col]
+	for col, sizing := range []string{"baseline", "small", "medium", "large"} {
+		flavour := rows["Flavour"][col]
 		depSize := rows["deploymentSize"][col]
+		replicas := rows["tmmReplicas"][col]
 		nodes := leadingInt(t, rows["Worker nodes"][col])
 
 		line := caseLine(t, script, sizing)
@@ -46,6 +47,10 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 			t.Errorf("%s: appendix says %d nodes (%d per AZ), script's case line has %q",
 				sizing, nodes, perZone, line)
 		}
+		if !strings.Contains(line, "TMM="+replicas) {
+			t.Errorf("%s: appendix says tmmReplicas %s, script's case line has %q",
+				sizing, replicas, line)
+		}
 		// The post-install node assertion is DERIVED from the per-zone count rather
 		// than restated per sizing, so what this guards is the derivation itself: if
 		// it stops being "per-zone x 3", the per-zone checks above no longer imply
@@ -61,12 +66,19 @@ func TestSizingScriptMatchesAppendixC(t *testing.T) {
 // stripped of the markdown emphasis and code ticks the table uses for emphasis.
 func parseAppendixRows(t *testing.T, md string) map[string][]string {
 	t.Helper()
-	// Scope to the canonical sizing table, identified by its header row. Other
-	// four-column tables exist in this appendix (the measured per-deploymentSize
-	// figures, for one) and some carry the same row labels -- parsing every
-	// four-cell row let a LATER table silently overwrite this one's values, which
-	// is exactly how this guard first broke.
-	const header = "| | Small | Medium | Large |"
+	// Scope to the REFERENCE DEPLOYMENTS table -- the one recording what was
+	// actually built -- not the table above it reproducing F5's sizing guide.
+	//
+	// The distinction is the whole point. F5's table gives deploymentSize as
+	// Small/Medium/Medium, which is correct as a reproduction of their 2.3.1
+	// guide and is NOT buildable on ROKS: anything above Tiny requests hugepages
+	// the platform cannot allocate (#203). Checking the script against that table
+	// would demand it build configurations that cannot come up.
+	//
+	// Identified by its header row because several four-column tables in this
+	// appendix share row labels, and parsing every four-cell row let a later
+	// table silently overwrite an earlier one's values.
+	const header = "| | Baseline | Small cluster | Medium cluster | Large cluster |"
 	start := strings.Index(md, header)
 	if start < 0 {
 		t.Fatalf("appendix C: canonical sizing table header %q not found", header)
@@ -82,7 +94,7 @@ func parseAppendixRows(t *testing.T, md string) map[string][]string {
 			continue
 		}
 		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
-		if len(cells) != 4 {
+		if len(cells) != 5 {
 			continue
 		}
 		for i := range cells {
@@ -93,8 +105,8 @@ func parseAppendixRows(t *testing.T, md string) map[string][]string {
 		}
 		rows[cells[0]] = cells[1:]
 	}
-	for _, need := range []string{"Recommended flavour", "deploymentSize", "Worker nodes"} {
-		if len(rows[need]) != 3 {
+	for _, need := range []string{"Flavour", "deploymentSize", "Worker nodes", "tmmReplicas"} {
+		if len(rows[need]) != 4 {
 			t.Fatalf("appendix C: could not parse row %q (got %v) — "+
 				"the sizing table's shape changed", need, rows[need])
 		}

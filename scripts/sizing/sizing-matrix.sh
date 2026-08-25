@@ -7,10 +7,15 @@
 # the apply exited zero. An install that "succeeds" while silently omitting a
 # component is the failure mode this exists to catch; see the CSRC note below.
 #
-#   ./sizing-matrix.sh tiny        # 3 x bx2.16x64, deploymentSize Tiny,   1 TMM
-#   ./sizing-matrix.sh small       # 6 x bx2.8x32,  deploymentSize Small,  3 TMM
-#   ./sizing-matrix.sh medium      # 6 x cx2.16x32, deploymentSize Medium, 3 TMM
-#   ./sizing-matrix.sh large       # 9 x cx2.48x96, deploymentSize Medium, 9 TMM
+#   ./sizing-matrix.sh baseline    # 3 x bx2.16x64, 1 TMM
+#   ./sizing-matrix.sh small       # 6 x bx2.8x32,  3 TMM
+#   ./sizing-matrix.sh medium      # 6 x cx2.16x32, 3 TMM
+#   ./sizing-matrix.sh large       # 9 x cx2.48x96, 9 TMM
+#
+# deploymentSize is Tiny in EVERY one. The column headings are CLUSTER sizes;
+# what changes between them is the node flavour and tmmReplicas. Anything above
+# Tiny requests hugepages ROKS cannot allocate (#203), so a run that sets Small
+# or Medium here would be building a configuration that cannot come up.
 #   ./sizing-matrix.sh small --dry # print the config it would use, build nothing
 #   ./sizing-matrix.sh small --verify-only   # re-run the checks against a build
 #
@@ -25,9 +30,9 @@
 #     deploymentSize "Tiny" is unsupported — because Tiny does not exist on 2.3.
 #     The message names the size, not the version.
 #
-#  2. The reference build lives on devrepo.f5.com, not repo.f5.com, and needs the
-#     dev service account (f5-far-dev-auth-key.tgz => dev-gar-pull@...-spk-dev).
-#     The similarly-named non-ga-prod-pull key is a DIFFERENT GCP project and 403s.
+#  2. 2.4.0-EA is on repo.f5.com and needs the NON-GA production key
+#     (non-ga-prod-pull-key.tgz). Of the four keys F5 issues, only that one
+#     resolves it; the others authenticate and then report "not found".
 #
 #  3. far_auth_local_file is ignored unless subscription_jwt_local_file is set too
 #     — the no-COS path is gated on BOTH being non-empty. With only one set it
@@ -45,10 +50,14 @@
 set -uo pipefail
 HERE="$(cd -P "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
 
-# The manifest the F5 engineering reference cluster runs. Pin it: see note 1.
-: "${BNK_MANIFEST_VERSION:=2.4.0-3.3175.0-0.0.202-tc}"
-: "${BNK_FAR_REPO_URL:=devrepo.f5.com}"
-: "${BNK_FAR_AUTH_LOCAL_FILE:=/mnt/d/roksbnkresources/f5-far-dev-auth-key.tgz}"
+# The manifest the BNK 2.4 IBM install guide documents. Pin it: see note 1.
+# 2.4 is Early Access -- the ORDINARY production FAR token pulls 2.3.0 and no 2.4
+# version at all, so the non-GA production grant is required until 2.4 GAs. The
+# wrong key authenticates and then reports "not found", which reads like a wrong
+# version rather than a wrong credential.
+: "${BNK_MANIFEST_VERSION:=2.4.0-EA}"
+: "${BNK_FAR_REPO_URL:=repo.f5.com}"
+: "${BNK_FAR_AUTH_LOCAL_FILE:=/mnt/d/roksbnkresources/non-ga-prod-pull-key.tgz}"
 
 SIZING="${1:-}"; shift || true
 DRY=0; VERIFY_ONLY=0
@@ -62,11 +71,11 @@ done
 # on nine larger nodes. Tiny is not in the guide — it is what the engineering
 # reference cluster runs, kept here as the smallest known-working configuration.
 case "$SIZING" in
-  tiny)   FLAVOR=bx2.16x64  WORKERS_PER_ZONE=1 DEPLOYMENT_SIZE=Tiny   TMM=1 CIDR=10.246.0.0/16 ;;
-  small)  FLAVOR=bx2.8x32   WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Small  TMM=3 CIDR=10.252.0.0/16 ;;
-  medium) FLAVOR=cx2.16x32  WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Medium TMM=3 CIDR=10.253.0.0/16 ;;
-  large)  FLAVOR=cx2.48x96  WORKERS_PER_ZONE=3 DEPLOYMENT_SIZE=Medium TMM=9 CIDR=10.254.0.0/16 ;;
-  *) echo "usage: $0 {tiny|small|medium|large} [--dry|--verify-only]" >&2; exit 2 ;;
+  baseline) FLAVOR=bx2.16x64  WORKERS_PER_ZONE=1 DEPLOYMENT_SIZE=Tiny TMM=1 CIDR=10.246.0.0/16 ;;
+  small)    FLAVOR=bx2.8x32   WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Tiny TMM=3 CIDR=10.252.0.0/16 ;;
+  medium)   FLAVOR=cx2.16x32  WORKERS_PER_ZONE=2 DEPLOYMENT_SIZE=Tiny TMM=3 CIDR=10.253.0.0/16 ;;
+  large)    FLAVOR=cx2.48x96  WORKERS_PER_ZONE=3 DEPLOYMENT_SIZE=Tiny TMM=9 CIDR=10.254.0.0/16 ;;
+  *) echo "usage: $0 {baseline|small|medium|large} [--dry|--verify-only]" >&2; exit 2 ;;
 esac
 WANT_NODES=$((WORKERS_PER_ZONE * 3))
 WS="sz-$SIZING"
