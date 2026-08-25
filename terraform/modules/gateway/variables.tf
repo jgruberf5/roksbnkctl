@@ -23,12 +23,6 @@ variable "ibmcloud_cluster_region" {
   type        = string
 }
 
-variable "ibmcloud_resource_group" {
-  description = "IBM Cloud resource group"
-  type        = string
-  default     = ""
-}
-
 variable "roks_cluster_name_or_id" {
   description = "Existing ROKS cluster name or id the Gateway phase configures"
   type        = string

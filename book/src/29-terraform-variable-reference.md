@@ -124,7 +124,6 @@ Source: `terraform/variables.tf`
 | `deploy_tgw_connection` | `bool` | `false` | Attach the cluster's VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else. | no |
 | `tgw_connection_target` | `string` | `""` | Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway. | no |
 | `tgw_connection_name` | `string` | `""` | Name for this cluster's connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don't collide). | no |
-| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
 | `cluster_absent` | `bool` | `false` | True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0). | no |
 | `cluster_vpc_cidr` | `string` | `""` | CIDR block the cluster VPC's per-zone address prefixes are carved from (e.g. "10.241.0.0/16" → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18). | no |
 | `use_existing_cluster_subnets` | `bool` | `false` | Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC. | no |
@@ -328,7 +327,6 @@ Source: `terraform/modules/flp/variables.tf`
 | `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to these CIDRs (the consuming cluster's subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched. | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart's POST-RENDERER (`roksbnkctl flp postrender`). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH for a direct `terraform apply`. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container. | no |
-| `helm_registry_config` | `string` | `""` | Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login. | no |
 
 ## Module: `flp_vsi`
 
@@ -387,7 +385,6 @@ Source: `terraform/modules/gateway/variables.tf`
 | `bnk_line` | `string` | `"2.3"` | BNK release line driving per-release resource gating ("2.3" or "2.4"). | no |
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API key | **yes** |
 | `ibmcloud_cluster_region` | `string` | _required_ | IBM Cloud region the cluster runs in (zone names derive as `<region>`-1/2/3) | no |
-| `ibmcloud_resource_group` | `string` | `""` | IBM Cloud resource group | no |
 | `roks_cluster_name_or_id` | `string` | _required_ | Existing ROKS cluster name or id the Gateway phase configures | no |
 | `kubeconfig_dir` | `string` | `""` | Directory the IBM provider writes the cluster kubeconfig into | no |
 | `create_roks_cluster` | `bool` | `false` | Always false for the Gateway phase (it reuses an existing cluster) | no |

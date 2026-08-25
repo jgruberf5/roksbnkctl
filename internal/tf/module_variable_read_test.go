@@ -43,42 +43,43 @@ func TestEveryModuleVariableIsReadInsideItsModule(t *testing.T) {
 		t.Fatalf("walking terraform: %v", err)
 	}
 
-	// TRIAGED (#204). Four genuinely dead ones have been deleted:
+	// #204 is FINISHED. What remains is not a backlog -- every entry below is a
+	// permanent exemption with a reason, and the guard exists to catch the next
+	// variable that is declared, documented and read by nothing.
 	//
-	//   wait_for_deployment, worker_pool_name  zero references anywhere
-	//   cneinstance_spec                       shadowed by a LOCAL of the same
-	//                                          name doing the real work, so the
-	//                                          variable could never be read
-	//   cert_manager_crd_ready                 passed by its parent as a literal
-	//                                          `true`, which creates no dependency
-	//                                          edge; a comment already said to
-	//                                          drop it
+	//   flo_deployment_id            dependency EDGES. The ordering is created in
+	//   roks_cluster_dependency_id   the PARENT by `x = module.foo.id`, so the
+	//                                child never mentions them. Deleting these
+	//                                compiles, validates, and silently drops an
+	//                                ordering constraint.
 	//
-	// What remains is passed by a parent and read by nothing in the child, which
-	// splits two ways this test cannot tell apart:
+	//   cluster_network_mode         exists only for its validation block.
 	//
-	//   - dependency edges (flo_deployment_id, roks_cluster_dependency_id): the
-	//     ordering is created in the PARENT by `x = module.foo.id`, so the child
-	//     never mentions it. Legitimate -- removing them would silently drop an
-	//     ordering constraint.
-	//   - data the child ignores (kube_host, kube_token, jwt_token,
-	//     helm_registry_config, ibmcloud_api_key, ...): dead weight, and several
-	//     are SECRETS handed to a module that never uses them.
+	//   gateway_api_bundle_url       consumed by the GO side (internal/bnkbom),
+	//                                not by terraform. Its own description says
+	//                                "Terraform installs nothing from this."
 	//
-	// The second group needs each call site read before its `= var.x` can go from
-	// the parent too, so they stay listed rather than guessed at.
+	//   flp_vsi_reach                genuinely inert -- rendered into tfvars and
+	//                                read by no terraform. NOT deleted here
+	//                                because removing it end to end means
+	//                                dropping a documented config field and
+	//                                ROKSBNKCTL_* override, which is a product
+	//                                decision. Tracked as #210.
+	//
+	// Fifteen were removed across #207, #209 and this change. Two constraints
+	// cost a full revert and are worth knowing before automating any of it: a
+	// bulk regex on `^\s*name\s*=` also matches `name = var.name` INSIDE a
+	// provider block, which is provider configuration and not a module pass; and
+	// the root passes the same argument name into several modules, so a removal
+	// has to be scoped to the specific module block.
 	//
 	// The list is self-cleaning: an entry that becomes read (or is deleted) is
 	// reported as stale, so it cannot outlive the problem it records.
 	knownUnread := map[string]bool{
 		"terraform/modules/cne_instance/modules/cneinstance: flo_deployment_id": true,
-		"terraform/modules/flo/modules/flo: jwt_token":                          true,
-		"terraform/modules/flp: helm_registry_config":                           true,
 		"terraform/modules/flp: roks_cluster_dependency_id":                     true,
 		"terraform/modules/flp_vsi: flp_vsi_reach":                              true,
-		"terraform/modules/gateway: ibmcloud_resource_group":                    true,
 		"terraform/modules/gateway: roks_cluster_dependency_id":                 true,
-		"terraform/modules/roks_cluster/modules/cluster: ibmcloud_api_key":      true,
 		"terraform: cluster_network_mode":                                       true,
 		"terraform: gateway_api_bundle_url":                                     true,
 	}

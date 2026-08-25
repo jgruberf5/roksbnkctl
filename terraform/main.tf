@@ -350,7 +350,6 @@ module "gateway" {
 
   ibmcloud_api_key           = var.ibmcloud_api_key
   ibmcloud_cluster_region    = var.ibmcloud_cluster_region
-  ibmcloud_resource_group    = var.ibmcloud_resource_group
   roks_cluster_name_or_id    = module.roks_cluster.roks_cluster_name
   roks_cluster_dependency_id = module.roks_cluster.cluster_ready_id
   create_roks_cluster        = var.create_roks_cluster
@@ -412,8 +411,7 @@ module "flp" {
   flp_node_port_access          = var.flp_node_port_access
   flp_node_port_source_cidrs    = var.flp_node_port_source_cidrs
   # helm post-renders the chart through the roksbnkctl binary itself (no python).
-  roksbnkctl_binary    = var.roksbnkctl_binary
-  helm_registry_config = var.helm_registry_config
+  roksbnkctl_binary = var.roksbnkctl_binary
 
 }
 

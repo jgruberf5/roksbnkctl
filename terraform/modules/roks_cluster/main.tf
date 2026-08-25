@@ -40,10 +40,9 @@ module "cluster" {
   source         = "./modules/cluster"
   cluster_absent = var.cluster_absent
 
-  ibmcloud_api_key = var.ibmcloud_api_key
-  cluster_region   = var.ibmcloud_cluster_region
-  resource_group   = var.ibmcloud_resource_group
-  kubeconfig_dir   = var.kubeconfig_dir
+  cluster_region = var.ibmcloud_cluster_region
+  resource_group = var.ibmcloud_resource_group
+  kubeconfig_dir = var.kubeconfig_dir
 
   create_cluster         = var.create_roks_cluster
   cluster_public_gateway = var.cluster_public_gateway
