@@ -6,6 +6,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.55.1 — 2026-08-26
+
+**Two `bnk down` defects, both of which could leave an operator stuck.** One cost
+five minutes and an alarming `Error:` on every teardown; the other made teardown
+impossible without hand-editing a file the tool says not to edit.
+
 ### Fixed
 
 - **`bnk down` no longer stalls for five minutes on the BNK namespace** (#217).
