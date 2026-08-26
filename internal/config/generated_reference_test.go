@@ -37,6 +37,13 @@ func TestGeneratedBookChaptersAreCurrent(t *testing.T) {
 		// change", which is only true if something enforces it. Adding a command
 		// without regenerating left the command reference silently missing it.
 		{"./tools/refgen/cobra-md", "book/src/27-command-reference.md"},
+		// The config.yaml cheatsheet. Generated for the same reason the chapters
+		// are: a hand-written copy of a 189-field schema is a second source of
+		// truth, and this codebase has now shipped that defect three times. It
+		// also carries the version badge, which the release commit rolls forward
+		// -- so this test is what makes "update it as part of the build" true
+		// rather than a line in a checklist.
+		{"./tools/refgen/config-cheatsheet", "scripts/demos/config-cheatsheet.html"},
 	} {
 		t.Run(filepath.Base(tc.chapter), func(t *testing.T) {
 			cmd := exec.Command("go", "run", tc.gen)

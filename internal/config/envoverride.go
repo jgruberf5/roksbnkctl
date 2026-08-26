@@ -100,6 +100,7 @@ import (
 //	ROKSBNKCTL_REGISTRY_COS_CREATE  → resources.registry_cos.create (bool)
 //	ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE → resources.cluster_jumphosts.create (bool)
 //	ROKSBNKCTL_BNKFORGE_CA_B64      → bnkforge.ca_b64 (PEM CA pinning the Forge server)
+//	ROKSBNKCTL_BNKFORGE_PASSWORD    → bnkforge.password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_REGISTRY_TARGET      → registry.target (icr|generic)
 //	ROKSBNKCTL_GENERIC_HOST         → registry.generic_host
 //	ROKSBNKCTL_GENERIC_REPO_PREFIX  → registry.generic_repo_prefix
@@ -489,6 +490,18 @@ func OverrideFromEnv(ws *Workspace) []string {
 			bnkForgeCfg(ws).CAB64 = compact
 			applied = append(applied, "bnkforge.ca_b64 (ROKSBNKCTL_BNKFORGE_CA_B64)")
 		}
+	}
+
+	// The BNK Forge password — raw in the env, base64 into the config, the same
+	// shape as every other machine credential here (CIS, GTM, registry, API key).
+	//
+	// This is the SEEDING path, distinct from BNK_FORGE_PASSWORD: that one is
+	// read at register time and never written down, this one populates
+	// bnkforge.password_b64 so an unattended runner can be configured once. The
+	// env still wins at use time, so setting both is not ambiguous.
+	if v := envValue("ROKSBNKCTL_BNKFORGE_PASSWORD"); v != "" {
+		bnkForgeCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
+		applied = append(applied, "bnkforge.password_b64 (ROKSBNKCTL_BNKFORGE_PASSWORD)")
 	}
 
 	// Generic OCI registry password (e.g. an Artifactory access token) — raw in
@@ -955,6 +968,7 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_BIGIP_URL",
 	"ROKSBNKCTL_BIGIP_USERNAME",
 	"ROKSBNKCTL_BNKFORGE_CA_B64",
+	"ROKSBNKCTL_BNKFORGE_PASSWORD",
 	"ROKSBNKCTL_CLIENT_VPC_CREATE",
 	"ROKSBNKCTL_CLIENT_VPC_NAME",
 	"ROKSBNKCTL_CLUSTER_CREATE",

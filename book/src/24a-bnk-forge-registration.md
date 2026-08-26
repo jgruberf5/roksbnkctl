@@ -55,9 +55,32 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
   branch; an older Forge that only accepts a static kubeconfig won't work with
   this flow.)
 - **The Forge URL and credentials.** `BNK_FORGE_URL`, `BNK_FORGE_USER` and
-  `BNK_FORGE_PASSWORD` (or `bnkforge.url` / `--url` / `--username`). The password is
-  **never persisted** — the resulting session token is cached in the OS keychain, and
-  reused until it expires. `roksbnkctl bnkforge status` shows what is resolved.
+  `BNK_FORGE_PASSWORD` (or `bnkforge.url` / `--url` / `--username`). The session
+  token that results is cached in the OS keychain and reused until it expires, so
+  the password is normally used once. `roksbnkctl bnkforge status` shows what is
+  resolved.
+
+  The password can also be stored as `bnkforge.password_b64`, base64-encoded,
+  the same shape as every other machine credential this tool takes
+  (`ibmcloud.api_key_b64`, `bnk.cis.bigip_password_b64`, `bnk.gtm.password_b64`,
+  `registry.generic_password_b64`). Precedence is `BNK_FORGE_PASSWORD`, then
+  `--password`, then the field, then the prompt — so a stored value never
+  prevents a runner overriding it.
+
+  **base64 is obfuscation, not encryption.** Anyone holding the file holds the
+  password. Storing it trades a long-lived secret on disk for not being asked,
+  which is the right trade for an unattended runner and the wrong one for a
+  laptop. Use `scripts/generate_b64_password.sh` to produce the value without it
+  reaching your shell history:
+
+  ```console
+  $ ./scripts/generate_b64_password.sh bnkforge.password_b64
+  Password:
+  Re-enter:
+
+    # config.yaml — under the bnkforge block
+    password_b64: aHVudGVyMg==
+  ```
 
   On a terminal, `bnkforge register` prompts for anything missing. The automatic
   post-`up` hook runs **non-interactively**: with no cached token and no env
@@ -135,10 +158,10 @@ It:
    kubeconfig on demand instead of holding a perishable one.
 4. **Authenticates to Forge over its REST API.** A cached session token from the OS
    keychain is reused when still valid; otherwise it logs in with
-   `BNK_FORGE_USER` / `BNK_FORGE_PASSWORD` and caches the new token. The password
-   itself is never persisted. The auto-hook runs **non-interactively**, so with no
-   valid token and no env credentials it declines rather than blocking a deploy on
-   a prompt.
+   `BNK_FORGE_USER` / `BNK_FORGE_PASSWORD` — or `bnkforge.password_b64` — and
+   caches the new token. The auto-hook runs **non-interactively**, so with no valid
+   token, no env credentials and no stored password it declines rather than
+   blocking a deploy on a prompt.
 5. **Ensures the credential template and the project**, then **registers the
    cluster** by id + region + template.
 
@@ -420,9 +443,10 @@ If the pinned CA is wrong, the connection fails at the handshake with an
   `roksbnkctl` where Forge lives. `roksbnkctl bnkforge status` shows what resolved.
 - **`no BNK Forge username` / `no BNK Forge password`** — the cached session token
   is absent or expired and there is nothing to log in with. Set `BNK_FORGE_USER` and
-  `BNK_FORGE_PASSWORD`, or run `roksbnkctl bnkforge register` at a terminal to be
-  prompted. On a CI runner the env vars are the only path — there is no prompt to
-  fall back to.
+  `BNK_FORGE_PASSWORD`, store `bnkforge.password_b64`, or run
+  `roksbnkctl bnkforge register` at a terminal to be prompted. On a CI runner the
+  env var and the stored field are the only paths — there is no prompt to fall
+  back to.
 - **`cluster is registered to another BNK Forge project`** — the name is held by a
   different project; the message names it and both ids. Either unregister it there,
   or pass `--force` to move it deliberately (its cluster id changes, because a move
