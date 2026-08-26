@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
+            window.path_to_searchindex_js = "searchindex-c7861f14.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -424,6 +424,45 @@ registered stays on Forge’s Kubernetes page — to remove it, use
 <tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer –forge-ca</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
+<tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
+<tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username (overrides config)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-bnkforge"><code>roksbnkctl bnkforge</code></a></p>
+<h3 id="roksbnkctl-bnkforge-ssh-credential"><a class="header" href="#roksbnkctl-bnkforge-ssh-credential"><code>roksbnkctl bnkforge ssh-credential</code></a></h3>
+<p>Give BNK Forge the SSH private key for an appliance this workspace built</p>
+<pre><code>roksbnkctl bnkforge ssh-credential [flags]
+</code></pre>
+<p>Stores an appliance’s SSH private key in BNK Forge and attaches it to the
+workspace’s project, so Forge can reach the appliance itself.</p>
+<p><code>bnk.flp.vsi.ssh_key</code> names an IBM Cloud VPC key, which puts the PUBLIC half on
+the VSI — that is operator access, and it already works. Forge separately needs
+the PRIVATE half, and nothing supplied it, so a healthy FLP reports:</p>
+<pre><code>infrastructure_private_key_available: false
+infrastructure_access_status:         recovery_required
+</code></pre>
+<p>Nothing can be recovered there — the credential was never created.</p>
+<p>–host must be the address FORGE can reach, which for an FLP is the FLOATING IP.
+<code>flp status</code> reports a services-VPC endpoint that Forge sits outside of, so a
+credential built from it can never connect.</p>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--expect-fingerprint</code></td><td><code>string</code></td><td>—</td><td>SHA256 fingerprint the key must match (e.g. the VPC key’s) — a credential that cannot log in is worse than none</td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td>—</td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes –insecure)</td></tr>
+<tr><td><code>--host</code></td><td><code>string</code></td><td>—</td><td>address FORGE reaches the appliance on — the FLOATING IP, not the endpoint <code>flp status</code> prints</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer –forge-ca</td></tr>
+<tr><td><code>--key</code></td><td><code>string</code></td><td>—</td><td>PRIVATE key file Forge will use (unencrypted; Forge stores it and cannot prompt)</td></tr>
+<tr><td><code>--name</code></td><td><code>string</code></td><td>—</td><td>credential name in Forge (default: <code>&lt;project&gt;</code>-ssh)</td></tr>
+<tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
+<tr><td><code>--port</code></td><td><code>int</code></td><td><code>22</code></td><td>SSH port on the appliance</td></tr>
+<tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project to attach the credential to</td></tr>
+<tr><td><code>--ssh-username</code></td><td><code>string</code></td><td><code>ubuntu</code></td><td>SSH user on the appliance</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username (overrides config)</td></tr>
 </tbody>
