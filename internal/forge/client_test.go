@@ -37,13 +37,16 @@ type mockForge struct {
 	sshUpdate map[string]any
 	// projectPut captures PUT /api/projects/{id}; projectDropsInfra models the
 	// live Forge behaviour of accepting the write and discarding infra_*.
-	projectPut        map[string]any
-	projectDropsInfra bool
-	projectInfra      map[string]any
-	nextID            int
-	registerBody      map[string]any // captured POST body of the last cluster register
-	registerPath      string
-	projectPlatform   map[string]any // captured PUT body of the project platform update
+	projectPut   map[string]any
+	projectInfra map[string]any
+	// sshConfigure captures POST /api/cloud-auth/ssh/configure — the endpoint
+	// that actually owns the infra_* fields (#222).
+	sshConfigure       map[string]any
+	sshConfigureStatus int
+	nextID             int
+	registerBody       map[string]any // captured POST body of the last cluster register
+	registerPath       string
+	projectPlatform    map[string]any // captured PUT body of the project platform update
 }
 
 func (m *mockForge) id() int { m.nextID++; return m.nextID }
@@ -87,6 +90,24 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		m.credUpdate = body
 		writeJSON(w, 200, map[string]any{"ok": true}) // PUT update
+	})
+	mux.HandleFunc("/api/cloud-auth/ssh/configure", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.sshConfigure = body
+		if m.sshConfigureStatus != 0 && m.sshConfigureStatus != 200 {
+			writeJSON(w, m.sshConfigureStatus, map[string]any{"detail": "SSH connection test failed"})
+			return
+		}
+		// Forge's own endpoint sets these; the project read-back then shows them.
+		if m.projectInfra == nil {
+			m.projectInfra = map[string]any{}
+		}
+		m.projectInfra["infra_enabled"] = true
+		m.projectInfra["infra_host"] = body["host"]
+		m.projectInfra["infra_ssh_username"] = body["username"]
+		m.projectInfra["infra_auth_type"] = body["auth_type"]
+		writeJSON(w, 200, map[string]any{"success": true})
 	})
 	mux.HandleFunc("/api/ssh-credentials", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -155,11 +176,15 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 			// Forge behaviour: 200 is returned, ssh_credential_id is applied, and
 			// the infra_* fields are silently discarded (#222).
 			m.projectPut = body
-			if m.projectDropsInfra {
-				kept := map[string]any{"ssh_credential_id": body["ssh_credential_id"]}
-				m.projectInfra = kept
-			} else {
-				m.projectInfra = body
+			// The real route MERGES the fields it owns, and it does not own the
+			// infra_* ones — those belong to /api/cloud-auth/ssh/configure. So it
+			// takes ssh_credential_id and leaves the rest of the project's state
+			// alone; replacing the whole state here made a passing sequence fail.
+			if m.projectInfra == nil {
+				m.projectInfra = map[string]any{}
+			}
+			if v, present := body["ssh_credential_id"]; present {
+				m.projectInfra["ssh_credential_id"] = v
 			}
 			writeJSON(w, 200, map[string]any{"ok": true})
 			return

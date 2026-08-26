@@ -40,13 +40,11 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Forge then reports access as configured and every later failure points
   elsewhere.
 
-  It also reports what Forge **actually stored**, not what was sent. `PUT
-  /api/projects/<id>` applies `ssh_credential_id` and silently discards
-  `infra_enabled` / `infra_host` / `infra_ssh_username` / `infra_auth_type`;
-  PATCH is 405 and there is no infrastructure endpoint. The command reads the
-  project back and names the fields that did not take, so the limitation is
-  visible here rather than as an appliance that stays unreachable for no stated
-  reason. That half is blocked on BNK Forge.
+  It configures infrastructure access through the endpoint that owns it —
+  `POST /api/cloud-auth/ssh/configure` — which also **tests the SSH connection
+  before storing anything**, so a key that cannot open the box is refused at the
+  source rather than stored and discovered later. It still reads the project back
+  and names anything that did not stick.
 
 ### Fixed
 

@@ -132,6 +132,25 @@ func runBNKForgeSSHCredential(ctx context.Context, interactive bool) error {
 	}
 	fmt.Fprintf(os.Stderr, "✓ SSH credential %q (id %d) stored in BNK Forge\n", credName, cid)
 
+	// Infrastructure access is turned on by its OWN endpoint. #222 recorded this
+	// as blocked upstream because PUT /api/projects/<id> ignores the infra_*
+	// fields — true, but they are not that route's to set. Forge owns them at
+	// POST /api/cloud-auth/ssh/configure, which also TESTS the connection before
+	// storing anything, so a key that cannot open the box is refused at the
+	// source rather than stored and discovered later.
+	if cerr := client.ConfigureSSH(ctx, forge.ConfigureSSHRequest{
+		ProjectID:  pid,
+		Host:       host,
+		Port:       flagBNKForgeSSHPort,
+		Username:   username,
+		AuthType:   "key",
+		PrivateKey: string(pem),
+	}); cerr != nil {
+		return fmt.Errorf("configuring infrastructure access on project %q: %w\n"+
+			"  Forge tests the SSH connection before storing it, so this usually means the key or "+
+			"host is wrong rather than the request", projName, cerr)
+	}
+
 	want := forge.ProjectInfraAccess{
 		SSHCredentialID: cid,
 		InfraEnabled:    true,
@@ -150,24 +169,15 @@ func runBNKForgeSSHCredential(ctx context.Context, interactive bool) error {
 		return nil
 	}
 
-	// The write returned 200 and Forge kept only part of it. Say exactly which
-	// part, because the visible symptom otherwise is an appliance that stays
-	// unreachable with nothing pointing at the cause.
-	fmt.Fprintf(os.Stderr, "⚠ BNK Forge accepted the update but did not store all of it.\n")
-	if got.SSHCredentialID == cid {
-		fmt.Fprintf(os.Stderr, "    ssh_credential_id  = %d          (stored)\n", got.SSHCredentialID)
-	} else {
-		fmt.Fprintf(os.Stderr, "    ssh_credential_id  = %d          (wanted %d)\n", got.SSHCredentialID, cid)
-	}
+	// Still read back and still report a partial result as partial. Both halves
+	// are now written through endpoints that own them, so a mismatch here is a
+	// real discrepancy rather than an expected limitation.
+	fmt.Fprintf(os.Stderr, "⚠ BNK Forge did not store everything that was sent:\n")
+	fmt.Fprintf(os.Stderr, "    ssh_credential_id  = %d          (wanted %d)\n", got.SSHCredentialID, cid)
 	fmt.Fprintf(os.Stderr, "    infra_enabled      = %v       (wanted true)\n", got.InfraEnabled)
 	fmt.Fprintf(os.Stderr, "    infra_host         = %q     (wanted %q)\n", got.InfraHost, host)
 	fmt.Fprintf(os.Stderr, "    infra_ssh_username = %q     (wanted %q)\n", got.InfraUsername, username)
 	fmt.Fprintf(os.Stderr, "    infra_auth_type    = %q     (wanted \"key\")\n", got.InfraAuthType)
-	fmt.Fprintf(os.Stderr,
-		"  This is a BNK Forge limitation, not a failure here: PUT /api/projects/<id> applies\n"+
-			"  ssh_credential_id and silently discards the infra_* fields, PATCH is 405, and there is\n"+
-			"  no /api/projects/<id>/infrastructure endpoint. Until Forge exposes a path for them the\n"+
-			"  appliance stays unreachable even though the credential is stored. Tracked in #222.\n")
 	return nil
 }
 

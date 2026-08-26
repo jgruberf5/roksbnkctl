@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 )
@@ -74,5 +77,61 @@ func TestTheSSHCredentialFlagsDoNotOverloadUsername(t *testing.T) {
 	// The two must not be the same variable, or setting one sets the other.
 	if u.Value == s.Value {
 		t.Error("--username and --ssh-username are bound to the same variable")
+	}
+}
+
+// The credential link alone leaves infra_enabled false and the appliance
+// unreachable — the original #222 symptom. ConfigureSSH is the call that turns
+// infrastructure access on, and dropping it leaves the build green, the suite
+// green, and the command reporting a project it has not actually configured.
+//
+// Parsed as an AST rather than grepped because a comment naming the call would
+// satisfy a grep and prove nothing.
+func TestTheSSHCredentialCommandConfiguresInfrastructureAccess(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "bnkforge_sshcred.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parsing bnkforge_sshcred.go: %v", err)
+	}
+	var fn *ast.FuncDecl
+	ast.Inspect(f, func(n ast.Node) bool {
+		if d, ok := n.(*ast.FuncDecl); ok && d.Name.Name == "runBNKForgeSSHCredential" {
+			fn = d
+			return false
+		}
+		return true
+	})
+	if fn == nil {
+		t.Fatal("runBNKForgeSSHCredential not found")
+	}
+
+	var calls []string
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+			calls = append(calls, sel.Sel.Name)
+		}
+		return true
+	})
+
+	want := map[string]string{
+		"EnsureSSHCredential": "stores the key in Forge",
+		"ConfigureSSH":        "turns infrastructure access on — without it infra_enabled stays false and the appliance is unreachable (#222)",
+		"AttachSSHCredential": "links the credential to the project and reads back what stuck",
+	}
+	for name, why := range want {
+		found := false
+		for _, c := range calls {
+			if c == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("runBNKForgeSSHCredential never calls %s — %s.\ncalls: %v", name, why, calls)
+		}
 	}
 }

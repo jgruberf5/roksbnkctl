@@ -167,12 +167,96 @@ func TestASecondRunUpdatesTheExistingCredential(t *testing.T) {
 	}
 }
 
-// THE WRITE IS NOT THE TRUTH. Forge returns 200 and applies ssh_credential_id
-// while silently discarding infra_enabled / infra_host / infra_ssh_username /
-// infra_auth_type. Reporting success on that write is how an operator ends up
-// with an appliance that stays unreachable and nothing pointing at why.
-func TestAttachReportsWhatForgeActuallyStoredNotWhatWasSent(t *testing.T) {
-	m := &mockForge{token: "t", nextID: 90, projectDropsInfra: true}
+// THE FIELDS HAVE AN OWNER, AND IT IS NOT THE PROJECTS ROUTE.
+//
+// #222 recorded infra_enabled / infra_host / infra_ssh_username /
+// infra_auth_type as unsettable because PUT /api/projects/<id> ignores them.
+// True — they are not that route's to set. Forge owns them at
+// POST /api/cloud-auth/ssh/configure. Nothing was missing upstream; roksbnkctl
+// was asking the wrong endpoint.
+func TestConfigureSSHTurnsOnInfrastructureAccess(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 90}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := mustNew(t, srv.URL, Options{})
+	c.Token = "t"
+
+	err := c.ConfigureSSH(context.Background(), ConfigureSSHRequest{
+		ProjectID: 7, Host: "52.116.1.2", Username: "ubuntu", PrivateKey: "PEMDATA",
+	})
+	if err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if m.sshConfigure == nil {
+		t.Fatal("POST /api/cloud-auth/ssh/configure was never called — the projects route does " +
+			"not own these fields, so writing there alone leaves the appliance unreachable")
+	}
+	if m.sshConfigure["private_key"] != "PEMDATA" {
+		t.Errorf("the private key did not reach the endpoint: %v", m.sshConfigure)
+	}
+	// auth_type is pattern-validated server-side (^(password|key)$) and defaults
+	// to "password" on the project; a key credential stored as a password one
+	// cannot log in.
+	if m.sshConfigure["auth_type"] != "key" {
+		t.Errorf(`auth_type = %v, want "key"`, m.sshConfigure["auth_type"])
+	}
+	if m.sshConfigure["port"] != float64(22) {
+		t.Errorf("port = %v, want the 22 default", m.sshConfigure["port"])
+	}
+}
+
+// Forge tests the SSH connection before storing and answers 400 when it fails.
+// That must surface, not be swallowed — it is the strongest signal available
+// that the key or host is wrong.
+func TestAFailedConnectionTestIsReported(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 90, sshConfigureStatus: 400}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := mustNew(t, srv.URL, Options{})
+	c.Token = "t"
+
+	err := c.ConfigureSSH(context.Background(), ConfigureSSHRequest{
+		ProjectID: 7, Host: "52.116.1.2", Username: "ubuntu", PrivateKey: "BAD",
+	})
+	if err == nil {
+		t.Fatal("a 400 from the connection test was swallowed — the caller would report success " +
+			"on a credential Forge refused to store")
+	}
+}
+
+// After both halves — the credential link and the infrastructure config — the
+// read-back must agree with what was asked for.
+func TestBothHalvesTogetherLeaveTheProjectConfigured(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 90}
+	srv := httptest.NewServer(m.handler(t))
+	defer srv.Close()
+	c := mustNew(t, srv.URL, Options{})
+	c.Token = "t"
+	ctx := context.Background()
+
+	if err := c.ConfigureSSH(ctx, ConfigureSSHRequest{
+		ProjectID: 7, Host: "52.116.1.2", Username: "ubuntu", PrivateKey: "PEM",
+	}); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	want := ProjectInfraAccess{
+		SSHCredentialID: 11, InfraEnabled: true,
+		InfraHost: "52.116.1.2", InfraUsername: "ubuntu",
+	}
+	got, err := c.AttachSSHCredential(ctx, 7, want)
+	if err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	if !got.Matches(want) {
+		t.Errorf("after both calls the project is still not configured: %+v", got)
+	}
+}
+
+// The credential link alone is NOT enough, and must not read as success. This is
+// the original symptom: ssh_credential_id set, infra_enabled false, appliance
+// unreachable.
+func TestTheCredentialLinkAloneIsNotReportedAsConfigured(t *testing.T) {
+	m := &mockForge{token: "t", nextID: 90}
 	srv := httptest.NewServer(m.handler(t))
 	defer srv.Close()
 	c := mustNew(t, srv.URL, Options{})
@@ -182,6 +266,7 @@ func TestAttachReportsWhatForgeActuallyStoredNotWhatWasSent(t *testing.T) {
 		SSHCredentialID: 11, InfraEnabled: true,
 		InfraHost: "52.116.1.2", InfraUsername: "ubuntu",
 	}
+	// ConfigureSSH deliberately NOT called.
 	got, err := c.AttachSSHCredential(context.Background(), 7, want)
 	if err != nil {
 		t.Fatalf("attach: %v", err)
@@ -189,33 +274,9 @@ func TestAttachReportsWhatForgeActuallyStoredNotWhatWasSent(t *testing.T) {
 	if got.SSHCredentialID != 11 {
 		t.Errorf("ssh_credential_id = %d, want 11 — that half does apply", got.SSHCredentialID)
 	}
-	if got.InfraEnabled {
-		t.Error("reported infra_enabled=true, but Forge discarded it — the read-back is the point")
-	}
 	if got.Matches(want) {
-		t.Error("Matches() said the write stuck when Forge kept only part of it.\n" +
-			"That turns a silent Forge limitation into a silent roksbnkctl success (#222).")
-	}
-}
-
-// When Forge does store it all, the caller must not print a spurious warning.
-func TestAttachReportsSuccessWhenForgeKeepsEverything(t *testing.T) {
-	m := &mockForge{token: "t", nextID: 90} // projectDropsInfra false
-	srv := httptest.NewServer(m.handler(t))
-	defer srv.Close()
-	c := mustNew(t, srv.URL, Options{})
-	c.Token = "t"
-
-	want := ProjectInfraAccess{
-		SSHCredentialID: 11, InfraEnabled: true,
-		InfraHost: "52.116.1.2", InfraUsername: "ubuntu",
-	}
-	got, err := c.AttachSSHCredential(context.Background(), 7, want)
-	if err != nil {
-		t.Fatalf("attach: %v", err)
-	}
-	if !got.Matches(want) {
-		t.Errorf("Matches() = false on a Forge that stored everything: %+v", got)
+		t.Error("reported the project as configured with only the credential linked.\n" +
+			"infra_enabled is still false and the appliance is still unreachable (#222).")
 	}
 }
 

@@ -827,6 +827,54 @@ func (c *Client) EnsureSSHCredential(ctx context.Context, cred SSHCredential) (i
 	return 0, fmt.Errorf("create ssh-credential returned no id: %s", strings.TrimSpace(string(d)))
 }
 
+// ConfigureSSHRequest is the body of POST /api/cloud-auth/ssh/configure.
+type ConfigureSSHRequest struct {
+	ProjectID int `json:"project_id"`
+	// Host must be reachable FROM FORGE. For an FLP that means the floating IP,
+	// not the endpoint `flp status` reports -- that is a services-VPC address and
+	// Forge sits outside it.
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	AuthType   string `json:"auth_type"`
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+}
+
+// ConfigureSSH turns on a project's infrastructure access.
+//
+// THIS IS THE ENDPOINT THAT OWNS THOSE FIELDS, and finding it is the whole
+// reason #222's "blocked upstream" note was wrong.
+//
+// `PUT /api/projects/<id>` accepts ssh_credential_id and silently ignores
+// infra_enabled / infra_host / infra_ssh_username / infra_auth_type, which reads
+// like a Forge limitation. It is not: those fields are set by
+// POST /api/cloud-auth/ssh/configure, which the projects route has no business
+// writing. Nothing was missing; roksbnkctl was asking the wrong endpoint.
+//
+// Forge TESTS THE CONNECTION before it stores anything (SSHService.test_connection,
+// and a failure is a 400), so a key that cannot open the box is refused at the
+// source rather than stored and discovered later. That is a stronger guarantee
+// than the local fingerprint check, which only proves the key is the one the VPC
+// knows about.
+func (c *Client) ConfigureSSH(ctx context.Context, req ConfigureSSHRequest) error {
+	if req.Port == 0 {
+		req.Port = 22
+	}
+	if req.AuthType == "" {
+		req.AuthType = "key"
+	}
+	const p = "/api/cloud-auth/ssh/configure"
+	d, code, err := c.do(ctx, http.MethodPost, p, req)
+	if err != nil {
+		return err
+	}
+	if !ok(code) {
+		return httpErr("POST", p, code, d)
+	}
+	return nil
+}
+
 // ProjectInfraAccess is what a project must carry for Forge to actually reach
 // the appliance. The credential id alone is not enough: with infra_enabled
 // false the appliance is still unreachable.
@@ -849,20 +897,14 @@ type projectInfraState struct {
 	InfraAuthType   string `json:"infra_auth_type"`
 }
 
-// AttachSSHCredential wires a project to an SSH credential and reports what
-// Forge ACTUALLY stored.
+// AttachSSHCredential links the stored credential to the project and reports
+// what Forge ACTUALLY holds afterwards.
 //
-// THE WRITE IS NOT THE TRUTH. `PUT /api/projects/<id>` returns 200 and applies
-// ssh_credential_id, but on the Forge builds seen so far it silently DISCARDS
-// infra_enabled / infra_host / infra_ssh_username / infra_auth_type — they read
-// back as false / null / null / "password". PATCH is 405 and there is no
-// /api/projects/<id>/infrastructure endpoint, so there is currently no way to
-// set them from here (#222).
-//
-// Rather than report success on a write that did not stick, this reads the
-// project back and returns the stored state. The caller says plainly which
-// fields did not take, so the operator learns it from us instead of from an
-// appliance that stays unreachable for no visible reason.
+// Two calls, because two endpoints own the two halves: PUT /api/projects/<id>
+// sets ssh_credential_id (the credential the UI shows against the project), and
+// ConfigureSSH sets the infrastructure-access fields. The read-back is kept
+// because a partial result must still be reported as partial rather than
+// assumed -- the caller names whatever did not take.
 func (c *Client) AttachSSHCredential(ctx context.Context, projectID int, want ProjectInfraAccess) (Stored, error) {
 	if want.InfraPort == 0 {
 		want.InfraPort = 22
@@ -871,7 +913,7 @@ func (c *Client) AttachSSHCredential(ctx context.Context, projectID int, want Pr
 		want.InfraAuthType = "key"
 	}
 	p := fmt.Sprintf("/api/projects/%d", projectID)
-	d, code, err := c.do(ctx, http.MethodPut, p, want)
+	d, code, err := c.do(ctx, http.MethodPut, p, map[string]any{"ssh_credential_id": want.SSHCredentialID})
 	if err != nil {
 		return Stored{}, err
 	}
@@ -890,7 +932,7 @@ func (c *Client) AttachSSHCredential(ctx context.Context, projectID int, want Pr
 	return Stored(got), nil
 }
 
-// Stored is what Forge kept after an AttachSSHCredential write.
+// Stored is what Forge holds for a project's infrastructure access.
 type Stored struct {
 	SSHCredentialID int
 	InfraEnabled    bool
