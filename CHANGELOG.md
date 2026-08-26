@@ -89,6 +89,14 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   so a well-formed zone list containing a comment would have been reported
   unbalanced and skipped. Comments now skip to end-of-line.
 
+  A block that closes *too* hard (`over = [` / `]]`) is treated the same way as
+  a truncated one — malformed input, dropped, parsing resumes after the opener.
+  It was previously reported as closed while its value was still unbalanced. And
+  `terraform.applied.tfvars` itself gets the same balance guard as the replay
+  file: guarding only the file terraform reads left the file everything is
+  derived *from* able to persist invalid HCL, which is the self-perpetuating
+  half of this bug.
+
 ## v1.55.0 — 2026-08-26
 
 **`roksbnkctl config` writes the configuration you were transcribing by hand.**

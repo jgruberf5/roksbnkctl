@@ -290,6 +290,18 @@ func renderAppliedTFVars(phase string, sources []string, now time.Time, version 
 				fmt.Fprintf(&b, "%s = \"<redacted>\"  # source: cred resolver, not persisted\n", k)
 				continue
 			}
+			// The SNAPSHOT gets the same guard as the replay file (#219).
+			// Guarding only the file terraform reads leaves the file everything
+			// is derived FROM able to persist invalid HCL -- and this whole
+			// class of bug exists because a corrupt snapshot is
+			// self-perpetuating. The two writers must not disagree about what is
+			// emittable.
+			if HCLValueIsUnbalanced(assigns[k]) {
+				fmt.Fprintf(&b, "# %s = <skipped: unbalanced brackets>\n", k)
+				fmt.Fprintf(os.Stderr,
+					"warning: not recording %q in the applied snapshot — its value has unbalanced brackets\n", k)
+				continue
+			}
 			fmt.Fprintf(&b, "%s = %s\n", k, assigns[k])
 		}
 		fmt.Fprintln(&b)
@@ -376,7 +388,6 @@ func readTFVarsAssignments(path string) (map[string]string, bool, error) {
 				continue
 			}
 			value = block
-			i = end
 		}
 		out[name] = value
 	}
@@ -384,23 +395,38 @@ func readTFVarsAssignments(path string) (map[string]string, bool, error) {
 }
 
 // HCLValueIsUnbalanced reports whether a rendered value's brackets do not
-// balance, which makes it unparseable as HCL.
+// balance.
 //
-// Exported so the replay writer can refuse to emit one. It shares
-// blockDepthDelta with the parser deliberately: a second bracket counter is a
-// second thing to keep true, and the two disagreeing is how a value passes the
-// check here and fails in terraform.
+// A BRACKET COUNTER, NOT A VALIDATOR. Unbalanced implies terraform cannot parse
+// it; the converse does not hold -- `] [` counts to zero and is still invalid.
+// This is a cheap guard against emitting the specific corruption #219 is about,
+// and calling it a parseability check would promise something it does not do.
+//
+// Exported so the writers can refuse to emit one. It shares blockDepthDelta
+// with the parser deliberately: a second bracket counter is a second thing to
+// keep true, and the two disagreeing is how a value passes the check here and
+// fails in terraform.
 func HCLValueIsUnbalanced(v string) bool {
 	return blockDepthDelta(v) != 0
 }
 
 // consumeBlock follows a multi-line value from the line that opens it until its
-// bracket depth returns to zero.
+// bracket depth returns to exactly zero.
 //
 // Returns the joined block, the index of its LAST line, and whether it actually
 // closed. The third return is the point: the caller must be able to tell a
 // complete block from a truncated one, because the two need opposite handling
 // and the previous version of this code could not distinguish them.
+//
+// EXACTLY zero, not "zero or less". A block that closes too hard --
+//
+//	over = [
+//	]]
+//
+// -- used to be reported as closed while its value was still unbalanced, so the
+// one thing the caller relies on this return for was wrong. Over-closing is
+// malformed input, and malformed input takes the same path as truncated input:
+// not closed, dropped, parsing resumes after the opener.
 func consumeBlock(lines []string, start int, value string, trailer int) (block string, end int, closed bool) {
 	var b strings.Builder
 	b.WriteString(value)
@@ -409,8 +435,12 @@ func consumeBlock(lines []string, start int, value string, trailer int) (block s
 		b.WriteString("\n")
 		b.WriteString(strings.TrimRight(lines[j], "\r"))
 		depth += blockDepthDelta(lines[j])
-		if depth <= 0 {
+		if depth == 0 {
 			return b.String(), j, true
+		}
+		if depth < 0 {
+			// Over-closed: more closers than openers. Malformed, not finished.
+			return "", start, false
 		}
 	}
 	// Ran out of file with the block still open. Report the OPENER's index so

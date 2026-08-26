@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // #219. A user's `bnk down` died on
@@ -137,4 +138,83 @@ func keysOf(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// ── review fixes ─────────────────────────────────────────────────────────────
+
+// An over-closed block is malformed, not finished. It used to be reported as
+// CLOSED while its value was still unbalanced, so the one thing the caller
+// relies on that return for was wrong.
+func TestAnOverClosedBlockIsNotReportedAsClosed(t *testing.T) {
+	got, _, err := readTFVarsAssignments(writeTemp(t, "over = [\n]]\nafter = \"kept\"\n"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if v, ok := got["over"]; ok {
+		t.Errorf("recorded over = %q. It closes harder than it opens, so it is malformed "+
+			"input and takes the same path as a truncated block: dropped.", v)
+	}
+	if got["after"] != `"kept"` {
+		t.Errorf("assignments after an over-closed block were lost: %v", keysOf(got))
+	}
+}
+
+// Whatever the parser does record must be emittable. This is the invariant the
+// two writers' guards are the backstop for; if it holds, they never fire.
+func TestEveryRecordedValueIsBalanced(t *testing.T) {
+	src := `good = "scalar"
+zones = [
+  {
+    a = "b"  # trailing comment
+  },
+]
+truncated = [
+over = [
+]]
+tail = "kept"
+`
+	got, _, err := readTFVarsAssignments(writeTemp(t, src))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for k, v := range got {
+		if HCLValueIsUnbalanced(v) {
+			t.Errorf("recorded %s = %q, which no writer can emit", k, v)
+		}
+	}
+	if got["tail"] != `"kept"` {
+		t.Errorf("the assignment after two malformed blocks was lost: %v", keysOf(got))
+	}
+}
+
+// The snapshot writer is the file everything else is derived FROM. Guarding only
+// the replay leaves the self-perpetuating half of #219 open.
+func TestTheSnapshotWriterAlsoRefusesUnbalancedValues(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.tfvars")
+	// Reaches the writer's map without going through the block path at all: a
+	// bare stray closer is a single-line value as far as the parser is concerned.
+	if err := os.WriteFile(src, []byte("stray = ]\nfine = \"yes\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderAppliedTFVars("trial", []string{src}, time.Now(), "test")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+			continue
+		}
+		if HCLValueIsUnbalanced(strings.TrimPrefix(trimmed, "stray = ")) && strings.HasPrefix(trimmed, "stray") {
+			t.Errorf("the snapshot recorded an unbalanced value:\n  %s\nA corrupt snapshot is "+
+				"self-perpetuating, which is the whole mechanism behind #219.", trimmed)
+		}
+	}
+	if !strings.Contains(out, `fine = "yes"`) {
+		t.Errorf("a balanced value was dropped from the snapshot:\n%s", out)
+	}
+	if !strings.Contains(out, "# stray =") {
+		t.Errorf("the skipped key was not named in the snapshot:\n%s", out)
+	}
 }
