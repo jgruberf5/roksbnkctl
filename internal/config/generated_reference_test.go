@@ -31,6 +31,12 @@ func TestGeneratedBookChaptersAreCurrent(t *testing.T) {
 	}{
 		{"./tools/refgen/config-md", "book/src/28-configuration-reference.md"},
 		{"./tools/refgen/tfvars-md", "book/src/29-terraform-variable-reference.md"},
+		// Chapter 27 was generated and then hand-edited, with nothing checking it,
+		// so it drifted: flag names gained backticks the generator does not emit
+		// and rows were reordered. Its own header says "Re-run on every CLI surface
+		// change", which is only true if something enforces it. Adding a command
+		// without regenerating left the command reference silently missing it.
+		{"./tools/refgen/cobra-md", "book/src/27-command-reference.md"},
 	} {
 		t.Run(filepath.Base(tc.chapter), func(t *testing.T) {
 			cmd := exec.Command("go", "run", tc.gen)

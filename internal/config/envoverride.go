@@ -795,8 +795,29 @@ func overrideVLANPrefixLenPerVLANFromEnv(ws *Workspace) []string {
 
 // envValue returns the trimmed value of an environment variable, or "" when
 // unset or whitespace-only.
+// envLookup is where every override reads its value. It is os.Getenv in normal
+// use and swapped only by OverrideFromMap, so the override tables stay the ONE
+// description of the surface: anything that wants to apply overrides from
+// somewhere other than the process environment goes through the same rows,
+// rather than growing a second copy that can disagree with this one.
+var envLookup = os.Getenv
+
 func envValue(name string) string {
-	return strings.TrimSpace(os.Getenv(name))
+	return strings.TrimSpace(envLookup(name))
+}
+
+// OverrideFromMap applies overrides from an explicit map instead of the process
+// environment, and reports what it set exactly as OverrideFromEnv does.
+//
+// Not concurrency-safe: it swaps the package-level lookup for the duration.
+// That is deliberate rather than lazy — the alternative is threading a lookup
+// through every table row, which doubles the surface each name is written on,
+// and the whole point of the tables is that a name appears once.
+func OverrideFromMap(ws *Workspace, env map[string]string) []string {
+	prev := envLookup
+	envLookup = func(k string) string { return env[k] }
+	defer func() { envLookup = prev }()
+	return OverrideFromEnv(ws)
 }
 
 // stringOverride is one uniform env override: read o.env, assign it verbatim to
