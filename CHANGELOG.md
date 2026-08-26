@@ -45,6 +45,32 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Fixed
 
+- **`registry adopt --verify-contents` resolved source digests unauthenticated**
+  (#224). Against a fully populated 94-artifact mirror it reported:
+
+  ```text
+  ✗ charts/coremond: resolve source: ... DENIED: Unauthenticated request
+  adopt --verify-contents: 87 of 94 artifacts are missing or digest-mismatched
+  ```
+
+  `registryEngine` copies the FAR credential at construction, and `buildBOM` is
+  what resolves it from COS when the workspace does not set
+  `registry.source_service_account_b64` — so the engine was built holding an
+  empty credential. The 7 artifacts that passed were the non-F5 dependencies
+  whose sources are public, which is what made it look like a mirror problem
+  rather than a credential one. `replicate` and `verify` never hit it because
+  they build the BOM first. The engine is now constructed after the BOM.
+
+- **`registry adopt` no longer refuses a populated Artifactory mirror** (#224).
+  Artifactory's repository-path access method answers the registry-wide
+  `/v2/_catalog` with an empty body; the repositories live under the
+  per-repository catalogue at `/v2/<repo>/_catalog`. The probe saw zero and
+  `adopt` refused without `--force`. It now retries against the scoped
+  catalogue — but only believes an answer that differs from the root's, because
+  many registries ignore the path and echo the whole catalogue, which would turn
+  a typo'd `generic_repo_prefix` into a healthy-looking mirror and defeat the
+  one check the probe exists to perform.
+
 - **The IBM credential template `bnkforge register` creates is no longer inert**
   (#223). It was written with `provider: "IBM"`, and Forge compares
   `provider == "ibm"` case-sensitively in at least seven places without

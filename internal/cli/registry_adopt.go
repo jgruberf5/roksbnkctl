@@ -45,7 +45,23 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 	// target case for adoption) fails x509: the probe degrades to a warning and
 	// silently loses its only validation, and --verify-contents reports every
 	// artifact as missing.
-	eng := registryEngine(target, in, mirrorCA)
+	// THE ENGINE IS BUILT AFTER THE BOM, NOT BEFORE (#224).
+	//
+	// registryEngine copies source.SourceAuth(in.FARRepoURL, in.SourceSAB64) at
+	// CONSTRUCTION, and buildBOM is what fills in.SourceSAB64 — it resolves the
+	// FAR service account from COS when the workspace does not set
+	// registry.source_service_account_b64. Constructing first captured an EMPTY
+	// credential, so every source whose host is repo.f5.com resolved
+	// unauthenticated:
+	//
+	//	✗ charts/coremond: resolve source: ... DENIED: Unauthenticated request
+	//	adopt --verify-contents: 87 of 94 artifacts are missing or digest-mismatched
+	//
+	// The 7 that passed were the non-F5 dependencies, whose sources are public —
+	// which is exactly the shape that makes this look like a mirror problem
+	// rather than a credential one. `replicate` and `verify` never hit it
+	// because they build the BOM first.
+	var eng *mirror.Engine
 
 	var artifacts []config.MirrorArtifact
 	manifestVersion := in.ManifestVersion
@@ -55,6 +71,8 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 		if berr != nil {
 			return fmt.Errorf("--verify-contents needs the FAR source to build the BOM: %w", berr)
 		}
+		// `in` now carries the resolved FAR service account.
+		eng = registryEngine(target, in, mirrorCA)
 		manifestVersion = bom.ManifestVersion
 		// VerifyAll, not Verify: it returns every artifact with its resolved TARGET
 		// digest, so the recorded inventory can carry digests. An inventory without
@@ -81,6 +99,10 @@ func runRegistryAdopt(cmd *cobra.Command, _ []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "✓ verified %d artifacts against the source\n", len(bom.Artifacts))
 	} else {
+		// The probe touches only the TARGET, so the empty source credential is
+		// harmless here — but the engine is still built in-branch so there is
+		// exactly one construction site per path and no ordering to re-break.
+		eng = registryEngine(target, in, mirrorCA)
 		// Source-free sanity check: does the mirror hold anything under the prefix?
 		n, perr := eng.ProbeNamespace(cmdContext(cmd), target.MirrorNamespace())
 		switch {
