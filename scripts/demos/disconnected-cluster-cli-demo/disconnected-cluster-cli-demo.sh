@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# disconnected_deployment_demo.sh  (roksbnkctl v1.55.1)
+# disconnected_deployment_demo.sh  (roksbnkctl v1.56.0)
 #
 # Shows the THREE things that make a disconnected F5 BIG-IP Next for Kubernetes
 # (BNK) install work, onto a cluster you ALREADY HAVE:
