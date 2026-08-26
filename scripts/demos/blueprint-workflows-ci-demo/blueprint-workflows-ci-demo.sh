@@ -43,7 +43,7 @@ source "$HERE/../lib/demo-format.sh"
 # ConfigMap is deliberately rendered into the Argo UI and printed by this script
 # — that visibility is its purpose — so a credential landing there is exposed by
 # design, not by accident.
-SECRET_KEYS=(IBMCLOUD_API_KEY ROKSBNKCTL_GENERIC_PASSWORD ROKSBNKCTL_BIGIP_PASSWORD BNK_FORGE_PASSWORD ROKSBNKCTL_GTM_PASSWORD)
+SECRET_KEYS=(IBMCLOUD_API_KEY ROKSBNKCTL_GENERIC_PASSWORD ROKSBNKCTL_BIGIP_PASSWORD BNK_FORGE_PASSWORD)
 
 # Every workflow, in dependency order: the mirror and the proxy must exist before
 # anything disconnected can use them.

@@ -147,24 +147,8 @@ variable "cneinstance_ibm_trusted_profile_id" {
   default     = ""
 }
 
-variable "cneinstance_gtm_url" {
-  description = "BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely."
-  type        = string
-  default     = ""
-}
 
-variable "cneinstance_gtm_username" {
-  description = "Username for the GTM at cneinstance_gtm_url."
-  type        = string
-  default     = ""
-}
 
-variable "cneinstance_gtm_password" {
-  description = "Password for the GTM at cneinstance_gtm_url."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
 
 variable "cneinstance_gslb_datacenter_name" {
   description = "GSLB datacenter name"

@@ -848,9 +848,18 @@ type BNKCfg struct {
 	// (rendered as cneinstance_gslb_datacenter_name). Empty → the terraform default
 	// (unset).
 	GSLBDatacenterName string `yaml:"gslb_datacenter_name,omitempty"`
-	// GTM is the BIG-IP DNS the datacenter above registers with (#51). nil →
-	// unchanged behaviour: the datacenter name alone, as before.
-	GTM *BNKGTMCfg `yaml:"gtm,omitempty"`
+	// bnk.gtm was REMOVED in #227. It carried the GTM/BIG-IP DNS url, username
+	// and password, rendered them as cneinstance_gtm_* tfvars, and terraform
+	// emitted them onto the CNE controller as GSLB_GTM_* and GTM_* environment
+	// variables. NEITHER prefix appears anywhere in the f5ingress binary on
+	// EITHER line -- 2.3 v14.59.1-0.0.70 and 2.4 v14.91.12-0.1.66 both contain
+	// zero occurrences of all six names, while the controls
+	// (GSLB_DATACENTER_NAME, CLOUD_PROVIDER, and USE_GATEWAY_SETTINGS on 2.4
+	// only) are present exactly where expected. The whole surface expressed
+	// nothing, and it put a password in a pod environment to do it.
+	//
+	// GSLBDatacenterName above is REAL and stays. An existing config.yaml
+	// carrying bnk.gtm needs no edit: an unrecognised key is ignored.
 
 	// CertManager overrides cert-manager's namespace + chart version. nil → the
 	// terraform defaults (cert-manager / the pinned chart version). The
@@ -1106,25 +1115,6 @@ type BNKCertManagerCfg struct {
 }
 
 // BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional.
-// BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB
-// datacenter with (#51) — the connection half of GSLB, which until now only had
-// the datacenter NAME.
-//
-// The password is stored base64-encoded (obfuscation, NOT encryption — like
-// ibmcloud.api_key_b64 and bnk.cis.bigip_password_b64) and rendered raw into
-// terraform.tfvars at apply time.
-//
-// Absent → nothing is emitted and the CNEInstance is unchanged, so GSLB stays
-// exactly as it behaves today for every workspace that does not use it.
-type BNKGTMCfg struct {
-	// URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com.
-	URL string `yaml:"url,omitempty"`
-	// Username to authenticate with.
-	Username string `yaml:"username,omitempty"`
-	// PasswordB64 is the base64 of the password. Env sets it from the RAW value.
-	PasswordB64 string `yaml:"password_b64,omitempty"`
-}
-
 // BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT
 // encryption — like ibmcloud.api_key_b64); the raw value is rendered to
 // terraform.tfvars as bigip_password at apply time.

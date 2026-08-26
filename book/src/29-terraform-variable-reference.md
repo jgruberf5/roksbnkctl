@@ -60,9 +60,6 @@ Source: `terraform/variables.tf`
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
 | `cneinstance_deployment_size` | `string` | `""` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here. | no |
-| `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
-| `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
-| `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults) | no |
 | `cneinstance_vlan_prefixlen_external` | `number` | `0` | External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value. | no |
@@ -207,9 +204,6 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `flo_trusted_profile_id` | `string` | `""` | IBM IAM Trusted Profile ID for provisioning VPC routes | no |
 | `flo_cluster_issuer_name` | `string` | `""` | mTLS certificate issuer name | no |
 | `cneinstance_deployment_size` | `string` | `""` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses. | no |
-| `cneinstance_gtm_url` | `string` | `""` | BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely. | no |
-| `cneinstance_gtm_username` | `string` | `""` | Username for the GTM at cneinstance_gtm_url. | no |
-| `cneinstance_gtm_password` | `string` | `""` | Password for the GTM at cneinstance_gtm_url. | **yes** |
 | `cneinstance_gslb_datacenter_name` | `string` | `""` | GSLB datacenter name for CNEInstance (optional) | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | The Multus Network Attachment Definitions for the CNEInstance TMM deployments | no |
 | `cneinstance_network_zones` | `list(object({` | `[]` | Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults) | no |

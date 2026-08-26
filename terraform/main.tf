@@ -202,9 +202,6 @@ module "cne_instance" {
   flo_cluster_issuer_name             = local.flo_cluster_issuer_name
   cneinstance_deployment_size         = var.cneinstance_deployment_size
   cneinstance_gslb_datacenter_name    = var.cneinstance_gslb_datacenter_name
-  cneinstance_gtm_url                 = var.cneinstance_gtm_url
-  cneinstance_gtm_username            = var.cneinstance_gtm_username
-  cneinstance_gtm_password            = var.cneinstance_gtm_password
   cneinstance_network_attachments     = local.cneinstance_network_attachments
   cneinstance_network_zones           = var.cneinstance_network_zones
   cneinstance_vlan_prefixlen          = var.cneinstance_vlan_prefixlen

@@ -108,9 +108,6 @@ import (
 //	ROKSBNKCTL_GENERIC_PASSWORD     → registry.generic_password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_GENERIC_CA_B64       → registry.generic_ca_b64 (verbatim; already base64)
 //	ROKSBNKCTL_GENERIC_CA_SHA256    → registry.generic_ca_sha256 (the out-of-band CA pin)
-//	ROKSBNKCTL_GTM_URL              → bnk.gtm.url (BIG-IP DNS for GSLB; #51)
-//	ROKSBNKCTL_GTM_USERNAME         → bnk.gtm.username
-//	ROKSBNKCTL_GTM_PASSWORD         → bnk.gtm.password_b64 (raw, base64-encoded)
 //	ROKSBNKCTL_BIGIP_URL            → bnk.cis.bigip_url (the BNK CIS controller's BIG-IP target)
 //	ROKSBNKCTL_BIGIP_USERNAME       → bnk.cis.bigip_username
 //	ROKSBNKCTL_BIGIP_PASSWORD       → bnk.cis.bigip_password_b64 (raw, base64-encoded)
@@ -370,23 +367,6 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
-	// GTM / BIG-IP DNS connection for GSLB (#51). Same shape as the CIS BIG-IP
-	// credentials: the password arrives RAW and is stored base64.
-	if v := envValue("ROKSBNKCTL_GTM_PASSWORD"); v != "" {
-		gtmCfg(ws).PasswordB64 = base64.StdEncoding.EncodeToString([]byte(v))
-		applied = append(applied, "bnk.gtm.password_b64 (ROKSBNKCTL_GTM_PASSWORD)")
-	}
-	// Credentials without a URL configure nothing: the render is gated on the
-	// URL, so a pipeline that sets the user and password but forgets
-	// ROKSBNKCTL_GTM_URL would see both reported as applied, written to
-	// config.yaml, and silently never rendered — GSLB simply never registers,
-	// with nothing anywhere saying why. Say it here, where the omission is.
-	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) == "" &&
-		(g.Username != "" || g.PasswordB64 != "") {
-		applied = append(applied,
-			"! bnk.gtm credentials set without ROKSBNKCTL_GTM_URL — GTM stays DISABLED and they will not be used")
-	}
-
 	// Adopt an existing Transit Gateway by name OR id (create=false + existing).
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
 	// it. Preserves the other resource toggles.
@@ -623,14 +603,6 @@ func bnkForgeCfg(ws *Workspace) *BNKForgeCfg {
 		ws.BNKForge = &BNKForgeCfg{}
 	}
 	return ws.BNKForge
-}
-
-// gtmCfg lazily creates bnk.gtm so the overrides above can populate it.
-func gtmCfg(ws *Workspace) *BNKGTMCfg {
-	if ws.BNK.GTM == nil {
-		ws.BNK.GTM = &BNKGTMCfg{}
-	}
-	return ws.BNK.GTM
 }
 
 // flpExternal returns ws.BNK.FLP.External, creating the intermediate blocks. Both
@@ -885,8 +857,6 @@ var stringOverrides = []stringOverride{
 	// the environment alone — so without this row the setting cannot reach a
 	// blueprint at all.
 	{"ROKSBNKCTL_GATEWAY_API_BUNDLE_URL", "bnk.gateway_api_bundle_url", func(ws *Workspace, v string) { ws.BNK.GatewayAPIBundleURL = v }},
-	{"ROKSBNKCTL_GTM_URL", "bnk.gtm.url", func(ws *Workspace, v string) { gtmCfg(ws).URL = v }},
-	{"ROKSBNKCTL_GTM_USERNAME", "bnk.gtm.username", func(ws *Workspace, v string) { gtmCfg(ws).Username = v }},
 	// The registry mirror. A CI job needs to name its registry without a
 	// config file: these four plus the bespoke ROKSBNKCTL_GENERIC_PASSWORD are
 	// the whole surface for `registry replicate --target generic` and the
@@ -1012,7 +982,6 @@ var bespokeOverrideNames = []string{
 	"ROKSBNKCTL_GATEWAY_L4_LISTENER_PORT",
 	"ROKSBNKCTL_GATEWAY_ROUTE_EXAMPLES",
 	"ROKSBNKCTL_GENERIC_PASSWORD",
-	"ROKSBNKCTL_GTM_PASSWORD",
 	"ROKSBNKCTL_LICENSE_MODE",
 	"ROKSBNKCTL_MANIFEST_VERSION",
 	"ROKSBNKCTL_REACHABILITY_RETRY_SECONDS",

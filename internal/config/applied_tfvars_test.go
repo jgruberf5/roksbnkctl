@@ -472,7 +472,6 @@ func TestEveryRenderedCredentialIsRedacted(t *testing.T) {
 		"ibmcloud_api_key",
 		"bigip_password",
 		"registry_mirror_password",
-		"cneinstance_gtm_password",
 	} {
 		if _, ok := redactedVarNames[name]; !ok {
 			t.Errorf("%s is rendered into tfvars but not redacted from the applied snapshot", name)

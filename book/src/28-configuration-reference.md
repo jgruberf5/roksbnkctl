@@ -72,7 +72,7 @@ AgentCfg configures roksbnkctl's agentic mode (the `agent` command). It is purel
 
 ## `BNKCISCfg`
 
-BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64); the raw value is rendered to terraform.tfvars as bigip_password at apply time.
+BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional. BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64); the raw value is rendered to terraform.tfvars as bigip_password at apply time.
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
@@ -128,7 +128,6 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
 | `tmm_resources` | `map[string]map[string]string` | 2.3 + 2.4 | — | no | TMMResources overrides the TMM pod's resource requests/limits, rendered as the CNEInstance's advanced.tmm.resources (#203). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
-| `gtm` | `*BNKGTMCfg` | 2.3 + 2.4 | — | no | GTM is the BIG-IP DNS the datacenter above registers with (#51). |
 | `cert_manager` | `*BNKCertManagerCfg` | 2.3 + 2.4 | — | no | CertManager overrides cert-manager's namespace + chart version. |
 | `network` | `*BNKNetworkCfg` | 2.3 + 2.4 | — | no | Network holds the optional per-zone subnet CIDRs + TMM self-IPs for the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs (BNK install-guide "Configuration"). |
 | `cis` | `*BNKCISCfg` | 2.3 + 2.4 | — | no | CIS holds the BIG-IP management endpoint + credentials the BNK CIS controller (k8s-bigip-ctlr) uses. |
@@ -207,16 +206,6 @@ BNKForgeCfg is the optional integration with a co-located BNK Forge (v3) install
 | `password_b64` | `string` | 2.3 + 2.4 | — | no | PasswordB64 is that user's password, base64-encoded — obfuscation, NOT encryption, exactly as bnk.cis.bigip_password_b64 and registry.generic_password_b64 are. |
 | `insecure` | `bool` | 2.3 + 2.4 | — | no | Insecure skips TLS verification against the Forge server. |
 | `ca_b64` | `string` | 2.3 + 2.4 | — | no | CAB64 pins the CA the Forge server's certificate must chain to, PEM, base64-encoded. |
-
-## `BNKGTMCfg`
-
-BNKCISCfg configures the BNK CIS controller's BIG-IP target. All optional. BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB datacenter with (#51) — the connection half of GSLB, which until now only had the datacenter NAME.  The password is stored base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64 and bnk.cis.bigip_password_b64) and rendered raw into terraform.tfvars at apply time.  Absent → nothing is emitted and the CNEInstance is unchanged, so GSLB stays exactly as it behaves today for every workspace that does not use it.
-
-| key | type | line | default | required | description |
-|---|---|---|---|---|---|
-| `url` | `string` | 2.3 + 2.4 | — | no | URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com. |
-| `username` | `string` | 2.3 + 2.4 | — | no | Username to authenticate with. |
-| `password_b64` | `string` | 2.3 + 2.4 | — | no | PasswordB64 is the base64 of the password. |
 
 ## `BNKNetworkCfg`
 

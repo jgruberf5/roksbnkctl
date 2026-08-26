@@ -11,7 +11,7 @@ func TestOverrideFromEnv(t *testing.T) {
 	// Isolate from the ambient environment: clear EVERY supported override,
 	// then set only what each sub-case exercises. Ranging the authoritative
 	// list keeps this self-maintaining — the previous 16-name hand copy meant
-	// an ambient ROKSBNKCTL_GTM_URL failed "unset vars are inert" spuriously,
+	// an ambient ROKSBNKCTL_BIGIP_URL failed "unset vars are inert" spuriously,
 	// the exact drift disease #114 removed from the production code.
 	clearAll := func(t *testing.T) {
 		for _, e := range SupportedOverrideNames() {
