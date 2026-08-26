@@ -6,6 +6,55 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`bnk down` no longer stalls for five minutes on the BNK namespace** (#217).
+  terraform destroyed the `CNEInstance` and FLO as two independent graph nodes:
+  alekc/kubectl's delete returns as soon as the API server accepts it, so the
+  CNEInstance was merely *marked* for deletion while its controller-owned
+  children still carried F5 finalizers. Three seconds later `helm_release.flo`
+  was destroyed and the only thing that could clear those finalizers was gone,
+  so the namespace delete blocked until the kubernetes provider's timeout:
+
+  ```text
+  kubectl_manifest.cneinstance[0]: Destruction complete after 0s   <- no wait
+  helm_release.flo[0]:             Destruction complete after 3s   <- finalizer gone
+  kubernetes_namespace_v1.flo[0]:  Still destroying... [4m0s elapsed]
+  Error: context deadline exceeded
+  ```
+
+  Observed on 3 of 3 teardowns — deterministic, not a race. Every `bnk down`
+  cost ~5 minutes and printed an `Error:` that operators had to learn to ignore,
+  which is the expensive part: a log that cries wolf on every successful run
+  stops being read.
+
+  `bnk down` now drains BNK's custom resources BEFORE terraform starts, while
+  FLO is still running to finalize them. The order is the 2.4 guide's own
+  (`UninstallOrder`): every other F5 CR first, **confirmed gone**, and only then
+  the CNEInstance — the guide is explicit that IPAM and IPAMRange must be
+  verified absent first, "to avoid any leftover state that might cause issues
+  during product reinstallation", because they are controller-generated and
+  removing the CNEInstance takes away what would have cleaned them up. If the
+  leaf phase does not drain, the CNEInstance is deliberately left alone rather
+  than deleted anyway, which would reproduce the bug inside the fix for it.
+
+  The kinds are DISCOVERED from `BNKCRDGroups`, not listed: a hardcoded list had
+  three entries while the live 2.4 capture shows sixteen finalizer-bearing F5
+  CRs, so a list would sweep three and report success.
+
+  `freeStuckBNKNamespace` stays as the safety net — its own comment already
+  called itself "a REPAIR, not a substitute for the ordering fix that would stop
+  the CNEInstance being orphaned". This is that ordering fix.
+
+  Runs on the containerised backend too. The destroy ordering lives in the
+  terraform graph, which is identical whichever process runs it.
+
+  A failing API server is no longer read as an empty namespace. Counting every
+  list error as zero objects meant an unreachable cluster reported a successful
+  drain, having verified nothing — the same misreporting this change exists to
+  remove, in the other direction. A deleted CRD is still not waited for, since
+  that errors on list too and waiting would add the timeout to every teardown.
+
 ## v1.55.0 — 2026-08-26
 
 **`roksbnkctl config` writes the configuration you were transcribing by hand.**

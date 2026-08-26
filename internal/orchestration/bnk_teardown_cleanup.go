@@ -138,20 +138,6 @@ const GTMNamingChangedBetweenLines = true
 // resolves, or an absent secret are all NORMAL after a destroy; reporting them
 // would turn a clean teardown into a wall of noise about things that are
 // correctly absent.
-// sweepLicenseSecrets deletes the CWC licence secrets from the shared-components
-// namespace after a successful BNK destroy.
-//
-// Namespace-scoped and name-exact: it deletes only the names in
-// LicenseSecretNames, in the namespace BNK actually used. It never touches CRDs
-// — those are cluster-scoped, shared with any other BNK install on the cluster,
-// and removing them is a decision an operator makes explicitly rather than a
-// side effect of one workspace's teardown. BNKCRDGroups documents the list for
-// when they do.
-//
-// Silent on every failure. A cluster already gone, a kubeconfig that no longer
-// resolves, or an absent secret are all NORMAL after a destroy; reporting them
-// would turn a clean teardown into a wall of noise about things that are
-// correctly absent.
 func sweepLicenseSecrets(ctx context.Context, cctx *config.Context, tfws *tf.Workspace, w io.Writer) {
 	if cctx == nil || cctx.Workspace == nil {
 		return
