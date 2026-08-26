@@ -275,8 +275,8 @@ roksbnkctl bnkforge enable [flags]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
-| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
+| `--forge-ca` | `string` | — | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca |
 | `--project` | `string` | — | target BNK Forge project name (ensured-or-created) |
 | `--url` | `string` | — | BNK Forge server URL (e.g. https://forge.example.com) |
 | `--username` | `string` | — | BNK Forge login username |
@@ -296,8 +296,8 @@ roksbnkctl bnkforge register [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--force` | `bool` | `false` | take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes) |
-| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
-| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
+| `--forge-ca` | `string` | — | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca |
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
 | `--project` | `string` | — | target BNK Forge project name (overrides config) |
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
@@ -335,8 +335,8 @@ run twice or run late.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer `--forge-ca` |
-| `--forge-ca` | `string` | | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes `--insecure`) |
+| `--forge-ca` | `string` | — | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure) |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca |
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD) |
 | `--project` | `string` | — | BNK Forge project holding the cluster |
 | `--url` | `string` | — | BNK Forge base URL |
@@ -535,6 +535,64 @@ so it doesn't tangle with BNK or testing state.
 | `--var-file` | `stringArray` | `[]` | extra TF var-file (repeatable; later files override earlier) |
 
 ← back to [`roksbnkctl cluster`](#roksbnkctl-cluster)
+
+## `roksbnkctl config`
+
+Print an example config.yaml or .env, or convert one into the other
+
+Prints the workspace input in either form, for piping to a file.
+
+With no --from flag it prints an ANNOTATED template — every setting with the
+comment explaining it, which is what you want when starting from nothing:
+
+  roksbnkctl config yaml > config.yaml
+  roksbnkctl config env  > .env
+
+With --from-yaml or --from-env it prints the POPULATED equivalent, without
+comments — the same settings expressed in the other form:
+
+  roksbnkctl config env  --from-yaml config.yaml > .env
+  roksbnkctl config yaml --from-env  .env        > config.yaml
+
+The conversion carries what the input actually sets. A setting left at its
+default is omitted rather than written out, so the result stays a statement of
+intent instead of a snapshot of every default at the moment it ran -- except the
+handful of REQUIRED fields, which are emitted empty so a missing one is visible
+rather than silently absent.
+
+### `roksbnkctl config env`
+
+Print an annotated .env of ROKSBNKCTL_* overrides, or the .env equivalent of a config.yaml
+
+```
+roksbnkctl config env [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--from-env` | `string` | — | read settings from a .env file and print the populated equivalent (no comments) |
+| `--from-yaml` | `string` | — | read settings from a config.yaml and print the populated equivalent (no comments) |
+
+← back to [`roksbnkctl config`](#roksbnkctl-config)
+
+### `roksbnkctl config yaml`
+
+Print an annotated config.yaml, or the config.yaml equivalent of a .env
+
+```
+roksbnkctl config yaml [flags]
+```
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--from-env` | `string` | — | read settings from a .env file and print the populated equivalent (no comments) |
+| `--from-yaml` | `string` | — | read settings from a config.yaml and print the populated equivalent (no comments) |
+
+← back to [`roksbnkctl config`](#roksbnkctl-config)
 
 ## `roksbnkctl cos`
 
@@ -1599,7 +1657,7 @@ air-gapped cluster installs BNK from a registry it controls.
 Commands:
   roksbnkctl registry target     Show or set the mirror target (icr|generic)
   roksbnkctl registry bom        Build + print the bill-of-materials
-  roksbnkctl registry list       List artifacts currently in the mirror
+  roksbnkctl registry list       List the artifacts the last replicate recorded
   roksbnkctl registry diff       Show what `replicate` would copy (BOM vs. mirror)
   roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
   roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched

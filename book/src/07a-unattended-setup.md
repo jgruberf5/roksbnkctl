@@ -14,6 +14,71 @@ Three `init` options make that work:
 | `--override-from-env` | Overlay specific `config.yaml` fields from environment variables |
 | `--non-interactive` | Build `config.yaml` from environment variables alone — no file, no prompt (argv+env runners) |
 
+## Getting a starting point: `roksbnkctl config`
+
+Both forms of the input can be printed, so neither has to be written from
+memory. With no flags it prints an annotated template, ready to pipe:
+
+```bash
+roksbnkctl config yaml > config.yaml     # every setting, with the comment explaining it
+roksbnkctl config env  > .env            # the same settings as ROKSBNKCTL_* overrides
+```
+
+The `.env` template has every variable **commented out**. That is deliberate: an
+empty assignment is not the same as leaving a setting alone. `ROKSBNKCTL_X=`
+sets `X` to empty, which overrides whatever default would otherwise apply —
+uncomment only what you mean to set.
+
+### Converting between the two
+
+The same settings expressed either way, which is what you want when a pipeline
+needs as environment variables what a colleague handed you as a file:
+
+```bash
+roksbnkctl config env  --from-yaml config.yaml > .env
+roksbnkctl config yaml --from-env  .env        > config.yaml
+```
+
+The converted output carries **no comments** — it is a populated file, not a
+template — and includes only what the input actually set, so it stays a
+statement of intent rather than a snapshot of every default. The handful of
+required fields are emitted even when empty, so a missing one is visible instead
+of silently absent.
+
+Round-tripping is the quickest way to check a `.env` says what you think:
+
+```bash
+roksbnkctl config yaml --from-env .env   # read it back as config.yaml
+```
+
+The conversion runs the **same override machinery** `--override-from-env` uses,
+so a value lands where it would in a real run. A variable that this prints under
+`bnk.tmm_replicas` is the variable that sets `bnk.tmm_replicas`; there is no
+second parser that could disagree.
+
+A worked example — the Appendix C *Small cluster* as environment variables:
+
+```bash
+cat > small.yaml <<'YAML'
+ibmcloud: {region: us-east, resource_group: default}
+prefix: small
+cluster: {create: true, name: small, workers_per_zone: 2, worker_flavor: bx2.8x32}
+bnk:  {manifest_version: 2.4.0-EA, cneinstance_size: Tiny, tmm_replicas: 3}
+YAML
+
+roksbnkctl config env --from-yaml small.yaml
+# ROKSBNKCTL_CLUSTER_CREATE=true
+# ROKSBNKCTL_CLUSTER_NAME=small
+# ROKSBNKCTL_CNEINSTANCE_SIZE=Tiny
+# ROKSBNKCTL_MANIFEST_VERSION=2.4.0-EA
+# ROKSBNKCTL_PREFIX=small
+# ROKSBNKCTL_REGION=us-east
+# ROKSBNKCTL_RESOURCE_GROUP=default
+# ROKSBNKCTL_TMM_REPLICAS=3
+# ROKSBNKCTL_WORKERS_PER_ZONE=2
+# ROKSBNKCTL_WORKER_FLAVOR=bx2.8x32
+```
+
 ## The pattern
 
 ```mermaid
