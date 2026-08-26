@@ -6,6 +6,64 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.55.0 — 2026-08-26
+
+**`roksbnkctl config` writes the configuration you were transcribing by hand.**
+Two things configure this tool — a human editing `config.yaml` and a CI runner
+passing `ROKSBNKCTL_*` variables — and moving between them meant copying a
+hundred names across by hand, which is how a `.env` ends up naming a variable
+that does not exist.
+
+### Added
+
+- **`config yaml` and `config env` print the workspace input, in either form**
+  (#215). Both take `--from-yaml` or `--from-env` to convert a populated file
+  instead of printing an annotated template, so the output is pipeable:
+
+  ```
+  roksbnkctl config yaml > config.yaml            # annotated template
+  roksbnkctl config env  > .env                   # the same, as overrides
+  roksbnkctl config env  --from-yaml config.yaml  # populated, no comments
+  roksbnkctl config yaml --from-env  .env         # the round trip
+  ```
+
+  The conversion runs the SAME override machinery `--override-from-env` uses, so
+  a value lands where it would in a real run because it goes through the rows
+  that put it there. A second parser would have been a second thing to keep true.
+
+  The name-to-path mapping is **derived, not declared**: each override is applied
+  to an empty workspace on its own and the path that moves is the answer. A
+  parallel table is precisely the defect this codebase keeps finding — a list
+  every grep confirms and nothing keeps true — and a probe cannot drift, because
+  the thing it interrogates is the machinery itself. All 124 overrides resolve to
+  a config path, and the test asserts there are no exceptions: an override that
+  sets nothing a marshal can see is the inert-setting defect, not a probe
+  limitation.
+
+  Secrets are **named but not printed**. `config env --from-yaml > .env` would
+  otherwise write `IBMCLOUD_API_KEY`, `ROKSBNKCTL_API_KEY_B64` and
+  `ROKSBNKCTL_BIGIP_PASSWORD` values to disk — from a command whose own template
+  tells the reader to keep secrets out of the file. The variable stays
+  discoverable with an empty value and a comment. The filter keys on the config
+  path's naming convention (`*_b64`, `password`, `secret`, `token`, `api_key`)
+  rather than a list of variable names, so a new secret field is covered on
+  arrival. `bnkforge.ca_b64` is deliberately exempt: it is a public certificate,
+  encoded only for single-line YAML safety, and withholding it dropped a working
+  setting to protect nothing.
+
+  Values are shell-quoted, lists survive the round trip, and fields left at their
+  zero value are skipped rather than emitted as an assertion the user never made.
+
+- **`internal/cli/env.example` is generated** from the same probe plus the config
+  struct's own doc comments, so a new override appears in the template without
+  anyone adding it, and `TestEnvExampleIsCurrent` fails when it does not.
+
+### Fixed
+
+- **Chapter 27 is generated and was hand-edited, with nothing checking it**
+  (#215). It had drifted, and adding a command left the command reference
+  silently missing it. Chapters 28 and 29 were already guarded; 27 now is too.
+
 ## v1.54.0 — 2026-08-25
 
 **BNK 2.4 on ROKS is verified at four cluster sizes, and `deploymentSize` is not
