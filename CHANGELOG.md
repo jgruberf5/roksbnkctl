@@ -54,6 +54,48 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   drain, having verified nothing — the same misreporting this change exists to
   remove, in the other direction. A deleted CRD is still not waited for, since
   that errors on list too and waiting would add the timeout to every teardown.
+- **`bnk down` could not destroy a workspace whose applied snapshot held an
+  unterminated block** (#219). Reported by an end user:
+
+  ```text
+  Error: Missing item separator
+    on .../.applied-replay.tfvars line 6:
+     5: cneinstance_network_zones = [
+     6: cneinstance_tmm_k8s_routes = "172.17.0.0/18,172.21.0.0/16,192.168.100.0/24"
+  ```
+
+  `terraform.applied.tfvars` is only rewritten on apply, so every retry
+  regenerated the same unparseable replay file and the workspace could not be
+  torn down at all. The only escape was hand-editing a file the tool says not to
+  edit.
+
+  Two defects, and the second was silent. The parser kept the opening fragment
+  as the value — its own comment claimed that "at least round-trips as something
+  parseable", and `[` does not — and its continuation scan then consumed the
+  rest of the file hunting for a closing bracket, so **every assignment after
+  the bad block was dropped**. A four-variable snapshot parsed to two, quietly;
+  had terraform accepted the file, the destroy would have run with less than the
+  apply used.
+
+  An unterminated block is now dropped and parsing resumes at the following
+  line. Dropping is safe exactly where it happens: the replay is the
+  lowest-precedence var-file in the chain, so the key falls through to the config
+  render layered after it, and `cneinstance_network_zones` is `default = []`.
+  The replay writer also refuses to emit any value whose brackets do not balance,
+  naming it in a comment rather than dropping it silently.
+
+  Fixing this exposed a latent bug in the bracket counter: it stopped at the
+  first `#`, which is right for one line and wrong for a joined multi-line value,
+  so a well-formed zone list containing a comment would have been reported
+  unbalanced and skipped. Comments now skip to end-of-line.
+
+  A block that closes *too* hard (`over = [` / `]]`) is treated the same way as
+  a truncated one — malformed input, dropped, parsing resumes after the opener.
+  It was previously reported as closed while its value was still unbalanced. And
+  `terraform.applied.tfvars` itself gets the same balance guard as the replay
+  file: guarding only the file terraform reads left the file everything is
+  derived *from* able to persist invalid HCL, which is the self-perpetuating
+  half of this bug.
 
 ## v1.55.0 — 2026-08-26
 
