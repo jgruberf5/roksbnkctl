@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -507,11 +508,172 @@ func (e *Engine) ProbeNamespace(ctx context.Context, prefix string) (int, error)
 	if prefix == "" {
 		return len(repos), nil
 	}
+	if n := countUnderPrefix(repos, prefix); n > 0 {
+		return n, nil
+	}
+
+	// AN EMPTY ROOT CATALOGUE IS NOT AN EMPTY MIRROR (#224).
+	//
+	// Artifactory's repository-path access method answers the registry-wide
+	// /v2/_catalog with an empty body; the repositories live under the
+	// PER-REPOSITORY catalogue at /v2/<repo>/_catalog. A populated
+	// artifactory.grubernet.org/bnk-mirror therefore probed as zero
+	// repositories, and `adopt` refused a perfectly good mirror unless --force.
+	//
+	// Retry against the first path segment of the prefix before believing the
+	// zero. Still best-effort: a registry that exposes neither is reported as
+	// the caller's own error, because being unable to look is not the same as
+	// looking and finding nothing.
+	seg, rel, _ := strings.Cut(prefix, "/")
+	scoped, serr := e.scopedCatalog(ctx, host, seg)
+	if serr != nil {
+		// The root answered, so report what the root said rather than the
+		// fallback's failure — the fallback is an extra chance, not the contract.
+		return 0, nil
+	}
+	// A REGISTRY THAT IGNORES THE PATH RETURNS THE ROOT CATALOGUE.
+	//
+	// Trusting the response blindly turns the probe's one job inside out: with a
+	// typo'd generic_repo_prefix the root count is legitimately 0, the fallback
+	// fires, the registry answers with everything it holds, and a prefix nothing
+	// was ever pushed under reports repositories. `adopt` would then record a
+	// mirror whose prefix is wrong — which is the failure the probe exists to
+	// catch. If the scoped answer is the root answer, it was not scoped.
+	if sameRepoList(scoped, repos) {
+		return countUnderPrefix(repos, prefix), nil
+	}
+	// The scoped listing names repositories RELATIVE to the segment on some
+	// builds and absolute on others, so count both shapes.
+	if n := countUnderPrefix(scoped, prefix); n > 0 {
+		return n, nil
+	}
+	if rel == "" {
+		return len(scoped), nil
+	}
+	return countUnderPrefix(scoped, rel), nil
+}
+
+// scopedCatalog reads /v2/<seg>/_catalog directly.
+//
+// crane.Catalog cannot express this: it takes a REGISTRY, and the per-repository
+// catalogue is a path under one. This is a plain GET through the same transport
+// and credentials the rest of the engine uses, so a private CA and an
+// authenticated mirror behave identically to every other call.
+func (e *Engine) scopedCatalog(ctx context.Context, host, seg string) ([]string, error) {
+	if seg == "" {
+		return nil, fmt.Errorf("no repository segment to scope the catalogue to")
+	}
+	// TLS follows the SAME rules as the rest of the engine, or this one call
+	// fails on exactly the registries most likely to need it — a self-signed lab
+	// mirror reached with --insecure and no CA supplied, which is supported
+	// everywhere else here. The failure would be soft (the caller falls back to
+	// the root's count), so the symptom would be "the fallback silently never
+	// works", which is worse than an error.
+	//
+	// The SCHEME is attempted rather than guessed. The first version keyed it on
+	// the hostname — loopback meant http — and a TLS registry on 127.0.0.1 is an
+	// ordinary thing that then got a cleartext request at an https port. https
+	// first, http only if that fails, which is what crane effectively does.
+	var lastErr error
+	for _, scheme := range []string{"https", "http"} {
+		repos, err := e.scopedCatalogAt(ctx, scheme, host, seg)
+		if err == nil {
+			return repos, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// scopedCatalogAt performs the GET against one scheme.
+func (e *Engine) scopedCatalogAt(ctx context.Context, scheme, host, seg string) ([]string, error) {
+	url := fmt.Sprintf("%s://%s/v2/%s/_catalog", scheme, host, seg)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if auth, aerr := e.keychain().Resolve(scopedResource{host}); aerr == nil && auth != nil {
+		if cfg, cerr := auth.Authorization(); cerr == nil && cfg != nil {
+			switch {
+			case cfg.RegistryToken != "":
+				req.Header.Set("Authorization", "Bearer "+cfg.RegistryToken)
+			case cfg.Username != "" || cfg.Password != "":
+				req.SetBasicAuth(cfg.Username, cfg.Password)
+			}
+		}
+	}
+	client := &http.Client{Transport: e.probeTransport()}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+	var body struct {
+		Repositories []string `json:"repositories"`
+	}
+	if derr := json.NewDecoder(resp.Body).Decode(&body); derr != nil {
+		return nil, derr
+	}
+	return body.Repositories, nil
+}
+
+// probeTransport is the transport for the scoped-catalogue GET: the engine's CA
+// transport when a private CA is configured, an InsecureSkipVerify one when
+// Insecure is set and no CA is, and the default otherwise.
+//
+// crane gets this behaviour from crane.Insecure; this hand-rolled client has to
+// spell it out, and leaving it out is why the first version of the fallback
+// could not reach a self-signed mirror at all.
+func (e *Engine) probeTransport() http.RoundTripper {
+	if tr := e.caTransport(); tr != nil {
+		return tr
+	}
+	if !e.Insecure {
+		return nil // http.Client uses http.DefaultTransport
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 — explicit operator opt-in via Insecure
+	return tr
+}
+
+// scopedResource names the registry for keychain resolution.
+type scopedResource struct{ host string }
+
+func (r scopedResource) String() string      { return r.host }
+func (r scopedResource) RegistryStr() string { return r.host }
+
+// sameRepoList reports whether two catalogue listings hold the same names,
+// order-insensitively.
+func sameRepoList(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, y := range b {
+		seen[y]--
+		if seen[y] < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// countUnderPrefix counts repositories at or below prefix.
+func countUnderPrefix(repos []string, prefix string) int {
 	n := 0
 	for _, r := range repos {
 		if r == prefix || strings.HasPrefix(r, prefix+"/") {
 			n++
 		}
 	}
-	return n, nil
+	return n
 }

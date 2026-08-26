@@ -263,11 +263,37 @@ type credentialTemplate struct {
 	Provider string `json:"provider"`
 }
 
+// IBMCredentialTemplate is what a Forge IBM credential template needs to be
+// useful, as opposed to merely present.
+type IBMCredentialTemplate struct {
+	Name          string
+	APIKey        string
+	ResourceGroup string
+	// Region and COSInstance are inherited by blueprint inputs that declare
+	// `source: credential_template` with `source_field: region` /
+	// `ibm_cos_instance_name`. Left empty they are stored as null and those
+	// inputs have nothing to resolve to (#223).
+	Region      string
+	COSInstance string
+}
+
+// ibmProvider is the value Forge's own code compares against.
+//
+// LOWERCASE, AND CASE MATTERS. Forge tests `provider == "ibm"` in at least seven
+// places -- credential_template_service, credentials_service,
+// imported_blueprint_service, ibm_cloud_service, routes/credential_templates and
+// blueprint_sync_service -- and none of them lowercase the field first. Writing
+// "IBM" is accepted by the API and then matches nothing, so credentials are
+// never injected into a deployment, blueprint inputs never resolve, and the
+// "IBM templates must carry an API key" validation never fires. Nothing errors;
+// the template simply does nothing, in both directions (#223).
+const ibmProvider = "ibm"
+
 // EnsureIBMCredentialTemplate returns the id of a default IBM credential
-// template named name, creating it (or updating the matching one) so it holds
-// the given API key + resource group and is marked default. Forge uses it to
-// derive the cluster kubeconfig on demand.
-func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, name, apiKey, resourceGroup string) (int, error) {
+// template named tmpl.Name, creating it (or updating the matching one) so it
+// holds the given API key + resource group and is marked default. Forge uses it
+// to derive the cluster kubeconfig on demand.
+func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, tmpl IBMCredentialTemplate) (int, error) {
 	data, code, err := c.do(ctx, http.MethodGet, "/api/credential-templates", nil)
 	if err != nil {
 		return 0, err
@@ -279,12 +305,25 @@ func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, name, apiKey, 
 	_ = json.Unmarshal(data, &existing)
 
 	fields := map[string]any{
-		"ibmcloud_api_key":        apiKey,
-		"ibmcloud_resource_group": resourceGroup,
+		// Sent on UPDATE as well as create, so a template a previous roksbnkctl
+		// wrote as "IBM" is REPAIRED rather than left inert forever (#223).
+		// Omitting it here would fix new installs and abandon every existing
+		// one, and the existing ones are the reported symptom.
+		"provider":                ibmProvider,
+		"ibmcloud_api_key":        tmpl.APIKey,
+		"ibmcloud_resource_group": tmpl.ResourceGroup,
 		"is_default":              true,
 	}
+	// Only send what we actually have. Sending "" would overwrite a value an
+	// operator set by hand with an empty one, which is worse than leaving it.
+	if tmpl.Region != "" {
+		fields["region"] = tmpl.Region
+	}
+	if tmpl.COSInstance != "" {
+		fields["ibm_cos_instance_name"] = tmpl.COSInstance
+	}
 	for _, t := range existing {
-		if t.Name == name {
+		if t.Name == tmpl.Name {
 			p := fmt.Sprintf("/api/credential-templates/%d", t.ID)
 			d, code, err := c.do(ctx, http.MethodPut, p, fields)
 			if err != nil {
@@ -297,7 +336,7 @@ func (c *Client) EnsureIBMCredentialTemplate(ctx context.Context, name, apiKey, 
 		}
 	}
 
-	create := map[string]any{"name": name, "provider": "IBM"}
+	create := map[string]any{"name": tmpl.Name, "provider": ibmProvider}
 	for k, v := range fields {
 		create[k] = v
 	}
@@ -705,4 +744,207 @@ func (c *Client) projectClusterID(ctx context.Context, projectID int, name strin
 		}
 	}
 	return 0, nil
+}
+
+// ── SSH credentials (#222) ───────────────────────────────────────────────────
+//
+// `bnk.flp.vsi.ssh_key` names an IBM Cloud VPC key, which puts a PUBLIC key on
+// the VSI. That is operator access and it already works. Forge separately needs
+// the PRIVATE half to reach the appliance itself, and nothing supplied it — so a
+// healthy FLP reports:
+//
+//	infrastructure_private_key_available: false
+//	infrastructure_access_status:         recovery_required
+//	infrastructure_access_message:        ... Run state recovery/repair to
+//	                                      rematerialize access metadata.
+//
+// Nothing can be rematerialized: the credential was never created.
+
+// SSHCredential is an appliance login Forge stores and uses itself.
+type SSHCredential struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Host must be reachable FROM FORGE. For an FLP that means the floating IP,
+	// not the endpoint `flp status` reports -- that is a services-VPC address
+	// and Forge sits outside it, so a credential built from it can never
+	// connect.
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	AuthType   string `json:"auth_type"`
+	PrivateKey string `json:"private_key"`
+}
+
+type sshCredential struct {
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	HasPrivateKey   bool   `json:"has_private_key"`
+	SSHCredentialID int    `json:"ssh_credential_id"`
+}
+
+// EnsureSSHCredential creates or updates the named SSH credential and returns
+// its id.
+func (c *Client) EnsureSSHCredential(ctx context.Context, cred SSHCredential) (int, error) {
+	if cred.Port == 0 {
+		cred.Port = 22
+	}
+	if cred.AuthType == "" {
+		cred.AuthType = "key"
+	}
+	data, code, err := c.do(ctx, http.MethodGet, "/api/ssh-credentials", nil)
+	if err != nil {
+		return 0, err
+	}
+	if !ok(code) {
+		return 0, httpErr("GET", "/api/ssh-credentials", code, data)
+	}
+	// Forge returns a bare array here, unlike /api/projects which wraps.
+	var existing []sshCredential
+	_ = json.Unmarshal(data, &existing)
+	for _, e := range existing {
+		if e.Name == cred.Name {
+			p := fmt.Sprintf("/api/ssh-credentials/%d", e.ID)
+			d, code, err := c.do(ctx, http.MethodPut, p, cred)
+			if err != nil {
+				return 0, err
+			}
+			if !ok(code) {
+				return 0, httpErr("PUT", p, code, d)
+			}
+			return e.ID, nil
+		}
+	}
+	d, code, err := c.do(ctx, http.MethodPost, "/api/ssh-credentials", cred)
+	if err != nil {
+		return 0, err
+	}
+	if !ok(code) {
+		return 0, httpErr("POST", "/api/ssh-credentials", code, d)
+	}
+	if id := createdID(d, "ssh_credential", "id", "credential_id", "ssh_credential_id"); id != 0 {
+		return id, nil
+	}
+	return 0, fmt.Errorf("create ssh-credential returned no id: %s", strings.TrimSpace(string(d)))
+}
+
+// ConfigureSSHRequest is the body of POST /api/cloud-auth/ssh/configure.
+type ConfigureSSHRequest struct {
+	ProjectID int `json:"project_id"`
+	// Host must be reachable FROM FORGE. For an FLP that means the floating IP,
+	// not the endpoint `flp status` reports -- that is a services-VPC address and
+	// Forge sits outside it.
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	AuthType   string `json:"auth_type"`
+	PrivateKey string `json:"private_key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+}
+
+// ConfigureSSH turns on a project's infrastructure access.
+//
+// THIS IS THE ENDPOINT THAT OWNS THOSE FIELDS, and finding it is the whole
+// reason #222's "blocked upstream" note was wrong.
+//
+// `PUT /api/projects/<id>` accepts ssh_credential_id and silently ignores
+// infra_enabled / infra_host / infra_ssh_username / infra_auth_type, which reads
+// like a Forge limitation. It is not: those fields are set by
+// POST /api/cloud-auth/ssh/configure, which the projects route has no business
+// writing. Nothing was missing; roksbnkctl was asking the wrong endpoint.
+//
+// Forge TESTS THE CONNECTION before it stores anything (SSHService.test_connection,
+// and a failure is a 400), so a key that cannot open the box is refused at the
+// source rather than stored and discovered later. That is a stronger guarantee
+// than the local fingerprint check, which only proves the key is the one the VPC
+// knows about.
+func (c *Client) ConfigureSSH(ctx context.Context, req ConfigureSSHRequest) error {
+	if req.Port == 0 {
+		req.Port = 22
+	}
+	if req.AuthType == "" {
+		req.AuthType = "key"
+	}
+	const p = "/api/cloud-auth/ssh/configure"
+	d, code, err := c.do(ctx, http.MethodPost, p, req)
+	if err != nil {
+		return err
+	}
+	if !ok(code) {
+		return httpErr("POST", p, code, d)
+	}
+	return nil
+}
+
+// ProjectInfraAccess is what a project must carry for Forge to actually reach
+// the appliance. The credential id alone is not enough: with infra_enabled
+// false the appliance is still unreachable.
+type ProjectInfraAccess struct {
+	SSHCredentialID int    `json:"ssh_credential_id"`
+	InfraEnabled    bool   `json:"infra_enabled"`
+	InfraHost       string `json:"infra_host"`
+	InfraUsername   string `json:"infra_ssh_username"`
+	InfraPort       int    `json:"infra_ssh_port"`
+	InfraAuthType   string `json:"infra_auth_type"`
+}
+
+// projectInfraState is the read-back shape. Field-for-field identical to Stored
+// so the conversion below is a plain type conversion; keep them in step.
+type projectInfraState struct {
+	SSHCredentialID int    `json:"ssh_credential_id"`
+	InfraEnabled    bool   `json:"infra_enabled"`
+	InfraHost       string `json:"infra_host"`
+	InfraUsername   string `json:"infra_ssh_username"`
+	InfraAuthType   string `json:"infra_auth_type"`
+}
+
+// AttachSSHCredential links the stored credential to the project and reports
+// what Forge ACTUALLY holds afterwards.
+//
+// Two calls, because two endpoints own the two halves: PUT /api/projects/<id>
+// sets ssh_credential_id (the credential the UI shows against the project), and
+// ConfigureSSH sets the infrastructure-access fields. The read-back is kept
+// because a partial result must still be reported as partial rather than
+// assumed -- the caller names whatever did not take.
+func (c *Client) AttachSSHCredential(ctx context.Context, projectID int, want ProjectInfraAccess) (Stored, error) {
+	if want.InfraPort == 0 {
+		want.InfraPort = 22
+	}
+	if want.InfraAuthType == "" {
+		want.InfraAuthType = "key"
+	}
+	p := fmt.Sprintf("/api/projects/%d", projectID)
+	d, code, err := c.do(ctx, http.MethodPut, p, map[string]any{"ssh_credential_id": want.SSHCredentialID})
+	if err != nil {
+		return Stored{}, err
+	}
+	if !ok(code) {
+		return Stored{}, httpErr("PUT", p, code, d)
+	}
+	rd, code, err := c.do(ctx, http.MethodGet, p, nil)
+	if err != nil {
+		return Stored{}, err
+	}
+	if !ok(code) {
+		return Stored{}, httpErr("GET", p, code, rd)
+	}
+	var got projectInfraState
+	_ = json.Unmarshal(rd, &got)
+	return Stored(got), nil
+}
+
+// Stored is what Forge holds for a project's infrastructure access.
+type Stored struct {
+	SSHCredentialID int
+	InfraEnabled    bool
+	InfraHost       string
+	InfraUsername   string
+	InfraAuthType   string
+}
+
+// Matches reports whether Forge stored what was asked for.
+func (s Stored) Matches(want ProjectInfraAccess) bool {
+	return s.SSHCredentialID == want.SSHCredentialID &&
+		s.InfraEnabled == want.InfraEnabled &&
+		s.InfraHost == want.InfraHost &&
+		s.InfraUsername == want.InfraUsername
 }

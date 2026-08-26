@@ -28,10 +28,25 @@ type mockForge struct {
 	// specific projects — a least-privilege account that can see the project list but
 	// not every project's contents.
 	clusterListStatus map[string]int
-	nextID            int
-	registerBody      map[string]any // captured POST body of the last cluster register
-	registerPath      string
-	projectPlatform   map[string]any // captured PUT body of the project platform update
+	// credUpdate captures the PUT body for a credential template, so a test can
+	// assert what the UPDATE path sends — not just the create path (#223).
+	credUpdate map[string]any
+	// sshCreds / sshCreate / sshUpdate model /api/ssh-credentials (#222).
+	sshCreds  []map[string]any
+	sshCreate map[string]any
+	sshUpdate map[string]any
+	// projectPut captures PUT /api/projects/{id}; projectDropsInfra models the
+	// live Forge behaviour of accepting the write and discarding infra_*.
+	projectPut   map[string]any
+	projectInfra map[string]any
+	// sshConfigure captures POST /api/cloud-auth/ssh/configure — the endpoint
+	// that actually owns the infra_* fields (#222).
+	sshConfigure       map[string]any
+	sshConfigureStatus int
+	nextID             int
+	registerBody       map[string]any // captured POST body of the last cluster register
+	registerPath       string
+	projectPlatform    map[string]any // captured PUT body of the project platform update
 }
 
 func (m *mockForge) id() int { m.nextID++; return m.nextID }
@@ -71,7 +86,47 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 		writeJSON(w, 201, body)
 	})
 	mux.HandleFunc("/api/credential-templates/", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.credUpdate = body
 		writeJSON(w, 200, map[string]any{"ok": true}) // PUT update
+	})
+	mux.HandleFunc("/api/cloud-auth/ssh/configure", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.sshConfigure = body
+		if m.sshConfigureStatus != 0 && m.sshConfigureStatus != 200 {
+			writeJSON(w, m.sshConfigureStatus, map[string]any{"detail": "SSH connection test failed"})
+			return
+		}
+		// Forge's own endpoint sets these; the project read-back then shows them.
+		if m.projectInfra == nil {
+			m.projectInfra = map[string]any{}
+		}
+		m.projectInfra["infra_enabled"] = true
+		m.projectInfra["infra_host"] = body["host"]
+		m.projectInfra["infra_ssh_username"] = body["username"]
+		m.projectInfra["infra_auth_type"] = body["auth_type"]
+		writeJSON(w, 200, map[string]any{"success": true})
+	})
+	mux.HandleFunc("/api/ssh-credentials", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, 200, m.sshCreds) // a bare array, as Forge returns
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		body["id"] = m.id()
+		body["has_private_key"] = body["private_key"] != nil && body["private_key"] != ""
+		m.sshCreate = body
+		m.sshCreds = append(m.sshCreds, body)
+		writeJSON(w, 201, body)
+	})
+	mux.HandleFunc("/api/ssh-credentials/", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.sshUpdate = body
+		writeJSON(w, 200, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -109,9 +164,43 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 			writeJSON(w, 201, map[string]any{"id": cid})
 			return
 		}
-		if r.Method == http.MethodPut { // PUT /api/projects/{id} — set target platform
-			_ = json.NewDecoder(r.Body).Decode(&m.projectPlatform)
+		if r.Method == http.MethodPut { // PUT /api/projects/{id}
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if _, isPlatform := body["target_platform_profile"]; isPlatform {
+				m.projectPlatform = body
+				writeJSON(w, 200, map[string]any{"ok": true})
+				return
+			}
+			// The infrastructure-access write. projectDropsInfra models the live
+			// Forge behaviour: 200 is returned, ssh_credential_id is applied, and
+			// the infra_* fields are silently discarded (#222).
+			m.projectPut = body
+			// The real route MERGES the fields it owns, and it does not own the
+			// infra_* ones — those belong to /api/cloud-auth/ssh/configure. So it
+			// takes ssh_credential_id and leaves the rest of the project's state
+			// alone; replacing the whole state here made a passing sequence fail.
+			if m.projectInfra == nil {
+				m.projectInfra = map[string]any{}
+			}
+			if v, present := body["ssh_credential_id"]; present {
+				m.projectInfra["ssh_credential_id"] = v
+			}
 			writeJSON(w, 200, map[string]any{"ok": true})
+			return
+		}
+		if r.Method == http.MethodGet { // read-back of the project
+			st := map[string]any{
+				"ssh_credential_id":  nil,
+				"infra_enabled":      false,
+				"infra_host":         nil,
+				"infra_ssh_username": nil,
+				"infra_auth_type":    "password",
+			}
+			for k, v := range m.projectInfra {
+				st[k] = v
+			}
+			writeJSON(w, 200, st)
 			return
 		}
 		writeJSON(w, 404, map[string]any{"detail": "not found"})
@@ -174,7 +263,9 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 	if !c.TokenValid(ctx) {
 		t.Fatal("TokenValid = false, want true")
 	}
-	tid, err := c.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-ws", "APIKEY", "default")
+	tid, err := c.EnsureIBMCredentialTemplate(ctx, IBMCredentialTemplate{
+		Name: "roksbnkctl-ws", APIKey: "APIKEY", ResourceGroup: "default",
+		Region: "eu-gb", COSInstance: "bnk-orchestration"})
 	if err != nil {
 		t.Fatalf("ensure cred: %v", err)
 	}
@@ -227,7 +318,9 @@ func TestEnsureReusesExisting(t *testing.T) {
 	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
-	tid, err := c.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-ws", "K", "rg")
+	tid, err := c.EnsureIBMCredentialTemplate(ctx, IBMCredentialTemplate{
+		Name: "roksbnkctl-ws", APIKey: "K", ResourceGroup: "rg",
+		Region: "eu-gb", COSInstance: "bnk-orchestration"})
 	if err != nil || tid != 5 {
 		t.Fatalf("reuse cred: id=%d err=%v (want 5)", tid, err)
 	}

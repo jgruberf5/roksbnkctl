@@ -6,6 +6,92 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **`roksbnkctl bnkforge ssh-credential`** gives BNK Forge the SSH private key
+  for an appliance this workspace built, and attaches it to the project (#222).
+  Without it a healthy F5 License Proxy reports itself unreachable:
+
+  ```text
+  infrastructure_private_key_available: false
+  infrastructure_access_status:         recovery_required
+  ```
+
+  Nothing could be recovered — the credential was never created. `bnk.flp.vsi.ssh_key`
+  names an IBM Cloud VPC key, which puts the **public** half on the VSI; that is
+  operator access. Forge separately needs the **private** half, and nothing
+  supplied it.
+
+  It lives here because it cannot live in a Forge module step: Forge requires
+  container steps to be an argv vector and refuses a shell, and this is three
+  calls in sequence where the bearer token from the first has to reach the
+  second's header.
+
+  The appliance's SSH user is `--ssh-username`, not `--username` — every other
+  `bnkforge` subcommand uses `--username` for the Forge login, and overloading it
+  meant `--username admin` silently set the appliance user while the operator
+  believed they had authenticated to Forge.
+
+  Two things it refuses to get wrong. `--host` must be the address **Forge** can
+  reach — for an FLP the floating IP, not the services-VPC endpoint `flp status`
+  prints — and passing a URL is rejected with an explanation. And the key's
+  SHA256 fingerprint can be checked against `--expect-fingerprint` before
+  anything is stored: a credential that cannot log in is worse than none, because
+  Forge then reports access as configured and every later failure points
+  elsewhere.
+
+  It configures infrastructure access through the endpoint that owns it —
+  `POST /api/cloud-auth/ssh/configure` — which also **tests the SSH connection
+  before storing anything**, so a key that cannot open the box is refused at the
+  source rather than stored and discovered later. It still reads the project back
+  and names anything that did not stick.
+
+### Fixed
+
+- **`registry adopt --verify-contents` resolved source digests unauthenticated**
+  (#224). Against a fully populated 94-artifact mirror it reported:
+
+  ```text
+  ✗ charts/coremond: resolve source: ... DENIED: Unauthenticated request
+  adopt --verify-contents: 87 of 94 artifacts are missing or digest-mismatched
+  ```
+
+  `registryEngine` copies the FAR credential at construction, and `buildBOM` is
+  what resolves it from COS when the workspace does not set
+  `registry.source_service_account_b64` — so the engine was built holding an
+  empty credential. The 7 artifacts that passed were the non-F5 dependencies
+  whose sources are public, which is what made it look like a mirror problem
+  rather than a credential one. `replicate` and `verify` never hit it because
+  they build the BOM first. The engine is now constructed after the BOM.
+
+- **`registry adopt` no longer refuses a populated Artifactory mirror** (#224).
+  Artifactory's repository-path access method answers the registry-wide
+  `/v2/_catalog` with an empty body; the repositories live under the
+  per-repository catalogue at `/v2/<repo>/_catalog`. The probe saw zero and
+  `adopt` refused without `--force`. It now retries against the scoped
+  catalogue — but only believes an answer that differs from the root's, because
+  many registries ignore the path and echo the whole catalogue, which would turn
+  a typo'd `generic_repo_prefix` into a healthy-looking mirror and defeat the
+  one check the probe exists to perform.
+
+- **The IBM credential template `bnkforge register` creates is no longer inert**
+  (#223). It was written with `provider: "IBM"`, and Forge compares
+  `provider == "ibm"` case-sensitively in at least seven places without
+  lowercasing first. The API accepted the value and then matched nothing:
+  credentials were never injected into a deployment, blueprint inputs sourced
+  from `credential_template` never resolved, the IBM lookup found nothing, and
+  the "IBM templates must carry an API key" validation never fired. Nothing
+  errored — the template simply did nothing, in both directions.
+
+  `region` and `ibm_cos_instance_name` are now populated from the workspace too,
+  so blueprint inputs declaring `source: credential_template` have something to
+  inherit instead of null. Unset values are omitted rather than sent as `""`,
+  which would overwrite a hand-set value with an empty one.
+
+  The corrected `provider` is sent on the **update** path as well as create, so a
+  template a previous roksbnkctl wrote as `"IBM"` is repaired rather than left
+  broken forever — the already-created templates are the reported symptom.
+
 ## v1.55.1 — 2026-08-26
 
 **Two `bnk down` defects, both of which could leave an operator stuck.** One cost
