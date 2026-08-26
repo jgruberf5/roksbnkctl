@@ -204,6 +204,25 @@ func writeAppliedReplayFile(path, phase string, assigns map[string]string) error
 	fmt.Fprintln(f, "# Re-generated on every down/plan/apply. Do not edit by hand — your changes will be overwritten.")
 	fmt.Fprintln(f)
 	for _, k := range keys {
+		// NEVER EMIT A VAR-FILE TERRAFORM CANNOT PARSE (#219).
+		//
+		// This file is handed to terraform on plan, apply AND down, so one
+		// malformed value does not degrade the run — it ends it, and on `down`
+		// that means a workspace nobody can destroy. The parser upstream now
+		// drops unterminated blocks, but this is the last thing between a
+		// corrupt snapshot and terraform's own parse error, and it costs a
+		// bracket count.
+		//
+		// The key is named in a comment rather than dropped silently: an
+		// operator debugging a missing variable needs to see that it was
+		// skipped and why.
+		if config.HCLValueIsUnbalanced(assigns[k]) {
+			fmt.Fprintf(f, "# %s = <skipped: unbalanced brackets in the applied snapshot>\n", k)
+			fmt.Fprintf(os.Stderr,
+				"warning: %s: skipping %q — its value in the applied snapshot has unbalanced "+
+					"brackets and terraform could not parse it\n", path, k)
+			continue
+		}
 		fmt.Fprintf(f, "%s = %s\n", k, assigns[k])
 	}
 	return nil

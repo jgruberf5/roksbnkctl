@@ -341,31 +341,82 @@ func readTFVarsAssignments(path string) (map[string]string, bool, error) {
 		// harmless now. The snapshot is re-rendered from this map and handed
 		// back to terraform as a -var-file on plan, apply AND down, so a
 		// truncated `name = {` is a var-file terraform refuses to parse — which
-		// would strand a workspace that cannot be torn down.
+		// strands a workspace that cannot be torn down.
 		if trailer, ok := unclosedBlockTrailer(value); ok {
-			var block strings.Builder
-			block.WriteString(value)
-			for depth, j := trailer, i+1; j < len(lines); j++ {
-				block.WriteString("\n")
-				block.WriteString(strings.TrimRight(lines[j], "\r"))
-				depth += blockDepthDelta(lines[j])
-				if depth <= 0 {
-					i = j
-					break
-				}
-				// Unterminated at EOF: keep the single-line value rather than a
-				// half-block, which at least round-trips as something parseable.
-				if j == len(lines)-1 {
-					block.Reset()
-					block.WriteString(value)
-					i = j
-				}
+			block, end, closed := consumeBlock(lines, i, value, trailer)
+			// Where parsing RESUMES, in both outcomes. Assigning it only on the
+			// success path left it dead on the other, and a mutation that made
+			// the failure path skip to EOF — the original defect — changed
+			// nothing observable and passed the suite.
+			i = end
+			if !closed {
+				// UNTERMINATED. Drop the key and carry on from the line after
+				// the opener (#219).
+				//
+				// The previous behaviour did the two worst possible things. It
+				// recorded the opening fragment -- its comment claimed that
+				// "at least round-trips as something parseable", and `[` does
+				// not, so `bnk down` died on `Missing item separator` and the
+				// workspace could not be destroyed at all. And it left the scan
+				// index at EOF, so every assignment AFTER the bad block was
+				// silently swallowed: a snapshot of four variables parsed to
+				// two, quietly.
+				//
+				// Dropping is safe precisely where it happens. The replay file
+				// is the LOWEST-precedence var-file in the chain, so a key
+				// omitted here falls through to the config render layered after
+				// it; and the variable this occurs on in practice,
+				// cneinstance_network_zones, is `default = []`. An unusable
+				// value helps nobody -- terraform cannot parse it, and keeping
+				// it means the workspace stays stranded on every retry.
+				fmt.Fprintf(os.Stderr,
+					"warning: %s: %q opens a block that is never closed — dropping it from the "+
+						"replay (the value comes from your config; re-run an apply to rewrite the snapshot)\n",
+					path, name)
+				continue
 			}
-			value = block.String()
+			value = block
+			i = end
 		}
 		out[name] = value
 	}
 	return out, false, nil
+}
+
+// HCLValueIsUnbalanced reports whether a rendered value's brackets do not
+// balance, which makes it unparseable as HCL.
+//
+// Exported so the replay writer can refuse to emit one. It shares
+// blockDepthDelta with the parser deliberately: a second bracket counter is a
+// second thing to keep true, and the two disagreeing is how a value passes the
+// check here and fails in terraform.
+func HCLValueIsUnbalanced(v string) bool {
+	return blockDepthDelta(v) != 0
+}
+
+// consumeBlock follows a multi-line value from the line that opens it until its
+// bracket depth returns to zero.
+//
+// Returns the joined block, the index of its LAST line, and whether it actually
+// closed. The third return is the point: the caller must be able to tell a
+// complete block from a truncated one, because the two need opposite handling
+// and the previous version of this code could not distinguish them.
+func consumeBlock(lines []string, start int, value string, trailer int) (block string, end int, closed bool) {
+	var b strings.Builder
+	b.WriteString(value)
+	depth := trailer
+	for j := start + 1; j < len(lines); j++ {
+		b.WriteString("\n")
+		b.WriteString(strings.TrimRight(lines[j], "\r"))
+		depth += blockDepthDelta(lines[j])
+		if depth <= 0 {
+			return b.String(), j, true
+		}
+	}
+	// Ran out of file with the block still open. Report the OPENER's index so
+	// the caller resumes at the very next line. Reporting EOF here is the
+	// original defect: it swallowed every assignment after the bad block.
+	return "", start, false
 }
 
 // unclosedBlockTrailer reports whether v opens more braces/brackets than it
@@ -391,14 +442,21 @@ func blockDepthDelta(v string) int {
 			}
 			continue
 		}
-		switch c {
-		case '"':
+		switch {
+		case c == '"':
 			inStr = true
-		case '#':
-			return depth
-		case '{', '[', '(':
+		case c == '#', c == '/' && i+1 < len(v) && v[i+1] == '/':
+			// Comment: skip to the end of THIS LINE, not to the end of the
+			// string. Returning here was correct while every caller passed a
+			// single line, and wrong the moment one passed a joined multi-line
+			// value — a well-formed list containing a `# zone 1` comment would
+			// stop being counted at the comment and read as unbalanced (#219).
+			for i < len(v) && v[i] != '\n' {
+				i++
+			}
+		case c == '{', c == '[', c == '(':
 			depth++
-		case '}', ']', ')':
+		case c == '}', c == ']', c == ')':
 			depth--
 		}
 	}
