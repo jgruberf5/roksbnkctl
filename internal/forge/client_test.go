@@ -28,6 +28,18 @@ type mockForge struct {
 	// specific projects — a least-privilege account that can see the project list but
 	// not every project's contents.
 	clusterListStatus map[string]int
+	// credUpdate captures the PUT body for a credential template, so a test can
+	// assert what the UPDATE path sends — not just the create path (#223).
+	credUpdate map[string]any
+	// sshCreds / sshCreate / sshUpdate model /api/ssh-credentials (#222).
+	sshCreds  []map[string]any
+	sshCreate map[string]any
+	sshUpdate map[string]any
+	// projectPut captures PUT /api/projects/{id}; projectDropsInfra models the
+	// live Forge behaviour of accepting the write and discarding infra_*.
+	projectPut        map[string]any
+	projectDropsInfra bool
+	projectInfra      map[string]any
 	nextID            int
 	registerBody      map[string]any // captured POST body of the last cluster register
 	registerPath      string
@@ -71,7 +83,29 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 		writeJSON(w, 201, body)
 	})
 	mux.HandleFunc("/api/credential-templates/", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.credUpdate = body
 		writeJSON(w, 200, map[string]any{"ok": true}) // PUT update
+	})
+	mux.HandleFunc("/api/ssh-credentials", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, 200, m.sshCreds) // a bare array, as Forge returns
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		body["id"] = m.id()
+		body["has_private_key"] = body["private_key"] != nil && body["private_key"] != ""
+		m.sshCreate = body
+		m.sshCreds = append(m.sshCreds, body)
+		writeJSON(w, 201, body)
+	})
+	mux.HandleFunc("/api/ssh-credentials/", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		m.sshUpdate = body
+		writeJSON(w, 200, map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -109,9 +143,39 @@ func (m *mockForge) handler(t *testing.T) http.Handler {
 			writeJSON(w, 201, map[string]any{"id": cid})
 			return
 		}
-		if r.Method == http.MethodPut { // PUT /api/projects/{id} — set target platform
-			_ = json.NewDecoder(r.Body).Decode(&m.projectPlatform)
+		if r.Method == http.MethodPut { // PUT /api/projects/{id}
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if _, isPlatform := body["target_platform_profile"]; isPlatform {
+				m.projectPlatform = body
+				writeJSON(w, 200, map[string]any{"ok": true})
+				return
+			}
+			// The infrastructure-access write. projectDropsInfra models the live
+			// Forge behaviour: 200 is returned, ssh_credential_id is applied, and
+			// the infra_* fields are silently discarded (#222).
+			m.projectPut = body
+			if m.projectDropsInfra {
+				kept := map[string]any{"ssh_credential_id": body["ssh_credential_id"]}
+				m.projectInfra = kept
+			} else {
+				m.projectInfra = body
+			}
 			writeJSON(w, 200, map[string]any{"ok": true})
+			return
+		}
+		if r.Method == http.MethodGet { // read-back of the project
+			st := map[string]any{
+				"ssh_credential_id":  nil,
+				"infra_enabled":      false,
+				"infra_host":         nil,
+				"infra_ssh_username": nil,
+				"infra_auth_type":    "password",
+			}
+			for k, v := range m.projectInfra {
+				st[k] = v
+			}
+			writeJSON(w, 200, st)
 			return
 		}
 		writeJSON(w, 404, map[string]any{"detail": "not found"})
@@ -174,7 +238,9 @@ func TestRegisterFlow_CreatesResources(t *testing.T) {
 	if !c.TokenValid(ctx) {
 		t.Fatal("TokenValid = false, want true")
 	}
-	tid, err := c.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-ws", "APIKEY", "default")
+	tid, err := c.EnsureIBMCredentialTemplate(ctx, IBMCredentialTemplate{
+		Name: "roksbnkctl-ws", APIKey: "APIKEY", ResourceGroup: "default",
+		Region: "eu-gb", COSInstance: "bnk-orchestration"})
 	if err != nil {
 		t.Fatalf("ensure cred: %v", err)
 	}
@@ -227,7 +293,9 @@ func TestEnsureReusesExisting(t *testing.T) {
 	c := mustNew(t, srv.URL, Options{})
 	c.Token = "t"
 
-	tid, err := c.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-ws", "K", "rg")
+	tid, err := c.EnsureIBMCredentialTemplate(ctx, IBMCredentialTemplate{
+		Name: "roksbnkctl-ws", APIKey: "K", ResourceGroup: "rg",
+		Region: "eu-gb", COSInstance: "bnk-orchestration"})
 	if err != nil || tid != 5 {
 		t.Fatalf("reuse cred: id=%d err=%v (want 5)", tid, err)
 	}

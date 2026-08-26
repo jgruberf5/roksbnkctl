@@ -128,7 +128,17 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 	if rg == "" {
 		rg = "default"
 	}
-	tid, err := client.EnsureIBMCredentialTemplate(ctx, "roksbnkctl-"+cctx.WorkspaceName, apiKey, rg)
+	tid, err := client.EnsureIBMCredentialTemplate(ctx, forge.IBMCredentialTemplate{
+		Name:          "roksbnkctl-" + cctx.WorkspaceName,
+		APIKey:        apiKey,
+		ResourceGroup: rg,
+		// Region and the COS instance come from the workspace so blueprint
+		// inputs declaring `source: credential_template` have something to
+		// inherit; without them Forge stores null and those inputs resolve to
+		// nothing (#223).
+		Region:      cctx.Workspace.IBMCloud.Region,
+		COSInstance: cctx.Workspace.COS.Instance,
+	})
 	if err != nil {
 		return fmt.Errorf("ensuring IBM credential template: %w", err)
 	}
@@ -316,4 +326,50 @@ func newForgeClient(url string, bf *config.BNKForgeCfg) (*forge.Client, error) {
 		}
 	}
 	return forge.New(url, opts)
+}
+
+// newForgeClientForWorkspace builds an authenticated Forge client for the
+// workspace: cached session token if still valid, otherwise log in and cache the
+// new one. The password itself is never persisted.
+//
+// Extracted from runBNKForgeRegister / runBNKForgeUnregister, which carried
+// byte-identical copies of this block, so `bnkforge ssh-credential` did not
+// become a third (#222).
+func newForgeClientForWorkspace(ctx context.Context, cctx *config.Context, bf *config.BNKForgeCfg, interactive bool) (*forge.Client, error) {
+	url := bf.URL
+	if v := os.Getenv(envForgeURL); v != "" {
+		url = v
+	}
+	if url == "" {
+		return nil, fmt.Errorf("no BNK Forge URL (set bnkforge.url, %s, or --url)", envForgeURL)
+	}
+	client, err := newForgeClient(url, bf)
+	if err != nil {
+		return nil, err
+	}
+	client.Token = config.ForgeTokenFromKeychain(cctx.WorkspaceName)
+	if client.TokenValid(ctx) {
+		return client, nil
+	}
+	user := os.Getenv(envForgeUser)
+	if user == "" {
+		user = bf.Username
+	}
+	if user == "" && interactive {
+		user = promptString("BNK Forge username", "")
+	}
+	if user == "" {
+		return nil, fmt.Errorf("no BNK Forge username (set bnkforge.username, %s, or --username)", envForgeUser)
+	}
+	pass, perr := resolveForgePassword(interactive)
+	if perr != nil {
+		return nil, perr
+	}
+	if lerr := client.Login(ctx, user, pass); lerr != nil {
+		return nil, fmt.Errorf("BNK Forge login failed: %w", lerr)
+	}
+	if serr := config.SaveForgeTokenToKeychain(cctx.WorkspaceName, client.Token); serr != nil {
+		fmt.Fprintf(os.Stderr, "  note: could not cache the Forge session token (%v) — will re-authenticate next time\n", serr)
+	}
+	return client, nil
 }

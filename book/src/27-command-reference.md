@@ -305,6 +305,49 @@ roksbnkctl bnkforge register [flags]
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 
+### `roksbnkctl bnkforge ssh-credential`
+
+Give BNK Forge the SSH private key for an appliance this workspace built
+
+```
+roksbnkctl bnkforge ssh-credential [flags]
+```
+
+Stores an appliance's SSH private key in BNK Forge and attaches it to the
+workspace's project, so Forge can reach the appliance itself.
+
+`bnk.flp.vsi.ssh_key` names an IBM Cloud VPC key, which puts the PUBLIC half on
+the VSI — that is operator access, and it already works. Forge separately needs
+the PRIVATE half, and nothing supplied it, so a healthy FLP reports:
+
+    infrastructure_private_key_available: false
+    infrastructure_access_status:         recovery_required
+
+Nothing can be recovered there — the credential was never created.
+
+--host must be the address FORGE can reach, which for an FLP is the FLOATING IP.
+`flp status` reports a services-VPC endpoint that Forge sits outside of, so a
+credential built from it can never connect.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--expect-fingerprint` | `string` | — | SHA256 fingerprint the key must match (e.g. the VPC key's) — a credential that cannot log in is worse than none |
+| `--forge-ca` | `string` | — | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure) |
+| `--forge-username` | `string` | — | BNK Forge login username (overrides config) |
+| `--host` | `string` | — | address FORGE reaches the appliance on — the FLOATING IP, not the endpoint `flp status` prints |
+| `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca |
+| `--key` | `string` | — | PRIVATE key file Forge will use (unencrypted; Forge stores it and cannot prompt) |
+| `--name` | `string` | — | credential name in Forge (default: `<project>`-ssh) |
+| `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
+| `--port` | `int` | `22` | SSH port on the appliance |
+| `--project` | `string` | — | BNK Forge project to attach the credential to |
+| `--url` | `string` | — | BNK Forge server URL (overrides config) |
+| `--username` | `string` | `ubuntu` | SSH user on the appliance |
+
+← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
+
 ### `roksbnkctl bnkforge status`
 
 Show this workspace's BNK Forge registration config + readiness

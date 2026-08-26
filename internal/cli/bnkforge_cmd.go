@@ -31,6 +31,14 @@ var (
 	flagBNKForgeInsecure bool
 	flagBNKForgeCAFile   string
 	flagBNKForgeForce    bool
+
+	// `bnkforge ssh-credential` (#222)
+	flagBNKForgeSSHHost        string
+	flagBNKForgeSSHUser        string
+	flagBNKForgeSSHKey         string
+	flagBNKForgeSSHName        string
+	flagBNKForgeSSHPort        int
+	flagBNKForgeSSHFingerprint string
 )
 
 var bnkforgeCmd = &cobra.Command{
@@ -103,6 +111,30 @@ var bnkforgeRegisterCmd = &cobra.Command{
 	RunE:  runBNKForgeRegister,
 }
 
+var bnkforgeSSHCredentialCmd = &cobra.Command{
+	Use:   "ssh-credential",
+	Short: "Give BNK Forge the SSH private key for an appliance this workspace built",
+	Long: `Stores an appliance's SSH private key in BNK Forge and attaches it to the
+workspace's project, so Forge can reach the appliance itself.
+
+` + "`bnk.flp.vsi.ssh_key`" + ` names an IBM Cloud VPC key, which puts the PUBLIC half on
+the VSI — that is operator access, and it already works. Forge separately needs
+the PRIVATE half, and nothing supplied it, so a healthy FLP reports:
+
+    infrastructure_private_key_available: false
+    infrastructure_access_status:         recovery_required
+
+Nothing can be recovered there — the credential was never created.
+
+--host must be the address FORGE can reach, which for an FLP is the FLOATING IP.
+` + "`flp status`" + ` reports a services-VPC endpoint that Forge sits outside of, so a
+credential built from it can never connect.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return runBNKForgeSSHCredential(cmdContext(cmd), true)
+	},
+}
+
 func init() {
 	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeURL, "url", "", "BNK Forge server URL (e.g. https://forge.example.com)")
 	bnkforgeEnableCmd.Flags().StringVar(&flagBNKForgeUser, "username", "", "BNK Forge login username")
@@ -126,7 +158,22 @@ func init() {
 	bnkforgeUnregisterCmd.Flags().BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
 	bnkforgeUnregisterCmd.Flags().StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)
 
-	bnkforgeCmd.AddCommand(bnkforgeEnableCmd, bnkforgeDisableCmd, bnkforgeStatusCmd, bnkforgeRegisterCmd, bnkforgeUnregisterCmd)
+	sc := bnkforgeSSHCredentialCmd.Flags()
+	sc.StringVar(&flagBNKForgeSSHHost, "host", "", "address FORGE reaches the appliance on — the FLOATING IP, not the endpoint `flp status` prints")
+	sc.StringVar(&flagBNKForgeSSHUser, "username", "ubuntu", "SSH user on the appliance")
+	sc.StringVar(&flagBNKForgeSSHKey, "key", "", "PRIVATE key file Forge will use (unencrypted; Forge stores it and cannot prompt)")
+	sc.StringVar(&flagBNKForgeSSHName, "name", "", "credential name in Forge (default: <project>-ssh)")
+	sc.IntVar(&flagBNKForgeSSHPort, "port", 22, "SSH port on the appliance")
+	sc.StringVar(&flagBNKForgeSSHFingerprint, "expect-fingerprint", "",
+		"SHA256 fingerprint the key must match (e.g. the VPC key's) — a credential that cannot log in is worse than none")
+	sc.StringVar(&flagBNKForgeProject, "project", "", "BNK Forge project to attach the credential to")
+	sc.StringVar(&flagBNKForgeURL, "url", "", "BNK Forge server URL (overrides config)")
+	sc.StringVar(&flagBNKForgeUser, "forge-username", "", "BNK Forge login username (overrides config)")
+	sc.StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)")
+	sc.BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
+	sc.StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)
+
+	bnkforgeCmd.AddCommand(bnkforgeEnableCmd, bnkforgeDisableCmd, bnkforgeStatusCmd, bnkforgeRegisterCmd, bnkforgeUnregisterCmd, bnkforgeSSHCredentialCmd)
 	rootCmd.AddCommand(bnkforgeCmd)
 }
 

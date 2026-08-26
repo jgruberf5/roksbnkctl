@@ -6,6 +6,63 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **`roksbnkctl bnkforge ssh-credential`** gives BNK Forge the SSH private key
+  for an appliance this workspace built, and attaches it to the project (#222).
+  Without it a healthy F5 License Proxy reports itself unreachable:
+
+  ```text
+  infrastructure_private_key_available: false
+  infrastructure_access_status:         recovery_required
+  ```
+
+  Nothing could be recovered — the credential was never created. `bnk.flp.vsi.ssh_key`
+  names an IBM Cloud VPC key, which puts the **public** half on the VSI; that is
+  operator access. Forge separately needs the **private** half, and nothing
+  supplied it.
+
+  It lives here because it cannot live in a Forge module step: Forge requires
+  container steps to be an argv vector and refuses a shell, and this is three
+  calls in sequence where the bearer token from the first has to reach the
+  second's header.
+
+  Two things it refuses to get wrong. `--host` must be the address **Forge** can
+  reach — for an FLP the floating IP, not the services-VPC endpoint `flp status`
+  prints — and passing a URL is rejected with an explanation. And the key's
+  SHA256 fingerprint can be checked against `--expect-fingerprint` before
+  anything is stored: a credential that cannot log in is worse than none, because
+  Forge then reports access as configured and every later failure points
+  elsewhere.
+
+  It also reports what Forge **actually stored**, not what was sent. `PUT
+  /api/projects/<id>` applies `ssh_credential_id` and silently discards
+  `infra_enabled` / `infra_host` / `infra_ssh_username` / `infra_auth_type`;
+  PATCH is 405 and there is no infrastructure endpoint. The command reads the
+  project back and names the fields that did not take, so the limitation is
+  visible here rather than as an appliance that stays unreachable for no stated
+  reason. That half is blocked on BNK Forge.
+
+### Fixed
+
+- **The IBM credential template `bnkforge register` creates is no longer inert**
+  (#223). It was written with `provider: "IBM"`, and Forge compares
+  `provider == "ibm"` case-sensitively in at least seven places without
+  lowercasing first. The API accepted the value and then matched nothing:
+  credentials were never injected into a deployment, blueprint inputs sourced
+  from `credential_template` never resolved, the IBM lookup found nothing, and
+  the "IBM templates must carry an API key" validation never fired. Nothing
+  errored — the template simply did nothing, in both directions.
+
+  `region` and `ibm_cos_instance_name` are now populated from the workspace too,
+  so blueprint inputs declaring `source: credential_template` have something to
+  inherit instead of null. Unset values are omitted rather than sent as `""`,
+  which would overwrite a hand-set value with an empty one.
+
+  The corrected `provider` is sent on the **update** path as well as create, so a
+  template a previous roksbnkctl wrote as `"IBM"` is repaired rather than left
+  broken forever — the already-created templates are the reported symptom.
+
 ## v1.55.1 — 2026-08-26
 
 **Two `bnk down` defects, both of which could leave an operator stuck.** One cost
