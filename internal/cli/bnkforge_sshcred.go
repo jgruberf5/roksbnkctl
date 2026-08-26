@@ -60,12 +60,10 @@ func runBNKForgeSSHCredential(ctx context.Context, interactive bool) error {
 	}
 	bf := &eff
 
-	keyPath := flagBNKForgeSSHKey
-	if keyPath == "" {
-		return fmt.Errorf("--key is required: the PRIVATE key Forge will use to reach the appliance\n" +
-			"  (bnk.flp.vsi.ssh_key names a VPC key, which puts the PUBLIC half on the VSI —\n" +
-			"   that is operator access; Forge needs the private half and nothing supplies it)")
+	if verr := validateSSHCredentialInputs(flagBNKForgeSSHHost, flagBNKForgeSSHUser, flagBNKForgeSSHKey); verr != nil {
+		return verr
 	}
+	keyPath := flagBNKForgeSSHKey
 	if strings.HasPrefix(keyPath, "~/") {
 		home, herr := os.UserHomeDir()
 		if herr != nil {
@@ -94,15 +92,6 @@ func runBNKForgeSSHCredential(ctx context.Context, interactive bool) error {
 	}
 
 	host := flagBNKForgeSSHHost
-	if host == "" {
-		return fmt.Errorf("--host is required: the address FORGE must reach the appliance on\n" +
-			"  Use the FLOATING IP. `flp status` reports a services-VPC endpoint (e.g. https://10.243.1.4:8443)\n" +
-			"  which Forge sits outside of, so a credential built from it can never connect")
-	}
-	if strings.Contains(host, "://") {
-		return fmt.Errorf("--host %q looks like an endpoint URL, not a host\n"+
-			"  Pass the bare floating IP or hostname; the port is separate (--port)", host)
-	}
 	username := flagBNKForgeSSHUser
 
 	client, err := newForgeClientForWorkspace(ctx, cctx, bf, interactive)
@@ -179,5 +168,33 @@ func runBNKForgeSSHCredential(ctx context.Context, interactive bool) error {
 			"  ssh_credential_id and silently discards the infra_* fields, PATCH is 405, and there is\n"+
 			"  no /api/projects/<id>/infrastructure endpoint. Until Forge exposes a path for them the\n"+
 			"  appliance stays unreachable even though the credential is stored. Tracked in #222.\n")
+	return nil
+}
+
+// validateSSHCredentialInputs rejects the three inputs that produce a credential
+// Forge stores happily and can never use.
+//
+// All three fail the same way if they get through: Forge reports infrastructure
+// access as CONFIGURED, and every later failure points somewhere other than the
+// credential. That is why they are refused here rather than left to the server.
+func validateSSHCredentialInputs(host, username, keyPath string) error {
+	if keyPath == "" {
+		return fmt.Errorf("--key is required: the PRIVATE key Forge will use to reach the appliance\n" +
+			"  (bnk.flp.vsi.ssh_key names a VPC key, which puts the PUBLIC half on the VSI —\n" +
+			"   that is operator access; Forge needs the private half and nothing supplies it)")
+	}
+	if host == "" {
+		return fmt.Errorf("--host is required: the address FORGE must reach the appliance on\n" +
+			"  Use the FLOATING IP. `flp status` reports a services-VPC endpoint (e.g. https://10.243.1.4:8443)\n" +
+			"  which Forge sits outside of, so a credential built from it can never connect")
+	}
+	if strings.Contains(host, "://") {
+		return fmt.Errorf("--host %q looks like an endpoint URL, not a host\n"+
+			"  Pass the bare floating IP or hostname; the port is separate (--port)", host)
+	}
+	if strings.TrimSpace(username) == "" {
+		return fmt.Errorf("--ssh-username cannot be empty: Forge would store a credential with no " +
+			"user, which can never authenticate and which Forge still reports as configured access")
+	}
 	return nil
 }

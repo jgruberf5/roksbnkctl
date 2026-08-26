@@ -335,7 +335,6 @@ credential built from it can never connect.
 |---|---|---|---|
 | `--expect-fingerprint` | `string` | — | SHA256 fingerprint the key must match (e.g. the VPC key's) — a credential that cannot log in is worse than none |
 | `--forge-ca` | `string` | — | PEM file holding the CA the Forge server's certificate must chain to (pins a self-signed lab cert; supersedes --insecure) |
-| `--forge-username` | `string` | — | BNK Forge login username (overrides config) |
 | `--host` | `string` | — | address FORGE reaches the appliance on — the FLOATING IP, not the endpoint `flp status` prints |
 | `--insecure` | `bool` | `false` | DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer --forge-ca |
 | `--key` | `string` | — | PRIVATE key file Forge will use (unencrypted; Forge stores it and cannot prompt) |
@@ -343,8 +342,9 @@ credential built from it can never connect.
 | `--password` | `string` | — | BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt) |
 | `--port` | `int` | `22` | SSH port on the appliance |
 | `--project` | `string` | — | BNK Forge project to attach the credential to |
+| `--ssh-username` | `string` | `ubuntu` | SSH user on the appliance |
 | `--url` | `string` | — | BNK Forge server URL (overrides config) |
-| `--username` | `string` | `ubuntu` | SSH user on the appliance |
+| `--username` | `string` | — | BNK Forge login username (overrides config) |
 
 ← back to [`roksbnkctl bnkforge`](#roksbnkctl-bnkforge)
 

@@ -27,6 +27,11 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   calls in sequence where the bearer token from the first has to reach the
   second's header.
 
+  The appliance's SSH user is `--ssh-username`, not `--username` — every other
+  `bnkforge` subcommand uses `--username` for the Forge login, and overloading it
+  meant `--username admin` silently set the appliance user while the operator
+  believed they had authenticated to Forge.
+
   Two things it refuses to get wrong. `--host` must be the address **Forge** can
   reach — for an FLP the floating IP, not the services-VPC endpoint `flp status`
   prints — and passing a URL is rejected with an explanation. And the key's

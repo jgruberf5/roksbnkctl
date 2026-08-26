@@ -194,3 +194,74 @@ func TestSameRepoListIgnoresOrderButNotContent(t *testing.T) {
 		t.Error("two empty listings reported as different")
 	}
 }
+
+// The scoped fetch must reach the SAME registries the rest of the engine does.
+// It builds its own http.Client instead of going through crane, so crane.Insecure
+// does not apply and the behaviour has to be spelled out — leaving it out meant
+// the fallback could not reach a self-signed mirror at all, which is the kind of
+// registry most likely to need it. The failure is soft (the caller falls back to
+// the root count), so the symptom is silence.
+func TestTheScopedFetchHonoursInsecure(t *testing.T) {
+	all := []string{"bnk-mirror/images/x"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/_catalog") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		repos := []string{}
+		if r.URL.Path == "/v2/bnk-mirror/_catalog" {
+			repos = all
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"repositories": repos})
+	})
+	// TLS with a self-signed cert: exactly the mirror --insecure exists for.
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+
+	eng := &Engine{
+		Target:   &ocireg.Target{Host: host, Namespace: "bnk-mirror", Auth: authn.Anonymous},
+		Insecure: true,
+	}
+	got, err := eng.scopedCatalog(context.Background(), host, "bnk-mirror")
+	if err != nil {
+		t.Fatalf("scoped fetch against a self-signed mirror with Insecure set: %v\n"+
+			"The rest of the engine reaches this registry; this call must too.", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("got %v, want the one repository", got)
+	}
+}
+
+// The scheme is attempted, not guessed. Keying it on the hostname — loopback
+// means http — sends a cleartext request at the https port of an ordinary TLS
+// registry on 127.0.0.1, which is what a self-signed lab mirror often is.
+func TestThePlainHTTPFallbackReachesBothSchemes(t *testing.T) {
+	for _, tls := range []bool{true, false} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"repositories": []string{"images/x"}})
+		})
+		var srv *httptest.Server
+		if tls {
+			srv = httptest.NewTLSServer(mux)
+		} else {
+			srv = httptest.NewServer(mux)
+		}
+		host := strings.TrimPrefix(strings.TrimPrefix(srv.URL, "https://"), "http://")
+		eng := &Engine{
+			Target:   &ocireg.Target{Host: host, Namespace: "bnk-mirror", Auth: authn.Anonymous},
+			Insecure: true,
+		}
+		got, err := eng.scopedCatalog(context.Background(), host, "bnk-mirror")
+		if err != nil {
+			t.Errorf("tls=%v: %v", tls, err)
+		} else if len(got) != 1 {
+			t.Errorf("tls=%v: got %v, want one repository", tls, got)
+		}
+		srv.Close()
+	}
+}

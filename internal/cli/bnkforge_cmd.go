@@ -160,7 +160,13 @@ func init() {
 
 	sc := bnkforgeSSHCredentialCmd.Flags()
 	sc.StringVar(&flagBNKForgeSSHHost, "host", "", "address FORGE reaches the appliance on — the FLOATING IP, not the endpoint `flp status` prints")
-	sc.StringVar(&flagBNKForgeSSHUser, "username", "ubuntu", "SSH user on the appliance")
+	// --ssh-username, NOT --username. Every other bnkforge subcommand uses
+	// --username for the FORGE login, so overloading it here meant
+	// `--username admin` silently set the APPLIANCE's SSH user while the
+	// operator believed they had authenticated to Forge — storing a credential
+	// that cannot log in, which is the failure --expect-fingerprint exists to
+	// prevent, arriving through the flag names instead.
+	sc.StringVar(&flagBNKForgeSSHUser, "ssh-username", "ubuntu", "SSH user on the appliance")
 	sc.StringVar(&flagBNKForgeSSHKey, "key", "", "PRIVATE key file Forge will use (unencrypted; Forge stores it and cannot prompt)")
 	sc.StringVar(&flagBNKForgeSSHName, "name", "", "credential name in Forge (default: <project>-ssh)")
 	sc.IntVar(&flagBNKForgeSSHPort, "port", 22, "SSH port on the appliance")
@@ -168,7 +174,7 @@ func init() {
 		"SHA256 fingerprint the key must match (e.g. the VPC key's) — a credential that cannot log in is worse than none")
 	sc.StringVar(&flagBNKForgeProject, "project", "", "BNK Forge project to attach the credential to")
 	sc.StringVar(&flagBNKForgeURL, "url", "", "BNK Forge server URL (overrides config)")
-	sc.StringVar(&flagBNKForgeUser, "forge-username", "", "BNK Forge login username (overrides config)")
+	sc.StringVar(&flagBNKForgeUser, "username", "", "BNK Forge login username (overrides config)")
 	sc.StringVar(&flagBNKForgePassword, "password", "", "BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)")
 	sc.BoolVar(&flagBNKForgeInsecure, "insecure", false, insecureFlagHelp)
 	sc.StringVar(&flagBNKForgeCAFile, "forge-ca", "", forgeCAFlagHelp)

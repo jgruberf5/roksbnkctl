@@ -563,10 +563,30 @@ func (e *Engine) scopedCatalog(ctx context.Context, host, seg string) ([]string,
 	if seg == "" {
 		return nil, fmt.Errorf("no repository segment to scope the catalogue to")
 	}
-	scheme := "https"
-	if e.Insecure || strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
-		scheme = "http"
+	// TLS follows the SAME rules as the rest of the engine, or this one call
+	// fails on exactly the registries most likely to need it — a self-signed lab
+	// mirror reached with --insecure and no CA supplied, which is supported
+	// everywhere else here. The failure would be soft (the caller falls back to
+	// the root's count), so the symptom would be "the fallback silently never
+	// works", which is worse than an error.
+	//
+	// The SCHEME is attempted rather than guessed. The first version keyed it on
+	// the hostname — loopback meant http — and a TLS registry on 127.0.0.1 is an
+	// ordinary thing that then got a cleartext request at an https port. https
+	// first, http only if that fails, which is what crane effectively does.
+	var lastErr error
+	for _, scheme := range []string{"https", "http"} {
+		repos, err := e.scopedCatalogAt(ctx, scheme, host, seg)
+		if err == nil {
+			return repos, nil
+		}
+		lastErr = err
 	}
+	return nil, lastErr
+}
+
+// scopedCatalogAt performs the GET against one scheme.
+func (e *Engine) scopedCatalogAt(ctx context.Context, scheme, host, seg string) ([]string, error) {
 	url := fmt.Sprintf("%s://%s/v2/%s/_catalog", scheme, host, seg)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -582,10 +602,7 @@ func (e *Engine) scopedCatalog(ctx context.Context, host, seg string) ([]string,
 			}
 		}
 	}
-	client := &http.Client{}
-	if tr := e.caTransport(); tr != nil {
-		client.Transport = tr
-	}
+	client := &http.Client{Transport: e.probeTransport()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -601,6 +618,28 @@ func (e *Engine) scopedCatalog(ctx context.Context, host, seg string) ([]string,
 		return nil, derr
 	}
 	return body.Repositories, nil
+}
+
+// probeTransport is the transport for the scoped-catalogue GET: the engine's CA
+// transport when a private CA is configured, an InsecureSkipVerify one when
+// Insecure is set and no CA is, and the default otherwise.
+//
+// crane gets this behaviour from crane.Insecure; this hand-rolled client has to
+// spell it out, and leaving it out is why the first version of the fallback
+// could not reach a self-signed mirror at all.
+func (e *Engine) probeTransport() http.RoundTripper {
+	if tr := e.caTransport(); tr != nil {
+		return tr
+	}
+	if !e.Insecure {
+		return nil // http.Client uses http.DefaultTransport
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.InsecureSkipVerify = true // #nosec G402 — explicit operator opt-in via Insecure
+	return tr
 }
 
 // scopedResource names the registry for keychain resolution.
