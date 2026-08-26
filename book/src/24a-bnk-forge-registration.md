@@ -81,6 +81,7 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
 | `bnkforge status` | Show the effective config (register / url / project), whether a Forge session token is cached, and whether a cluster id is recorded. |
 | `bnkforge register [--url U] [--project P] [--force]` | Register the current workspace's cluster **now**, regardless of the opt-in. Surfaces errors (the auto-hook swallows them). `--force` takes over a cluster held by another Forge project — see [Registration is non-destructive](#registration-is-non-destructive). |
 | `bnkforge unregister [--url U] [--project P]` | Remove the cluster from its Forge project — the inverse of `register`. Every "not there" case exits 0, so it is safe on a teardown path. |
+| `bnkforge ssh-credential --host H --key K` | Give Forge the SSH **private key** for an appliance this workspace built (the FLP), and turn on the project's infrastructure access. See [Giving Forge an appliance's SSH key](#giving-forge-an-appliances-ssh-key). |
 
 `enable`, `disable`, and `register` all accept `--url` (override the Forge URL) and
 `--project` (target Forge project). On `enable` those are **persisted**; on
@@ -258,7 +259,7 @@ roksbnkctl -w acme-eu cluster show     # cluster_id, region, cluster_name
 | Step | Call |
 |---|---|
 | 1. Log in | `POST /api/auth/login` → `{"token": …}` |
-| 2. Credential template | `GET`/`POST /api/credential-templates` (IBM provider, your API key) |
+| 2. Credential template | `GET`/`POST /api/credential-templates` — `provider` must be **lowercase `ibm`**, your API key, plus `region` and `ibm_cos_instance_name` |
 | 3. Project | `GET`/`POST /api/projects`, then `PUT /api/projects/{id}` to set the ROKS/IBM platform |
 | 4. Register | `POST /api/projects/{id}/k8s/clusters`, or `PUT /api/k8s/clusters/{id}` to update in place |
 
@@ -266,6 +267,89 @@ Step 3's `PUT` matters: without it Forge shows the project's platform as *Unknow
 Step 4 is the one that changed in v1.42.0 — `roksbnkctl` prefers the in-place `PUT`
 so the cluster id survives, and only falls back to `DELETE` + `POST` against a Forge
 build that has no `PUT` route.
+
+## Giving Forge an appliance's SSH key
+
+Registering the cluster is not the same as giving Forge a way into the
+**appliances** the workspace builds. Without the second step a perfectly healthy
+F5 License Proxy reports itself unreachable:
+
+```text
+infrastructure_private_key_available: false
+infrastructure_access_status:        recovery_required
+infrastructure_access_message:       Infrastructure SSH private key is unavailable.
+                                     Run state recovery/repair to rematerialize
+                                     access metadata.
+```
+
+Nothing can be recovered there. The credential was never created.
+
+### The two "SSH keys" are different things
+
+This is the part that makes the state above confusing:
+
+- **`bnk.flp.vsi.ssh_key`** names an existing IBM Cloud **VPC key**, which puts a
+  **public** key on the VSI. That is *your* access to the appliance, and it works.
+- **Forge** separately needs the **private** half, so it can reach the appliance
+  itself. Nothing supplies that as part of building the VSI.
+
+### Registering it
+
+```bash
+roksbnkctl -w acme-eu bnkforge ssh-credential \
+  --host 52.116.1.2 \
+  --ssh-username ubuntu \
+  --key ~/.ssh/id_rsa
+```
+
+| Flag | Meaning |
+|---|---|
+| `--host` | The address **Forge** reaches the appliance on. For an FLP that is the **floating IP**. |
+| `--ssh-username` | The SSH user on the appliance (default `ubuntu`). Note the prefix: `--username` is the *Forge* login, as on every other `bnkforge` subcommand. |
+| `--key` | The **private** key file. Unencrypted — Forge stores the key and cannot prompt for a passphrase. |
+| `--expect-fingerprint` | Optional SHA256 fingerprint the key must match before anything is sent (e.g. the VPC key's). |
+| `--name` | Credential name in Forge. Default `<project>-ssh`. |
+| `--port` | SSH port. Default 22. |
+
+### Use the floating IP, not the endpoint
+
+`flp status` reports something like `https://10.243.1.4:8443`. That is a
+**services-VPC** address, and Forge sits outside that VPC — a credential built
+from it can never connect. Passing a URL is refused rather than accepted:
+
+```text
+--host "https://10.243.1.4:8443" looks like an endpoint URL, not a host
+  Pass the bare floating IP or hostname; the port is separate (--port)
+```
+
+### Why the key is checked before it is stored
+
+A credential that cannot log in is **worse than no credential**: Forge then
+reports infrastructure access as configured, and every later failure points
+somewhere other than the key. Two checks stand in the way:
+
+- `--expect-fingerprint` compares the private key's SHA256 fingerprint —
+  the same value `ssh-keygen -l -E sha256` and IBM Cloud print — locally,
+  before anything leaves the machine.
+- **Forge itself tests the SSH connection** before storing, and answers `400`
+  when it fails. That is the stronger of the two: the fingerprint proves the key
+  is the one the VPC knows about, the connection test proves it opens the box.
+
+### What it writes
+
+| Step | Call |
+|---|---|
+| 1. The credential | `GET`/`POST`/`PUT /api/ssh-credentials` — name, host, port, user, and the private key |
+| 2. Infrastructure access | `POST /api/cloud-auth/ssh/configure` — sets `infra_enabled`, `infra_host`, `infra_ssh_username`, `infra_auth_type` |
+| 3. The project link | `PUT /api/projects/{id}` — sets `ssh_credential_id` |
+
+Step 2 is the one that is easy to miss. `PUT /api/projects/{id}` accepts
+`ssh_credential_id` and **ignores** the `infra_*` fields — they are not that
+route's to set. With only the credential linked, `infra_enabled` stays false and
+the appliance is still unreachable.
+
+The command reads the project back afterwards and names anything that did not
+stick, rather than reporting success on a write it did not verify.
 
 ## TLS: pin the CA, don't disable verification
 
@@ -344,6 +428,16 @@ If the pinned CA is wrong, the connection fails at the handshake with an
   or pass `--force` to move it deliberately (its cluster id changes, because a move
   re-creates it). This refusal is the point: silently taking another project's
   cluster is the harm.
+- **Forge shows the credential template but nothing uses it** — check its
+  `provider`. Forge matches `provider == "ibm"` **case-sensitively** in several
+  places and lowercases none of them, so a template created with `"IBM"` is
+  accepted by the API and then matches nothing: credentials are never injected
+  into a deployment, blueprint inputs sourced from `credential_template` never
+  resolve, and the "IBM templates must carry an API key" validation never fires.
+  Nothing errors. roksbnkctl wrote `"IBM"` before v1.56.0; re-running
+  `bnkforge register` with a current build **repairs** an existing template
+  rather than only fixing new ones.
+
 - **`HTTP 403` / lacks permission to manage credential templates** — your BNK
   Forge session's role can't create or list credential templates. Log in as an
   operator/admin, or have one pre-create the template.

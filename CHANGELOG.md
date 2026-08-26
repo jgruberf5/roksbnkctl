@@ -6,6 +6,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.56.0 — 2026-08-26
+
+**Three things BNK Forge and the registry mirror were handed that they could not
+use.** A credential template that matched nothing, no way to give Forge an
+appliance's SSH key, and an `adopt` that read its own source unauthenticated.
+
 ### Added
 
 - **`roksbnkctl bnkforge ssh-credential`** gives BNK Forge the SSH private key
