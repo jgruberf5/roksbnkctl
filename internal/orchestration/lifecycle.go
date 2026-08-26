@@ -699,6 +699,10 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 		// resolveClusterIdentity falls back to cluster-outputs.json, which is
 		// what a second-phase workspace has.
 		if dcctx, derr := config.New(in.Workspace); derr == nil {
+			// Same reasoning for the CR drain (#217): the destroy ordering that
+			// orphans the CNEInstance is in the terraform graph, which is
+			// identical whichever process runs it.
+			sweepBNKCustomResources(ctx, dcctx, nil, in.errOut())
 			sweepTeardownWebhooks(ctx, dcctx, nil, in.errOut())
 		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "destroy")
@@ -730,6 +734,17 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
+	// Drain BNK's custom resources while FLO is still alive to finalize them
+	// (#217). terraform deletes the CNEInstance without waiting and removes FLO
+	// three seconds later, so the finalizers outlive their controller and the
+	// namespace delete then blocks until the provider's timeout.
+	//
+	// BEFORE the webhook sweep, not after: these deletes go through
+	// f5validate-f5-bnk, and #208's sweep is what removes it. Reversing the two
+	// would take away the validating webhook and then ask the API server to
+	// call it.
+	sweepBNKCustomResources(ctx, cctx, tfws, w)
+
 	// Remove the admission webhook served from the BNK namespace before the
 	// destroy reaches it, or the namespace hangs in Terminating forever (#208).
 	sweepTeardownWebhooks(ctx, cctx, tfws, w)
