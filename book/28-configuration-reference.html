@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -232,7 +232,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>env</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>env</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Env sets environment variables on that component’s containers, name → value.</td></tr>
 </tbody>
 </table>
 </div>
@@ -284,15 +284,16 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>cneinstance_size</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CNEInstanceSize is the CNEInstance deploymentSize: Tiny, Small, Medium, Large or Max.</td></tr>
-<tr><td><code>far_repo_url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FARRepoURL is the F5 Artifact Repository charts are pulled from.</td></tr>
+<tr><td><code>far_repo_url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>repo.f5.com</code></td><td>no</td><td>FARRepoURL is the F5 Artifact Repository charts are pulled from.</td></tr>
 <tr><td><code>manifest_version</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ManifestVersion pins the BNK release, e.g. “2.4.0-EA”.</td></tr>
 <tr><td><code>far_auth_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FarAuthFile is the FAR auth tarball’s filename in the orchestration COS bucket; rendered as the f5_cne_far_auth_file tfvar + used by <code>registry</code> to resolve the FAR _json_key_base64 service account.</td></tr>
 <tr><td><code>subscription_jwt_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SubscriptionJWTFile is the subscription/license JWT’s filename in the orchestration COS bucket; rendered as the f5_cne_subscription_jwt_file tfvar.</td></tr>
 <tr><td><code>far_auth_local_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FarAuthLocalFile / SubscriptionJWTLocalFile point at LOCAL files instead of COS objects.</td></tr>
-<tr><td><code>subscription_jwt_local_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>subscription_jwt_local_file</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SubscriptionJWTLocalFile is the F5 subscription JWT as a LOCAL file, the companion to FarAuthLocalFile above.</td></tr>
 <tr><td><code>trusted_profile</code></td><td><code>*BNKTrustedProfileCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TrustedProfile tunes the IBM Cloud Trusted Profile the CNE controller assumes to manage its own cluster’s VPC.</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>f5-bnk</code></td><td>no</td><td>FLONamespace / FLOUtilsNamespace override the namespaces the F5 Lifecycle Operator and its utility components install into (rendered as flo_namespace / flo_utils_namespace).</td></tr>
-<tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>f5-utils</code></td><td>no</td><td></td></tr>
+<tr><td><code>flo_utils_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>f5-utils</code></td><td>no</td><td>FLOUtilsNamespace is where FLO’s SHARED utility components install — coremond, the observer, the licence — as opposed to FLONamespace, which holds the BNK instance itself.</td></tr>
+<tr><td><code>storage_class_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StorageClassName is the StorageClass the CNEInstance’s persistent volumes use, TMM’s included.</td></tr>
 <tr><td><code>gateway_api_mtls</code></td><td><code>bool</code></td><td>2.4</td><td>—</td><td>no</td><td>GatewayAPIMTLS opts into the Gateway API bundle BNK 2.4 needs for mTLS (#170).</td></tr>
 <tr><td><code>tmm_replicas</code></td><td><code>int</code></td><td>2.4</td><td><code>3</code></td><td>no</td><td>TMMReplicas is the number of f5-tmm data-plane replicas.</td></tr>
 <tr><td><code>watch_namespaces</code></td><td><code>[]string</code></td><td>2.4</td><td><code>All</code></td><td>no</td><td>WatchNamespaces are the namespaces the CNE controller watches.</td></tr>
@@ -308,12 +309,14 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>external_bigip_login_secret</code></td><td><code>string</code></td><td>2.4</td><td><code>f5-bigip-ctlr-login</code></td><td>no</td><td>ExternalBigIPLoginSecret holds the external BIG-IP credentials.</td></tr>
 <tr><td><code>cluster_identifier</code></td><td><code>string</code></td><td>2.4</td><td>—</td><td>no</td><td>ClusterIdentifier is passed to the external BIG-IP controller.</td></tr>
 <tr><td><code>gateway_api_version</code></td><td><code>string</code></td><td>2.4</td><td><code>1.5.0</code></td><td>no</td><td>GatewayAPIVersion is GATEWAY_API_VERSION for the CNE controller.</td></tr>
+<tr><td><code>gateway_api_bundle_url</code></td><td><code>string</code></td><td>2.4</td><td>—</td><td>no</td><td>GatewayAPIBundleURL is where the Gateway API standard-install bundle is FETCHED from when <code>gateway_api_mtls</code> is on (#185).</td></tr>
 <tr><td><code>demo_mode</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td><code>false on 2.4, true on 2.3</code></td><td>no</td><td>DemoMode sets advanced.demoMode.enabled.</td></tr>
 <tr><td><code>whole_cluster</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td><code>false on 2.4, true on 2.3</code></td><td>no</td><td>TCPSettings overrides fields on the data-plane F5BigTcpSetting CR.</td></tr>
 <tr><td><code>hugepages</code></td><td><code>*HugepagesCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator.</td></tr>
-<tr><td><code>tcp_settings</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>tcp_settings</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {“congestionControl”: “bbr”, “delayedAcks”: “true”} — the key is the CR’s own spec field.</td></tr>
 <tr><td><code>tcp_settings_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>sys-default-tcp</code></td><td>no</td><td>TCPSettingsName is the F5BigTcpSetting to write.</td></tr>
 <tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<component>.env[] lists (#175).</component></td></tr>
+<tr><td><code>tmm_resources</code></td><td><code>map[string]map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TMMResources overrides the TMM pod’s resource requests/limits, rendered as the CNEInstance’s advanced.tmm.resources (#203).</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name).</td></tr>
 <tr><td><code>gtm</code></td><td><code>*BNKGTMCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GTM is the BIG-IP DNS the datacenter above registers with (#51).</td></tr>
 <tr><td><code>cert_manager</code></td><td><code>*BNKCertManagerCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CertManager overrides cert-manager’s namespace + chart version.</td></tr>
@@ -365,8 +368,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
-<tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Host is the forward proxy’s address.</td></tr>
+<tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Port is the forward proxy’s port.</td></tr>
 <tr><td><code>protocol</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>http (default) | https.</td></tr>
 </tbody>
 </table>
@@ -387,7 +390,6 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>profile</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Profile is the IBM Cloud VSI instance profile.</td></tr>
 <tr><td><code>zone</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Zone the VSI lands in (e.g. us-south-1).</td></tr>
 <tr><td><code>boot_size_gb</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BootSizeGB is the boot volume size.</td></tr>
-<tr><td><code>reach</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Reach selects the address the CWC dials: “private” (default — the VSI’s VPC IP, for a CWC in the same/peered VPC) or “floating” (a public floating IP).</td></tr>
 <tr><td><code>management_allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ManagementAllowedCIDRs are the source CIDRs permitted to reach the :80 flp-status web UI (read-only status).</td></tr>
 <tr><td><code>licensing_allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>LicensingAllowedCIDRs are the source CIDRs permitted to reach the :8443 licensing proxy (and :22 SSH).</td></tr>
 <tr><td><code>allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>AllowedCIDRs is DEPRECATED — a legacy single list.</td></tr>
@@ -395,7 +397,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>floating_ip</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FloatingIP attaches an operator floating IP to the FLP VSI for remote management — running <code>roksbnkctl flp status</code> and reaching the :80 web UI + the :8443 proxy from a machine OUTSIDE the VPC.</td></tr>
 <tr><td><code>status_image</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusImage, when set, runs the flp-status web UI as a container in the FLP pod (mobile-friendly status page + /api/status + live logs on :80, no auth — a read-only private status endpoint).</td></tr>
 <tr><td><code>status_registry_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<host>/ca.crt before the pod comes up.</host></td></tr>
-<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryCAB64 is that registry’s CA, base64-encoded, written to /etc/containers/certs.d/<host>/ca.crt on the VSI.</host></td></tr>
 <tr><td><code>forward_proxy</code></td><td><code>*BNKFLPForwardProxyCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ForwardProxy optionally routes the VSI’s egress to F5 licensing through an HTTP forward proxy (air-gapped/egress-controlled networks).</td></tr>
 </tbody>
 </table>
@@ -440,10 +442,10 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>zones</code></td><td><code>[]BNKZoneCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Zones is the per-availability-zone network mapping, in zone order — one entry per zone the cluster spans.</td></tr>
-<tr><td><code>vlan_prefixlen</code></td><td><code>*int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN.</td></tr>
-<tr><td><code>vlan_prefixlen_external</code></td><td><code>*int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN.</td></tr>
-<tr><td><code>vlan_prefixlen_internal</code></td><td><code>*int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
-<tr><td><code>tmm_k8s_routes</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path.</td></tr>
+<tr><td><code>vlan_prefixlen</code></td><td><code>*int</code></td><td>2.3</td><td><code>24</code></td><td>no</td><td>VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN.</td></tr>
+<tr><td><code>vlan_prefixlen_external</code></td><td><code>*int</code></td><td>2.3</td><td>—</td><td>no</td><td>VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN.</td></tr>
+<tr><td><code>vlan_prefixlen_internal</code></td><td><code>*int</code></td><td>2.3</td><td>—</td><td>no</td><td>VLANPrefixLenInternal is the same override for the INTERNAL VLAN.</td></tr>
+<tr><td><code>tmm_k8s_routes</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>172.17.0.0/18</code></td><td>no</td><td>TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path.</td></tr>
 </tbody>
 </table>
 </div>
@@ -482,11 +484,11 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>ext_vlan_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>ExtVLANCIDR is the zone’s EXTERNAL VLAN — the client side of the data plane, where traffic arrives.</td></tr>
-<tr><td><code>int_vlan_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>IntVLANCIDR is the zone’s INTERNAL VLAN — the pod side, where BNK reaches the workloads it fronts.</td></tr>
+<tr><td><code>int_vlan_cidr</code></td><td><code>string</code></td><td>2.3</td><td>—</td><td>yes</td><td>IntVLANCIDR is the zone’s INTERNAL VLAN — the pod side, where BNK reaches the workloads it fronts.</td></tr>
 <tr><td><code>int_snat_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>IntSNATCIDR is the pool BNK source-NATs to when it talks to pods, so the return traffic comes back through TMM rather than routing around it.</td></tr>
 <tr><td><code>int_vip_cidr</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>IntVIPCIDR is the range virtual servers are allocated from on the internal side.</td></tr>
-<tr><td><code>external_selfip</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>ExternalSelfIP is TMM’s own address on the external VLAN.</td></tr>
-<tr><td><code>internal_selfip</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>InternalSelfIP is TMM’s own address on the internal VLAN.</td></tr>
+<tr><td><code>external_selfip</code></td><td><code>string</code></td><td>2.3</td><td>—</td><td>yes</td><td>ExternalSelfIP is TMM’s own address on the external VLAN.</td></tr>
+<tr><td><code>internal_selfip</code></td><td><code>string</code></td><td>2.3</td><td>—</td><td>yes</td><td>InternalSelfIP is TMM’s own address on the internal VLAN.</td></tr>
 </tbody>
 </table>
 </div>
@@ -498,9 +500,9 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>instance</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Instance is the IBM Cloud Object Storage service instance holding the bucket.</td></tr>
-<tr><td><code>bucket</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file.</td></tr>
-<tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Region is the bucket’s region, which need not match ibmcloud.region.</td></tr>
+<tr><td><code>instance</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-supply-chain</code></td><td>no</td><td>Instance is the IBM Cloud Object Storage service instance holding the bucket.</td></tr>
+<tr><td><code>bucket</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-artifacts</code></td><td>no</td><td>Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file.</td></tr>
+<tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>us-south</code></td><td>no</td><td>Region is the bucket’s region, which need not match ibmcloud.region.</td></tr>
 <tr><td><code>upload</code></td><td><code>[]COSUpload</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Upload lists local files to place into that bucket before the phases that read them run.</td></tr>
 </tbody>
 </table>
@@ -512,8 +514,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td></td></tr>
-<tr><td><code>key</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td></td></tr>
+<tr><td><code>source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Source is the local file to upload.</td></tr>
+<tr><td><code>key</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Key is the object name it is stored under in the bucket.</td></tr>
 </tbody>
 </table>
 </div>
@@ -545,7 +547,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>extra_hosts</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>extra_hosts</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ExtraHosts are additional targets the connectivity probe tries, beyond the defaults.</td></tr>
 </tbody>
 </table>
 </div>
@@ -557,8 +559,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
-<tr><td><code>default_target</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Resolvers names the DNS servers to query, as name → “<ip>[:<port>]”.</port></ip></td></tr>
+<tr><td><code>default_target</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>DefaultTarget is the resolver queried when a probe names none.</td></tr>
 </tbody>
 </table>
 </div>
@@ -581,17 +583,17 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>app_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>AppNamespace is the namespace the example application and its Gateway resources are created in.</td></tr>
-<tr><td><code>class_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClassName is the GatewayClass name.</td></tr>
+<tr><td><code>app_namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>f5-app</code></td><td>no</td><td>AppNamespace is the namespace the example application and its Gateway resources are created in.</td></tr>
+<tr><td><code>class_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>gateway-class</code></td><td>no</td><td>ClassName is the GatewayClass name.</td></tr>
 <tr><td><code>controller_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ControllerName is the GatewayClass controllerName.</td></tr>
-<tr><td><code>backend_service</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BackendService is the Kubernetes Service the example HTTPRoute forwards to.</td></tr>
-<tr><td><code>backend_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>BackendPort is the port on that Service.</td></tr>
-<tr><td><code>egress_mode</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>EgressMode selects how return traffic is source-addressed: “snatpool”, “automap”, or “both”.</td></tr>
+<tr><td><code>backend_service</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>nginx-service</code></td><td>no</td><td>BackendService is the Kubernetes Service the example HTTPRoute forwards to.</td></tr>
+<tr><td><code>backend_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>80</code></td><td>no</td><td>BackendPort is the port on that Service.</td></tr>
+<tr><td><code>egress_mode</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>snatpool</code></td><td>no</td><td>EgressMode selects how return traffic is source-addressed: “snatpool”, “automap”, or “both”.</td></tr>
 <tr><td><code>client_subnet_local</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientSubnetLocal lists client CIDRs reachable on the same VPC as the cluster — routed directly rather than over the transit gateway.</td></tr>
 <tr><td><code>client_subnet_remote</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientSubnetRemote lists client CIDRs reached ACROSS the transit gateway, e.g. the testing client VPC.</td></tr>
-<tr><td><code>vxlan_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.</td></tr>
+<tr><td><code>vxlan_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>6789</code></td><td>no</td><td>VXLANPort is the UDP port for the VXLAN overlay between TMM and the nodes.</td></tr>
 <tr><td><code>route_examples</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>RouteExamples names extra route kinds to create WORKING examples of, alongside the HTTPRoute the gateway phase already creates.</td></tr>
-<tr><td><code>l4_listener_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>L4ListenerPort is the port for that TCP listener.</td></tr>
+<tr><td><code>l4_listener_port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>8080</code></td><td>no</td><td>L4ListenerPort is the port for that TCP listener.</td></tr>
 </tbody>
 </table>
 </div>
@@ -656,8 +658,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>create</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td></td></tr>
-<tr><td><code>existing</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>existing name/ID when Create=false.</td></tr>
+<tr><td><code>create</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Create decides whether roksbnkctl provisions this resource or adopts one that already exists.</td></tr>
+<tr><td><code>existing</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Existing is the name or ID of the resource to adopt when Create is false.</td></tr>
 </tbody>
 </table>
 </div>
@@ -678,11 +680,11 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>client_vpc</code></td><td><code>ResourceToggle</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>ClientVPC controls the testing client VPC that the jumphost lives in.</td></tr>
 <tr><td><code>cluster_vpc</code></td><td><code>ResourceToggle</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>ClusterVPC controls the ROKS cluster’s OWN VPC.</td></tr>
 <tr><td><code>client_region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClientRegion is the region the testing client (TGW jumphost + client VPC) is installed in.</td></tr>
-<tr><td><code>testing_client_vpc_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name).</td></tr>
+<tr><td><code>testing_client_vpc_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>tf-testing-vpc</code></td><td>no</td><td>TestingClientVPCName names the testing client VPC when ClientVPC.Create is true (rendered as testing_client_vpc_name).</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TestingSSHKeyName is the IBM Cloud VPC SSH key name attached to the testing jumphosts (rendered as testing_ssh_key_name).</td></tr>
 <tr><td><code>testing_jumphost_profile</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Jumphost sizing.</td></tr>
-<tr><td><code>testing_min_vcpu_count</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
-<tr><td><code>testing_min_memory_gb</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>testing_min_vcpu_count</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>4</code></td><td>no</td><td>TestingMinVCPUCount is the vCPU floor for the jumphost auto-select.</td></tr>
+<tr><td><code>testing_min_memory_gb</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>8</code></td><td>no</td><td>TestingMinMemoryGB is the memory floor for the same auto-select.</td></tr>
 <tr><td><code>testing_jumphost_allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Security-group source CIDRs, following the flp_vsi module’s split between a management plane and an in-fabric plane.</td></tr>
 <tr><td><code>testing_client_vpc_inbound_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TestingClientVPCInboundCIDRs gates the client VPC’s DEFAULT security group, which the testing phase widens to all protocols and ports.</td></tr>
 <tr><td><code>cluster_http_allowed_cidrs</code></td><td><code>[]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ClusterHTTPAllowedCIDRs gates :80 on the cluster security group — the ingress/ALB path, which is meant to be publicly reachable, so empty means open.</td></tr>
@@ -700,7 +702,7 @@ run time and belongs in the prose rather than a table cell.</p>
 </thead>
 <tbody>
 <tr><td><code>backend</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“” | “local” | “s3”.</td></tr>
-<tr><td><code>s3</code></td><td><code>*StateS3Cfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td></td></tr>
+<tr><td><code>s3</code></td><td><code>*StateS3Cfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>S3 configures an S3-compatible backend (IBM COS) for terraform state, so a workspace is not tied to one machine’s disk.</td></tr>
 </tbody>
 </table>
 </div>
@@ -744,9 +746,9 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td></td></tr>
-<tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>default 22.</td></tr>
-<tr><td><code>user</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td></td></tr>
+<tr><td><code>host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Host is the target’s address, reached over SSH.</td></tr>
+<tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>22</code></td><td>no</td><td>Port is its SSH port.</td></tr>
+<tr><td><code>user</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>User is the SSH login.</td></tr>
 <tr><td><code>key_path</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>file path (PEM).</td></tr>
 <tr><td><code>key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“agent” | “tf-output:<name>”.</name></td></tr>
 </tbody>

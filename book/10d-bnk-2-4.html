@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -300,6 +300,38 @@ quickly, so it is a race. Opt in:</p>
 does not need the newer bundle is a change nobody asked for. Ignored on 2.3,
 where that sweep always runs — there the <code>crd-installer</code> <em>does</em> force its own
 CRDs and is blocked without it.</p>
+<h3 id="where-the-bundle-comes-from"><a class="header" href="#where-the-bundle-comes-from">Where the bundle comes from</a></h3>
+<p>With <code>gateway_api_mtls</code> on, <code>bnk up</code> installs the upstream
+<code>kubernetes-sigs/gateway-api</code> <strong>standard-install</strong> bundle itself — eight CRDs, a
+<code>ValidatingAdmissionPolicy</code> of its own, and no container images — at the release
+named by <code>bnk.gateway_api_version</code> (default <code>1.5.0</code>, the same number the CNE
+controller is given as <code>GATEWAY_API_VERSION</code>, so the two cannot disagree). It is
+applied server-side with <code>--force-conflicts</code>, inside the window where the
+admission sweep is running, and before terraform starts.</p>
+<p>The bytes are always checked against a sha256 that ships <strong>in roksbnkctl</strong>, not
+in your configuration. A release with no pin in your build is refused rather than
+fetched unverified.</p>
+<p>It is fetched from, in order:</p>
+<ol>
+<li>
+<p><strong>The registry mirror</strong>, whenever the workspace has one. The bundle is a
+normal BOM artifact, so <code>registry bom</code> lists it, <code>registry replicate</code> copies
+it and <code>registry verify</code> proves it arrived. This is the path a disconnected
+cluster needs: in the CI flow roksbnkctl runs as a pod <em>inside</em> that cluster,
+so its egress is the cluster’s and <code>github.com</code> is not reachable.</p>
+<p>The bundle enters the BOM only when <code>gateway_api_mtls</code> is on, so a mirror
+replicated before you set it does not carry the bundle — re-run
+<code>registry replicate</code>.</p>
+</li>
+<li>
+<p><strong><code>bnk.gateway_api_bundle_url</code></strong>, if set — an internal proxy of the upstream
+release, for an estate that blocks <code>github.com</code> but has no mirror yet. It
+moves only <em>where</em> the bytes come from; the pin still applies.</p>
+</li>
+<li>
+<p><strong>The upstream release asset</strong>, derived from the version.</p>
+</li>
+</ol>
 <h2 id="conforming-to-f5s-reference-cneinstance"><a class="header" href="#conforming-to-f5s-reference-cneinstance">Conforming to F5’s reference CNEInstance</a></h2>
 <p>The 2.4 spec this tool renders is checked against F5’s own reference install —
 the live capture in <code>/mnt/d/roksbnkctl-gap-2-3-to-2-4</code>. Every default below is
@@ -357,51 +389,77 @@ behaviour without a run to back it would be a guess. Set it explicitly to pin it
 on either line.</p>
 <p>Every one of these is a <code>config.yaml</code> field, a <code>ROKSBNKCTL_*</code> override, and a row
 in <a href="./28-configuration-reference.html">Chapter 28</a> with its line and default.</p>
-<h2 id="hugepages-and-why-the-defaults-are-what-they-are"><a class="header" href="#hugepages-and-why-the-defaults-are-what-they-are">Hugepages, and why the defaults are what they are</a></h2>
+<h2 id="hugepages-and-why-deploymentsize-stays-tiny"><a class="header" href="#hugepages-and-why-deploymentsize-stays-tiny">Hugepages, and why <code>deploymentSize</code> stays <code>Tiny</code></a></h2>
 <p>The defaults aim at <strong>a working cluster with no overrides at all</strong>. On 2.4 that
-means <code>deploymentSize: Tiny</code>, the <code>cx3d.8x20</code> worker flavour F5’s reference
-cluster uses, OCP 4.21, and <strong>no hugepages</strong>.</p>
-<p>That last one is the interesting default. BNK’s <code>deploymentSize</code> decides how much
-TMM asks for:</p>
+means <code>deploymentSize: Tiny</code>, OCP 4.21, and <strong>no hugepages</strong> — and on ROKS that
+is not merely a sensible default, it is the only configuration that runs.</p>
+<p><code>deploymentSize</code> decides how much TMM asks for, hugepages included. Measured on
+live 4.21 clusters by changing only that field:</p>
 <div class="table-wrapper">
 <table>
 <thead>
-<tr><th>deploymentSize</th><th>hugepages-2Mi requested</th></tr>
+<tr><th><code>deploymentSize</code></th><th>TMM cpu</th><th>TMM memory</th><th><code>hugepages-2Mi</code></th></tr>
 </thead>
 <tbody>
-<tr><td><code>Tiny</code></td><td>none</td></tr>
-<tr><td><code>Small</code></td><td>4Gi</td></tr>
-<tr><td><code>Medium</code> / <code>Large</code> / <code>Max</code></td><td>not yet measured</td></tr>
+<tr><td><code>Tiny</code></td><td>—</td><td>—</td><td><strong>none</strong></td></tr>
+<tr><td><code>Small</code></td><td>1</td><td>1536Mi</td><td><strong>4 GiB</strong></td></tr>
+<tr><td><code>Medium</code></td><td>4</td><td>2Gi</td><td><strong>8 GiB</strong></td></tr>
 </tbody>
 </table>
 </div>
-<p>A stock ROKS worker reports <strong>zero</strong> — including F5’s approved reference cluster,
-which runs <code>Tiny</code> for exactly this reason. So any size above <code>Tiny</code> needs
-hugepages allocated first, or TMM never schedules.</p>
-<h3 id="if-you-want-a-larger-size"><a class="header" href="#if-you-want-a-larger-size">If you want a larger size</a></h3>
-<pre><code class="language-yaml">bnk:
-  cneinstance_size: Small
-  hugepages:
-    enabled: true
-    count: 2048        # × 2M = 4Gi per node
+<p>A stock ROKS worker reports <strong>zero</strong>, and there is no supported way to change
+that.</p>
+<h3 id="bnkhugepages-does-not-work-on-roks"><a class="header" href="#bnkhugepages-does-not-work-on-roks"><code>bnk.hugepages</code> does not work on ROKS</a></h3>
+<p>This is worth stating plainly, because the setting exists and reads like the
+answer. It is not. Six approaches were measured and all six fail:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>approach</th><th>result</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bnk.hugepages</code> (Node Tuning Operator, <code>[bootloader]</code>)</td><td>needs the Machine Config Operator; ROKS has <strong>0 MachineConfigPools</strong></td></tr>
+<tr><td>a <code>Tuned</code> CR with <code>[sysctl] vm.nr_hugepages</code></td><td>ROKS <strong>deletes the CR</strong> — the create returns a real object, the next read is <code>NotFound</code></td></tr>
+<tr><td>a privileged pod writing <code>/proc/sys/vm/nr_hugepages</code></td><td>allocates (<code>HugePages_Total: 2048</code>), but kubelet only reads hugepages at startup so the node still advertises <code>0</code></td></tr>
+<tr><td><code>advanced.tmm.resources</code> with <code>hugepages-2Mi: 0</code></td><td>TMM schedules, then refuses to start</td></tr>
+<tr><td><code>advanced.tmm.env.TMM_MEM</code></td><td>accepted, requirement remains</td></tr>
+<tr><td><code>ibmcloud ks worker-pool</code></td><td>no kernel-argument or sysctl option exists</td></tr>
+</tbody>
+</table>
+</div>
+<p>IBM manages the worker OS on ROKS, which is what removes the first two. TMM
+validates hugepages against the 2 MB page cgroup limit when it starts and exits
+if that limit is zero — with exit code <strong>0</strong>, so it never looks like a crash:
+the pod reports <code>4/5 Running</code> and the Deployment simply never becomes Available.</p>
+<p>Setting <code>bnk.hugepages</code> on ROKS now fails with an explanation naming this,
+rather than surfacing as a terraform “provider produced inconsistent result”
+error that blames the kubectl provider (issue #203).</p>
+<h3 id="so-how-do-you-get-more-capacity"><a class="header" href="#so-how-do-you-get-more-capacity">So how do you get more capacity?</a></h3>
+<p><strong>With more TMM pods on bigger nodes</strong>, which is what F5’s own sizing guide
+does. Appendix C’s Large cluster reaches ~31 Gbit/s at the <em>Medium</em> profile by
+running nine TMM pods on nine larger nodes — capacity comes from pod count and
+node size, never from a larger <code>deploymentSize</code>.</p>
+<pre><code class="language-yaml">cluster:
+  workers_per_zone: 2
+  worker_flavor: cx2.16x32
+bnk:
+  cneinstance_size: Tiny     # or leave unset — Tiny is the 2.4 default
+  tmm_replicas: 3            # one TMM per worker node
 </code></pre>
-<pre><code class="language-bash">ROKSBNKCTL_HUGEPAGES=true
-ROKSBNKCTL_HUGEPAGES_COUNT=2048
+<pre><code class="language-bash">ROKSBNKCTL_WORKERS_PER_ZONE=2
+ROKSBNKCTL_WORKER_FLAVOR=cx2.16x32
+ROKSBNKCTL_TMM_REPLICAS=3
 </code></pre>
-<p>This writes a <code>Tuned</code> profile for the worker pool through the Node Tuning
-Operator, which is already installed on OpenShift and owns node-level kernel
-tuning. A hand-written <code>MachineConfig</code> would put <code>roksbnkctl</code> in competition with
-an operator that is there to do the job.</p>
-<p><strong>Enabling it reboots workers.</strong> The profile sets a bootloader kernel argument,
-so the Machine Config Operator rolls the pool — draining and restarting each node
-in turn. On a live cluster that is a maintenance event, not a configuration
-change. That is why it is off by default: a cluster that does not need hugepages
-should never be rebooted because a default said so.</p>
-<h3 id="what-happens-if-you-forget"><a class="header" href="#what-happens-if-you-forget">What happens if you forget</a></h3>
-<p><code>bnk up</code> fails <strong>immediately</strong>, with the numbers and both options, rather than
-waiting fifteen minutes and reporting <code>Available=False</code>. The scheduler’s verdict
-is already in the CNEInstance condition; the wait now recognises that no amount
-of waiting creates node capacity and stops there.</p>
+<p>All four cluster shapes in Appendix C are verified this way, at 1, 3, 3 and 9
+replicas.</p>
+<p><code>cneinstance_size</code> stays configurable rather than hardcoded, deliberately: if
+IBM ships a worker profile that supports hugepages, only the platform’s answer
+changes and nothing about <code>config.yaml</code> or the <code>ROKSBNKCTL_*</code> surface has to.</p>
+<h3 id="what-happens-if-you-ask-for-a-size-that-cannot-run"><a class="header" href="#what-happens-if-you-ask-for-a-size-that-cannot-run">What happens if you ask for a size that cannot run</a></h3>
+<p><code>bnk up</code> fails <strong>immediately</strong>, with the numbers and the alternatives, rather
+than waiting fifteen minutes to report <code>Available=False</code>. The scheduler’s
+verdict is already in the CNEInstance condition; the wait recognises that no
+amount of waiting creates node capacity and stops there.</p>
 <h2 id="tuning-the-data-plane-tcp-profile"><a class="header" href="#tuning-the-data-plane-tcp-profile">Tuning the data-plane TCP profile</a></h2>
 <p>F5’s approved reference cluster carries a hand-applied <code>sys-default-tcp</code>
 <code>F5BigTcpSetting</code> in the BNK namespace. Despite the “sys-default” name it was

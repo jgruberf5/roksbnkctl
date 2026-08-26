@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -399,8 +399,8 @@ registered stays on Forge’s Kubernetes page — to remove it, use
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
-<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td>—</td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes –insecure)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer –forge-ca</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (ensured-or-created)</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (e.g. https://forge.example.com)</td></tr>
 <tr><td><code>--username</code></td><td><code>string</code></td><td>—</td><td>BNK Forge login username</td></tr>
@@ -420,8 +420,8 @@ registered stays on Forge’s Kubernetes page — to remove it, use
 </thead>
 <tbody>
 <tr><td><code>--force</code></td><td><code>bool</code></td><td><code>false</code></td><td>take over a cluster registered to ANOTHER Forge project (moves it, and its cluster id changes)</td></tr>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
-<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td>—</td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes –insecure)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer –forge-ca</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD env or the prompt)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>target BNK Forge project name (overrides config)</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge server URL (overrides config)</td></tr>
@@ -453,8 +453,8 @@ run twice or run late.</p>
 <tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer <code>--forge-ca</code></td></tr>
-<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td></td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes <code>--insecure</code>)</td></tr>
+<tr><td><code>--forge-ca</code></td><td><code>string</code></td><td>—</td><td>PEM file holding the CA the Forge server’s certificate must chain to (pins a self-signed lab cert; supersedes –insecure)</td></tr>
+<tr><td><code>--insecure</code></td><td><code>bool</code></td><td><code>false</code></td><td>DISABLE TLS verification — the API token is then sent over an unauthenticated connection; prefer –forge-ca</td></tr>
 <tr><td><code>--password</code></td><td><code>string</code></td><td>—</td><td>BNK Forge password (prefer BNK_FORGE_PASSWORD)</td></tr>
 <tr><td><code>--project</code></td><td><code>string</code></td><td>—</td><td>BNK Forge project holding the cluster</td></tr>
 <tr><td><code>--url</code></td><td><code>string</code></td><td>—</td><td>BNK Forge base URL</td></tr>
@@ -639,6 +639,56 @@ so it doesn’t tangle with BNK or testing state.</p>
 </table>
 </div>
 <p>← back to <a href="#roksbnkctl-cluster"><code>roksbnkctl cluster</code></a></p>
+<h2 id="roksbnkctl-config"><a class="header" href="#roksbnkctl-config"><code>roksbnkctl config</code></a></h2>
+<p>Print an example config.yaml or .env, or convert one into the other</p>
+<p>Prints the workspace input in either form, for piping to a file.</p>
+<p>With no –from flag it prints an ANNOTATED template — every setting with the
+comment explaining it, which is what you want when starting from nothing:</p>
+<p>roksbnkctl config yaml &gt; config.yaml
+roksbnkctl config env  &gt; .env</p>
+<p>With –from-yaml or –from-env it prints the POPULATED equivalent, without
+comments — the same settings expressed in the other form:</p>
+<p>roksbnkctl config env  –from-yaml config.yaml &gt; .env
+roksbnkctl config yaml –from-env  .env        &gt; config.yaml</p>
+<p>The conversion carries what the input actually sets. A setting left at its
+default is omitted rather than written out, so the result stays a statement of
+intent instead of a snapshot of every default at the moment it ran – except the
+handful of REQUIRED fields, which are emitted empty so a missing one is visible
+rather than silently absent.</p>
+<h3 id="roksbnkctl-config-env"><a class="header" href="#roksbnkctl-config-env"><code>roksbnkctl config env</code></a></h3>
+<p>Print an annotated .env of ROKSBNKCTL_* overrides, or the .env equivalent of a config.yaml</p>
+<pre><code>roksbnkctl config env [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--from-env</code></td><td><code>string</code></td><td>—</td><td>read settings from a .env file and print the populated equivalent (no comments)</td></tr>
+<tr><td><code>--from-yaml</code></td><td><code>string</code></td><td>—</td><td>read settings from a config.yaml and print the populated equivalent (no comments)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-config"><code>roksbnkctl config</code></a></p>
+<h3 id="roksbnkctl-config-yaml"><a class="header" href="#roksbnkctl-config-yaml"><code>roksbnkctl config yaml</code></a></h3>
+<p>Print an annotated config.yaml, or the config.yaml equivalent of a .env</p>
+<pre><code>roksbnkctl config yaml [flags]
+</code></pre>
+<p><strong>Flags</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--from-env</code></td><td><code>string</code></td><td>—</td><td>read settings from a .env file and print the populated equivalent (no comments)</td></tr>
+<tr><td><code>--from-yaml</code></td><td><code>string</code></td><td>—</td><td>read settings from a config.yaml and print the populated equivalent (no comments)</td></tr>
+</tbody>
+</table>
+</div>
+<p>← back to <a href="#roksbnkctl-config"><code>roksbnkctl config</code></a></p>
 <h2 id="roksbnkctl-cos"><a class="header" href="#roksbnkctl-cos"><code>roksbnkctl cos</code></a></h2>
 <p>Manage IBM Cloud Object Storage (instances, buckets, objects)</p>
 <p>roksbnkctl cos provides full CRUD on the COS supply chain BNK depends on:
@@ -1547,7 +1597,7 @@ air-gapped cluster installs BNK from a registry it controls.</p>
 <p>Commands:
 roksbnkctl registry target     Show or set the mirror target (icr|generic)
 roksbnkctl registry bom        Build + print the bill-of-materials
-roksbnkctl registry list       List artifacts currently in the mirror
+roksbnkctl registry list       List the artifacts the last replicate recorded
 roksbnkctl registry diff       Show what <code>replicate</code> would copy (BOM vs. mirror)
 roksbnkctl registry replicate  Copy the BOM into the mirror (registry-to-registry; no cluster)
 roksbnkctl registry verify     Confirm every BOM artifact is present + digest-matched

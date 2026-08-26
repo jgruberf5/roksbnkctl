@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -196,6 +196,54 @@ control.</p>
 </tbody>
 </table>
 </div>
+<h2 id="getting-a-starting-point-roksbnkctl-config"><a class="header" href="#getting-a-starting-point-roksbnkctl-config">Getting a starting point: <code>roksbnkctl config</code></a></h2>
+<p>Both forms of the input can be printed, so neither has to be written from
+memory. With no flags it prints an annotated template, ready to pipe:</p>
+<pre><code class="language-bash">roksbnkctl config yaml &gt; config.yaml     # every setting, with the comment explaining it
+roksbnkctl config env  &gt; .env            # the same settings as ROKSBNKCTL_* overrides
+</code></pre>
+<p>The <code>.env</code> template has every variable <strong>commented out</strong>. That is deliberate: an
+empty assignment is not the same as leaving a setting alone. <code>ROKSBNKCTL_X=</code>
+sets <code>X</code> to empty, which overrides whatever default would otherwise apply —
+uncomment only what you mean to set.</p>
+<h3 id="converting-between-the-two"><a class="header" href="#converting-between-the-two">Converting between the two</a></h3>
+<p>The same settings expressed either way, which is what you want when a pipeline
+needs as environment variables what a colleague handed you as a file:</p>
+<pre><code class="language-bash">roksbnkctl config env  --from-yaml config.yaml &gt; .env
+roksbnkctl config yaml --from-env  .env        &gt; config.yaml
+</code></pre>
+<p>The converted output carries <strong>no comments</strong> — it is a populated file, not a
+template — and includes only what the input actually set, so it stays a
+statement of intent rather than a snapshot of every default. The handful of
+required fields are emitted even when empty, so a missing one is visible instead
+of silently absent.</p>
+<p>Round-tripping is the quickest way to check a <code>.env</code> says what you think:</p>
+<pre><code class="language-bash">roksbnkctl config yaml --from-env .env   # read it back as config.yaml
+</code></pre>
+<p>The conversion runs the <strong>same override machinery</strong> <code>--override-from-env</code> uses,
+so a value lands where it would in a real run. A variable that this prints under
+<code>bnk.tmm_replicas</code> is the variable that sets <code>bnk.tmm_replicas</code>; there is no
+second parser that could disagree.</p>
+<p>A worked example — the Appendix C <em>Small cluster</em> as environment variables:</p>
+<pre><code class="language-bash">cat &gt; small.yaml &lt;&lt;'YAML'
+ibmcloud: {region: us-east, resource_group: default}
+prefix: small
+cluster: {create: true, name: small, workers_per_zone: 2, worker_flavor: bx2.8x32}
+bnk:  {manifest_version: 2.4.0-EA, cneinstance_size: Tiny, tmm_replicas: 3}
+YAML
+
+roksbnkctl config env --from-yaml small.yaml
+# ROKSBNKCTL_CLUSTER_CREATE=true
+# ROKSBNKCTL_CLUSTER_NAME=small
+# ROKSBNKCTL_CNEINSTANCE_SIZE=Tiny
+# ROKSBNKCTL_MANIFEST_VERSION=2.4.0-EA
+# ROKSBNKCTL_PREFIX=small
+# ROKSBNKCTL_REGION=us-east
+# ROKSBNKCTL_RESOURCE_GROUP=default
+# ROKSBNKCTL_TMM_REPLICAS=3
+# ROKSBNKCTL_WORKERS_PER_ZONE=2
+# ROKSBNKCTL_WORKER_FLAVOR=bx2.8x32
+</code></pre>
 <h2 id="the-pattern"><a class="header" href="#the-pattern">The pattern</a></h2>
 <pre class="mermaid">flowchart LR
     T["config.yaml.tmpl&lt;br/&gt;(committed, no secrets)"] --&gt;|--config-file| I["roksbnkctl init"]
@@ -370,7 +418,6 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_FLP_VSI_PROFILE</code></td><td><code>bnk.flp.vsi.profile</code></td><td>VSI instance profile; blank → <code>bx2-4x16</code> (the FLP’s 4 vCPU / 8 GB floor)</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_SSH_KEY</code></td><td><code>bnk.flp.vsi.ssh_key</code></td><td>name of an existing IBM Cloud VPC SSH key</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_BOOT_SIZE_GB</code></td><td><code>bnk.flp.vsi.boot_size_gb</code></td><td>integer; blank → 100</td></tr>
-<tr><td><code>ROKSBNKCTL_FLP_VSI_REACH</code></td><td><code>bnk.flp.vsi.reach</code></td><td><code>private</code> (default) | <code>floating</code> — the address the CWC dials</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_FLOATING_IP</code></td><td><code>bnk.flp.vsi.floating_ip</code></td><td>bool; an unparseable value leaves the <strong>module default (true)</strong> rather than pinning false</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_MANAGEMENT_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.management_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:80</code> status UI</td></tr>
 <tr><td><code>ROKSBNKCTL_FLP_VSI_LICENSING_ALLOWED_CIDRS</code></td><td><code>bnk.flp.vsi.licensing_allowed_cidrs</code></td><td><strong>comma-separated</strong> list — gates the <code>:8443</code> proxy + <code>:22</code></td></tr>

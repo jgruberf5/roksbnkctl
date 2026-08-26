@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -290,7 +290,6 @@
 <tr><td><code>flp_vsi_profile</code></td><td><code>string</code></td><td><code>"bx2-4x16"</code></td><td>VSI instance profile for the FLP (&gt;= 4 vCPU / 8 GB).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_zone</code></td><td><code>string</code></td><td><code>""</code></td><td>Zone for the FLP VSI. Empty → <code>&lt;region&gt;</code>-1.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_boot_size_gb</code></td><td><code>number</code></td><td><code>100</code></td><td>Boot volume size (GB) for the FLP VSI (&gt;= 80).</td><td>no</td></tr>
-<tr><td><code>flp_vsi_reach</code></td><td><code>string</code></td><td><code>"private"</code></td><td>How the CWC reaches the FLP VSI: private (VPC/transit-gateway) or floating.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_floating_ip</code></td><td><code>bool</code></td><td><code>true</code></td><td>Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_management_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs for the FLP VSI’s :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_licensing_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs for the FLP VSI’s :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges.</td><td>no</td></tr>
@@ -302,7 +301,6 @@
 <tr><td><code>deploy_tgw_connection</code></td><td><code>bool</code></td><td><code>false</code></td><td>Attach the cluster’s VPC to an existing Transit Gateway. On only for the tgw phase; a no-op everywhere else.</td><td>no</td></tr>
 <tr><td><code>tgw_connection_target</code></td><td><code>string</code></td><td><code>""</code></td><td>Existing Transit Gateway to attach the cluster VPC to, by NAME or ID. Multiple clusters passing the same value share one gateway.</td><td>no</td></tr>
 <tr><td><code>tgw_connection_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for this cluster’s connection on the gateway (unique per gateway; prefix-derived so shared-gateway clusters don’t collide).</td><td>no</td></tr>
-<tr><td><code>helm_registry_config</code></td><td><code>string</code></td><td><code>""</code></td><td>Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True only in the standalone FLP-VSI phase: no ROKS cluster exists or will be adopted, so all cluster data-source lookups + kube providers across modules are skipped (count=0).</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_cidr</code></td><td><code>string</code></td><td><code>""</code></td><td>CIDR block the cluster VPC’s per-zone address prefixes are carved from (e.g. “10.241.0.0/16” → 10.241.0.0/18, 10.241.64.0/18, 10.241.128.0/18).</td><td>no</td></tr>
 <tr><td><code>use_existing_cluster_subnets</code></td><td><code>bool</code></td><td><code>false</code></td><td>Place the cluster in subnets that already exist instead of creating them. Requires use_existing_cluster_vpc — a subnet cannot be adopted independently of its VPC.</td><td>no</td></tr>
@@ -316,6 +314,7 @@
 <tr><td><code>testing_client_vpc_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound to the testing client VPC’s default security group. Empty → the RFC-1918 private ranges (in-fabric test traffic arrives over the Transit Gateway).</td><td>no</td></tr>
 <tr><td><code>cluster_http_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach :80 on the cluster security group. Empty → 0.0.0.0/0 (the ingress/ALB path is meant to be publicly reachable).</td><td>no</td></tr>
 <tr><td><code>cluster_vpc_default_sg_inbound_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed inbound (all protocols/ports) to the cluster VPC’s default security group. Empty → 0.0.0.0/0, the historical behaviour. Narrow to your private ranges unless a workload in this VPC needs a public source.</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_resources</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>Overrides the TMM pod’s resource requests/limits, rendered as the CNEInstance’s advanced.tmm.resources (#203).</td><td>no</td></tr>
 <tr><td><code>cneinstance_advanced_env</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>Per-component environment passthrough for the BNK 2.4 CNEInstance’s advanced.<code>&lt;component&gt;</code>.env[] lists (#175).</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_replicas</code></td><td><code>number</code></td><td><code>3</code></td><td>Number of f5-tmm data-plane replicas (2.4). Reference: 3.</td><td>no</td></tr>
 <tr><td><code>cneinstance_watch_namespaces</code></td><td><code>list(string)</code></td><td><code>["All"]</code></td><td>Namespaces the CNE controller watches (2.4). Reference: ["All"].</td><td>no</td></tr>
@@ -326,6 +325,7 @@
 <tr><td><code>cneinstance_external_bigip_login_secret</code></td><td><code>string</code></td><td><code>"f5-bigip-ctlr-login"</code></td><td>Secret holding external BIG-IP credentials (2.4). Reference: f5-bigip-ctlr-login.</td><td>no</td></tr>
 <tr><td><code>cneinstance_cluster_identifier</code></td><td><code>string</code></td><td><code>""</code></td><td>CLUSTER_IDENTIFIER passed to the external BIG-IP controller (2.4). Empty derives from the cluster name.</td><td>no</td></tr>
 <tr><td><code>cneinstance_gateway_api_version</code></td><td><code>string</code></td><td><code>"1.5.0"</code></td><td>GATEWAY_API_VERSION for the CNE controller (2.4). Reference: 1.5.0.</td><td>no</td></tr>
+<tr><td><code>gateway_api_bundle_url</code></td><td><code>string</code></td><td><code>""</code></td><td>Where the Gateway API standard-install bundle is FETCHED from when the workspace has no registry mirror recorded (2.4 + gateway_api_mtls). Empty derives the upstream release asset for cneinstance_gateway_api_version.</td><td>no</td></tr>
 <tr><td><code>cneinstance_demo_mode</code></td><td><code>string</code></td><td><code>""</code></td><td>advanced.demoMode.enabled.</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_pod_label</code></td><td><code>string</code></td><td><code>"f5-tmm"</code></td><td>Value of the <code>app</code> label the placement rules select f5-tmm pods by (2.4). Reference: f5-tmm.</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_anti_affinity_topology_key</code></td><td><code>string</code></td><td><code>"kubernetes.io/hostname"</code></td><td>Node label the TMM anti-affinity rule spreads across (2.4).</td><td>no</td></tr>
@@ -341,6 +341,7 @@
 <tr><td><code>cneinstance_hugepages_count</code></td><td><code>number</code></td><td><code>2048</code></td><td>Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request.</td><td>no</td></tr>
 <tr><td><code>cneinstance_hugepages_node_role</code></td><td><code>string</code></td><td><code>"worker"</code></td><td>machineconfiguration.openshift.io/role the Tuned profile applies to.</td><td>no</td></tr>
 <tr><td><code>cneinstance_hugepages_profile_name</code></td><td><code>string</code></td><td><code>"bnk-hugepages"</code></td><td>Name of the Tuned profile and CR.</td><td>no</td></tr>
+<tr><td><code>cneinstance_storage_class_name</code></td><td><code>string</code></td><td><code>""</code></td><td>StorageClass for the CNEInstance’s persistent volumes, TMM’s included. Empty leaves the CR’s own default, which resolves to the cluster default class.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -407,10 +408,10 @@
 <tr><td><code>flo_dependency_id</code></td><td><code>string</code></td><td><code>null</code></td><td>flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered</td><td>no</td></tr>
 <tr><td><code>deploy_bnk</code></td><td><code>bool</code></td><td><code>true</code></td><td>Deploy BIG-IP Next for Kubernetes — when false the inner cneinstance module is disabled and no CNEInstance resources are created</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/cne_instance"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
-<tr><td><code>registry_mirror_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth username for an external registry mirror (private Harbor/Artifactory).</td><td>no</td></tr>
 <tr><td><code>registry_mirror_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Basic-auth password for an external registry mirror. When set with use_registry_mirror, the CNEInstance references the mirror-secret pull secret instead of pulling anonymously.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the CNE-instance phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>cneinstance_tmm_resources</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>TMM resource requests/limits override; rendered as advanced.tmm.resources (#203).</td><td>no</td></tr>
 <tr><td><code>cneinstance_advanced_env</code></td><td><code>map(map(string))</code></td><td><code>{}</code></td><td>Per-component advanced.<code>&lt;component&gt;</code>.env passthrough (#175). See the root variable of the same name.</td><td>no</td></tr>
 <tr><td><code>cneinstance_tmm_replicas</code></td><td><code>number</code></td><td><code>3</code></td><td>Number of f5-tmm data-plane replicas (2.4). Reference: 3.</td><td>no</td></tr>
 <tr><td><code>cneinstance_watch_namespaces</code></td><td><code>list(string)</code></td><td><code>["All"]</code></td><td>Namespaces the CNE controller watches (2.4). Reference: ["All"].</td><td>no</td></tr>
@@ -435,6 +436,7 @@
 <tr><td><code>cneinstance_hugepages_count</code></td><td><code>number</code></td><td><code>2048</code></td><td>Hugepages PER NODE. 2048 x 2M = 4Gi, which is what deploymentSize Small was observed to request.</td><td>no</td></tr>
 <tr><td><code>cneinstance_hugepages_node_role</code></td><td><code>string</code></td><td><code>"worker"</code></td><td>machineconfiguration.openshift.io/role the Tuned profile applies to.</td><td>no</td></tr>
 <tr><td><code>cneinstance_hugepages_profile_name</code></td><td><code>string</code></td><td><code>"bnk-hugepages"</code></td><td>Name of the Tuned profile and CR.</td><td>no</td></tr>
+<tr><td><code>cneinstance_storage_class_name</code></td><td><code>string</code></td><td><code>""</code></td><td>StorageClass for the CNEInstance’s persistent volumes. See the leaf module variable of the same name (#189).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -464,7 +466,6 @@
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-supply-chain"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing the FAR auth key and JWT files</td><td>no</td></tr>
 <tr><td><code>f5_cne_far_auth_file</code></td><td><code>string</code></td><td><code>"f5-far-auth-key.tgz"</code></td><td>FAR auth key filename in the COS bucket (.tgz)</td><td>no</td></tr>
-<tr><td><code>f5_cne_subscription_jwt_file</code></td><td><code>string</code></td><td><code>"subscription.jwt"</code></td><td>Subscription JWT filename in the COS bucket</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Service account the CNE controller Trusted Profile is linked to.</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles for the CNE controller Trusted Profile, scoped to the cluster VPC.</td><td>no</td></tr>
 <tr><td><code>flo_namespace</code></td><td><code>string</code></td><td><code>"f5-bnk"</code></td><td>Namespace for F5 Lifecycle Operator</td><td>no</td></tr>
@@ -480,7 +481,6 @@
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/flo"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the FLO phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
-<tr><td><code>helm_registry_config</code></td><td><code>string</code></td><td><code>""</code></td><td>Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0).</td><td>no</td></tr>
 </tbody>
 </table>
@@ -520,7 +520,6 @@
 <tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the cluster’s worker security group to these CIDRs (the consuming cluster’s subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched.</td><td>no</td></tr>
 <tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart’s POST-RENDERER (<code>roksbnkctl flp postrender</code>). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH for a direct <code>terraform apply</code>. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container.</td><td>no</td></tr>
-<tr><td><code>helm_registry_config</code></td><td><code>string</code></td><td><code>""</code></td><td>Path to the helm registry config file (HELM_REGISTRY_CONFIG). When set, roksbnkctl writes the OCI pull credential inline here and the helm_release resources drop repository_username/password, so the provider reads the auth instead of doing a login-and-store (which fails on Windows credential helpers). Empty = direct terraform apply, provider does its own OCI login.</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -539,7 +538,6 @@
 <tr><td><code>flp_vsi_profile</code></td><td><code>string</code></td><td><code>"bx2-4x16"</code></td><td>VSI instance profile (&gt;= 4 vCPU / 8 GB).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_zone</code></td><td><code>string</code></td><td><code>""</code></td><td>Zone for the VSI (e.g. us-south-1). Empty → <code>&lt;region&gt;</code>-1.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_boot_size_gb</code></td><td><code>number</code></td><td><code>100</code></td><td>Boot volume size in GB (&gt;= 80).</td><td>no</td></tr>
-<tr><td><code>flp_vsi_reach</code></td><td><code>string</code></td><td><code>"private"</code></td><td>How the CWC dials the proxy: private (VSI VPC IP) or floating (public floating IP).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_floating_ip</code></td><td><code>bool</code></td><td><code>true</code></td><td>Attach an operator floating IP to the FLP VSI for remote management — running <code>roksbnkctl flp status</code> and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_management_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach the :80 flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries no secrets).</td><td>no</td></tr>
 <tr><td><code>flp_vsi_licensing_allowed_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway).</td><td>no</td></tr>
@@ -587,7 +585,6 @@
 <tr><td><code>bnk_line</code></td><td><code>string</code></td><td><code>"2.3"</code></td><td>BNK release line driving per-release resource gating (“2.3” or “2.4”).</td><td>no</td></tr>
 <tr><td><code>ibmcloud_api_key</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud API key</td><td><strong>yes</strong></td></tr>
 <tr><td><code>ibmcloud_cluster_region</code></td><td><code>string</code></td><td><em>required</em></td><td>IBM Cloud region the cluster runs in (zone names derive as <code>&lt;region&gt;</code>-1/2/3)</td><td>no</td></tr>
-<tr><td><code>ibmcloud_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud resource group</td><td>no</td></tr>
 <tr><td><code>roks_cluster_name_or_id</code></td><td><code>string</code></td><td><em>required</em></td><td>Existing ROKS cluster name or id the Gateway phase configures</td><td>no</td></tr>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>""</code></td><td>Directory the IBM provider writes the cluster kubeconfig into</td><td>no</td></tr>
 <tr><td><code>create_roks_cluster</code></td><td><code>bool</code></td><td><code>false</code></td><td>Always false for the Gateway phase (it reuses an existing cluster)</td><td>no</td></tr>

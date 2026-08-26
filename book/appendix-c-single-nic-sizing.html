@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ec04703f.js";
+            window.path_to_searchindex_js = "searchindex-d18c55a3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -229,6 +229,211 @@ because per-pod throughput is bounded by TMM thread count rather than by the
 worker node’s NIC — so higher-performance nodes become worth adding in a way they
 are not here. Treat this appendix as describing the single-NIC case only, and do
 not extrapolate it.</p>
+<h2 id="reference-deployments"><a class="header" href="#reference-deployments">Reference deployments</a></h2>
+<p>The figures above are F5’s. This section is ours: one clean deployment per
+sizing, on ROKS, recorded so a reader can tell what has actually been run from
+what has only been reproduced from a guide.</p>
+<p>Every run below is a fresh install onto a fresh cluster, pinned to the manifest
+the BNK 2.4 IBM install guide documents — <strong><code>2.4.0-EA</code></strong>, pulled from
+<code>repo.f5.com</code> — with <code>containerPlatform: IBM</code> and <strong>one namespace</strong> for every
+component.</p>
+<p>One trap worth naming: <strong>BNK 2.4 is Early Access, and the ordinary production
+FAR token cannot see it.</strong> Both keys live in the same production project, so
+this is a GA-versus-non-GA content split rather than a prod-versus-test one:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>FAR key</th><th>can pull</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cne-gar-pull</code> (standard production)</td><td><code>2.3.0</code> only — no 2.4 version resolves</td></tr>
+<tr><td><code>non-ga-prod-pull</code> (non-GA production grant)</td><td><code>2.4.0-EA</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>2.4.0</code>, <code>2.4.0-GA</code> and <code>2.4.1</code> do not resolve with either key, so until 2.4
+goes GA the non-GA production grant is required. The failure mode is
+misleading: the wrong key authenticates happily and then reports
+<code>f5-bigip-k8s-manifest:2.4.0-EA: not found</code>, which reads like a wrong version
+rather than a wrong credential.</p>
+<p>When 2.4 GAs this becomes a two-line change — <code>bnk.manifest_version</code> and the
+key file. Nothing about the configuration shape depends on it. A run counts as verified only if all of the
+following hold at once:</p>
+<ul>
+<li>exactly one <code>f5-*</code> namespace exists, and no <code>f5-utils</code></li>
+<li>the <code>CNEManifest</code> version matches the reference build exactly</li>
+<li>every component CR reports <code>Available=True</code> — <code>CNEInstance</code>, <code>F5Tmm</code>, <code>CSRC</code>,
+<code>Cwc</code>, <code>DSSM</code>, <code>Coremond</code>, <code>Observer</code>, <code>RabbitMQ</code></li>
+<li>CSRC pods are Running and the <code>macvlan-internal</code>
+NetworkAttachmentDefinition exists — CSRC creates it at runtime, so its
+absence is the visible symptom of a wrong <code>containerPlatform</code></li>
+<li>the licence reports <code>Active</code></li>
+<li>no pod anywhere is outside <code>Running</code>/<code>Completed</code></li>
+</ul>
+<p><code>scripts/sizing/sizing-matrix.sh</code> builds and checks one sizing per invocation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Baseline</th><th>Small cluster</th><th>Medium cluster</th><th>Large cluster</th></tr>
+</thead>
+<tbody>
+<tr><td>Worker nodes</td><td>3 (1 per AZ)</td><td>6 (2 per AZ)</td><td>6 (2 per AZ)</td><td>9 (3 per AZ)</td></tr>
+<tr><td>Flavour</td><td><code>bx2.16x64</code></td><td><code>bx2.8x32</code></td><td><code>cx2.16x32</code></td><td><code>cx2.48x96</code></td></tr>
+<tr><td><code>deploymentSize</code></td><td><code>Tiny</code></td><td><code>Tiny</code></td><td><code>Tiny</code></td><td><code>Tiny</code></td></tr>
+<tr><td><code>tmmReplicas</code></td><td>1</td><td>3</td><td>3</td><td>9</td></tr>
+<tr><td>Verified</td><td><strong>yes</strong></td><td><strong>yes</strong></td><td><strong>yes</strong></td><td><strong>yes</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>All four are verified: every component CR reporting <code>Available=True</code>, every TMM
+pod <code>5/5 Running</code>, <code>macvlan-internal</code> present, licence <code>Active</code>, and nothing
+outside <code>Running</code>/<code>Completed</code>. On the Large cluster the nine TMM pods land on
+nine distinct nodes, three per availability zone, which is the anti-affinity and
+topology-spread arrangement F5’s reference configuration specifies.</p>
+<p>Note the third row. <strong><code>deploymentSize</code> is <code>Tiny</code> everywhere</strong> — the column
+headings are <em>cluster</em> sizes, and the thing that changes between them is the
+node flavour and <code>tmmReplicas</code>, not the BNK profile. The “Baseline” column is
+the shape the BNK 2.4 IBM install guide itself describes (a 3-node 16-vCPU
+cluster); the other three are F5’s sizing-guide cluster shapes.</p>
+<h3 id="the-configuration-for-each"><a class="header" href="#the-configuration-for-each">The configuration for each</a></h3>
+<p>Common to all four. <code>manifest_version</code> must be set explicitly — leaving it out
+installs the <strong>2.3</strong> line, and the first symptom is a <code>CNEInstance</code> validation
+error minutes into the apply complaining that <code>deploymentSize: Tiny</code> is
+unsupported, because <code>Tiny</code> does not exist on 2.3.</p>
+<pre><code class="language-yaml">bnk:
+  manifest_version: 2.4.0-EA
+  far_auth_local_file: /path/to/non-ga-prod-pull-key.tgz
+  subscription_jwt_local_file: /path/to/subscription.jwt
+  flo_namespace: f5-bnk
+  flo_utils_namespace: f5-bnk      # same name = one namespace for everything
+  cneinstance_size: Tiny           # every size below; see the section above
+</code></pre>
+<p><code>far_auth_local_file</code> and <code>subscription_jwt_local_file</code> are a pair — the no-COS
+path is gated on <strong>both</strong> being set. With only one, the tool silently falls back
+to the COS supply chain and the GA key, which fails much later with a 403 naming
+a GCP project rather than a config field.</p>
+<p>Then the part that differs. Only two settings change between sizes, plus the
+node flavour:</p>
+<p><strong>Baseline</strong> — 3 nodes, the shape the BNK 2.4 IBM install guide describes:</p>
+<pre><code class="language-yaml">cluster: {workers_per_zone: 1, worker_flavor: bx2.16x64}
+bnk:     {tmm_replicas: 1}
+</code></pre>
+<p><strong>Small cluster</strong> — 6 nodes, ~7.8 Gbit/s L4 ingress:</p>
+<pre><code class="language-yaml">cluster: {workers_per_zone: 2, worker_flavor: bx2.8x32}
+bnk:     {tmm_replicas: 3}
+</code></pre>
+<p><strong>Medium cluster</strong> — 6 nodes, ~10.4 Gbit/s:</p>
+<pre><code class="language-yaml">cluster: {workers_per_zone: 2, worker_flavor: cx2.16x32}
+bnk:     {tmm_replicas: 3}
+</code></pre>
+<p><strong>Large cluster</strong> — 9 nodes, ~31 Gbit/s:</p>
+<pre><code class="language-yaml">cluster: {workers_per_zone: 3, worker_flavor: cx2.48x96}
+bnk:     {tmm_replicas: 9}
+</code></pre>
+<h4 id="as-environment-overrides"><a class="header" href="#as-environment-overrides">As environment overrides</a></h4>
+<p>Every field above has a <code>ROKSBNKCTL_*</code> override, so a blueprint or CI job can
+select a sizing without editing <code>config.yaml</code>. <code>init --non-interactive --override-from-env</code> builds the workspace from these alone:</p>
+<pre><code class="language-sh"># common
+export ROKSBNKCTL_MANIFEST_VERSION=2.4.0-EA
+export ROKSBNKCTL_FAR_AUTH_LOCAL_FILE=/path/to/non-ga-prod-pull-key.tgz
+export ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE=/path/to/subscription.jwt
+export ROKSBNKCTL_FLO_NAMESPACE=f5-bnk
+export ROKSBNKCTL_FLO_UTILS_NAMESPACE=f5-bnk
+export ROKSBNKCTL_CNEINSTANCE_SIZE=Tiny
+
+# per sizing — baseline / small / medium / large
+export ROKSBNKCTL_WORKERS_PER_ZONE=1  ROKSBNKCTL_WORKER_FLAVOR=bx2.16x64 ROKSBNKCTL_TMM_REPLICAS=1
+export ROKSBNKCTL_WORKERS_PER_ZONE=2  ROKSBNKCTL_WORKER_FLAVOR=bx2.8x32  ROKSBNKCTL_TMM_REPLICAS=3
+export ROKSBNKCTL_WORKERS_PER_ZONE=2  ROKSBNKCTL_WORKER_FLAVOR=cx2.16x32 ROKSBNKCTL_TMM_REPLICAS=3
+export ROKSBNKCTL_WORKERS_PER_ZONE=3  ROKSBNKCTL_WORKER_FLAVOR=cx2.48x96 ROKSBNKCTL_TMM_REPLICAS=9
+</code></pre>
+<p><code>ROKSBNKCTL_CNEINSTANCE_SIZE</code> is listed for completeness rather than necessity:
+leaving it unset reaches <code>Tiny</code> on the 2.4 line anyway, and unset is what lets
+the line default apply. Set it when you want the choice recorded explicitly.</p>
+<p>If the cluster shares a transit gateway, <code>ROKSBNKCTL_CLUSTER_VPC_CIDR</code> also
+matters — two VPCs with overlapping prefixes cannot both be routed, and the
+gateway blackholes one silently.</p>
+<h3 id="deploymentsize-stays-tiny-capacity-comes-from-replicas-and-node-size"><a class="header" href="#deploymentsize-stays-tiny-capacity-comes-from-replicas-and-node-size"><code>deploymentSize</code> stays <code>Tiny</code>; capacity comes from replicas and node size</a></h3>
+<p>This is the single most important thing to know about running BNK 2.4 on ROKS,
+and it is easy to get wrong because F5’s sizing guide names its <em>cluster</em> sizes
+Small, Medium and Large — the same words <code>deploymentSize</code> uses.</p>
+<p><strong>They are not the same setting.</strong> The BNK 2.4 IBM install guide uses
+<code>deploymentSize: "Tiny"</code> with <code>tmmReplicas: 3</code>, and that is what every cluster
+size below runs. Capacity comes from <strong>how many TMM pods and how big the nodes
+are</strong>, never from a larger <code>deploymentSize</code> — which is exactly the point this
+appendix already makes about the Large cluster running the Medium profile.</p>
+<p><code>deploymentSize</code> above <code>Tiny</code> cannot run on ROKS at all, and the reason is worth
+recording because the failure is silent. Every size above <code>Tiny</code> requests
+hugepages, and the amount <strong>grows</strong> with the profile. Read from the controller-derived <code>F5Tmm</code> CR on a live 2.4 cluster by
+changing only <code>deploymentSize</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>deploymentSize</code></th><th>TMM cpu</th><th>TMM memory</th><th><code>hugepages-2Mi</code></th></tr>
+</thead>
+<tbody>
+<tr><td><code>Tiny</code></td><td>—</td><td>—</td><td><strong>none</strong></td></tr>
+<tr><td><code>Small</code></td><td>1</td><td>1536Mi</td><td><strong>4 GiB</strong></td></tr>
+<tr><td><code>Medium</code></td><td>4</td><td>2Gi</td><td><strong>8 GiB</strong></td></tr>
+</tbody>
+</table>
+</div>
+<p>The <strong>Large cluster runs the Medium profile</strong>, as the table above this section
+records, so it derives the same 8 GiB and is not a separate case.</p>
+<p>TMM validates hugepages against the 2 MB page cgroup limit when it starts, and
+exits if that limit is zero:</p>
+<pre><code>&lt;get_mem_info&gt;  ERROR: No memory available based on 2MB page cgroup limit
+&lt;init_memory&gt;   ERROR: Could not validate sufficient hugepages
+&lt;main&gt;          ERROR: Failed to create cmdline args
+</code></pre>
+<p>It exits <code>code 0</code>, so this does not look like a crash — the pod reports
+<code>4/5 Running</code> and the Deployment simply never becomes Available.</p>
+<p><strong>A ROKS cluster cannot allocate hugepages.</strong> Six approaches were measured on
+live 4.21 clusters and every one fails:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>approach</th><th>result</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bnk.hugepages</code> (Node Tuning Operator, <code>[bootloader]</code>)</td><td>needs the Machine Config Operator; ROKS has <strong>0 MachineConfigPools</strong></td></tr>
+<tr><td><code>Tuned</code> with <code>[sysctl] vm.nr_hugepages</code></td><td>ROKS <strong>deletes the CR</strong> — created object returned, next read <code>NotFound</code></td></tr>
+<tr><td>privileged pod writing <code>/proc/sys/vm/nr_hugepages</code></td><td>allocates (<code>HugePages_Total: 2048</code>) but kubelet still advertises <code>allocatable: 0</code></td></tr>
+<tr><td><code>advanced.tmm.resources</code> with <code>hugepages-2Mi: 0</code></td><td>TMM schedules, then refuses to start (above)</td></tr>
+<tr><td><code>advanced.tmm.env.TMM_MEM</code></td><td>accepted, but hugepages are still required</td></tr>
+<tr><td><code>ibmcloud ks worker-pool</code></td><td>no kernel-argument or sysctl option exists</td></tr>
+</tbody>
+</table>
+</div>
+<p>Note that <code>bnk.hugepages</code> is therefore a <strong>no-op on ROKS</strong>, even though it is
+what the scheduling failure recommends. Setting it applies a <code>Tuned</code> CR that
+ROKS removes, which surfaces as terraform reporting a provider bug.</p>
+<p>F5’s 2.3.1 sizing guide describes the reference-tested Small profile as
+<em>“TMM: 1 thread, 1 vCPU / 1.5 GiB, hugepages disabled”</em>, and its TMM resource
+table lists CPU and memory only. That configuration cannot be reproduced on the
+2.4 build: Small derives a hugepages request, and TMM will not start without
+one. Whether the 2.3.1 profile still exists in 2.4 is an open question with F5
+(issue #203).</p>
+<p>Until it is answered, treat the Small, Medium and Large rows above as F5’s
+published figures rather than as configurations this tool can stand up on ROKS.
+<code>Tiny</code> is the only verified one, which is consistent with F5’s own reference
+cluster running <code>Tiny</code>.</p>
+<p><code>Tiny</code> is not in F5’s sizing guide — it is the profile the engineering reference
+cluster itself runs, recorded here as the smallest configuration known to work
+end to end, not as a recommendation for production traffic.</p>
+<h3 id="two-things-worth-knowing-before-you-reproduce-these"><a class="header" href="#two-things-worth-knowing-before-you-reproduce-these">Two things worth knowing before you reproduce these</a></h3>
+<p><strong>Set <code>bnk.manifest_version</code> explicitly.</strong> A workspace that leaves it unset
+installs the <strong>2.3</strong> line, and the first sign of it is a <code>CNEInstance</code>
+validation error several minutes into the apply complaining that
+<code>deploymentSize: Tiny</code> is unsupported — because <code>Tiny</code> does not exist on 2.3.
+The message names the size, not the version, which sends you looking in the
+wrong place entirely.</p>
+<p><strong><code>bnk down</code> does not leave a clean cluster.</strong> It returns success while leaving
+the namespace and all of BNK’s CRDs installed. That is harmless when
+reinstalling the same release line, and actively misleading when changing
+manifest versions, because the previous line’s CRD schema stays in force. To
+reinstall from genuinely clean state, delete the BNK namespace and the
+<code>*.k8s.f5.com</code> CRDs after <code>bnk down</code> and before the next <code>bnk up</code>.</p>
 <h2 id="what-this-looks-like-for-a-real-deployment"><a class="header" href="#what-this-looks-like-for-a-real-deployment">What this looks like for a real deployment</a></h2>
 <p>The sizing above assumes you are building the cluster. Most deployments are not
 like that. The common shape is that a platform team <strong>already has</strong> the VPC, the
