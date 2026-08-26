@@ -49,6 +49,12 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Runs on the containerised backend too. The destroy ordering lives in the
   terraform graph, which is identical whichever process runs it.
 
+  A failing API server is no longer read as an empty namespace. Counting every
+  list error as zero objects meant an unreachable cluster reported a successful
+  drain, having verified nothing — the same misreporting this change exists to
+  remove, in the other direction. A deleted CRD is still not waited for, since
+  that errors on list too and waiting would add the timeout to every teardown.
+
 ## v1.55.0 — 2026-08-26
 
 **`roksbnkctl config` writes the configuration you were transcribing by hand.**

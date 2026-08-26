@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -140,6 +142,12 @@ func drainBNKCustomResources(
 	timeout, poll time.Duration,
 	w io.Writer,
 ) (deleted, remaining int) {
+	// ONE deadline for both phases, not one each. The budget is a total: it
+	// exists to stay under the kubernetes provider's own namespace-delete
+	// timeout, so spending it twice would defeat the purpose. A leaf phase that
+	// consumes almost all of it therefore leaves the CNEInstance phase very
+	// little, and the CNEInstance is then reported as not finalized — which is
+	// the honest answer, and the repair path handles it.
 	deadline := time.Now().Add(timeout)
 
 	leaves, roots := splitCNEInstance(gvrs)
@@ -198,7 +206,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 				n++
 				continue
 			}
-			if w != nil && !isNotFound(err) {
+			if w != nil && !apierrors.IsNotFound(err) {
 				fmt.Fprintf(w, "    could not delete %s/%s: %v\n", gvr.Resource, item.GetName(), err)
 			}
 		}
@@ -207,7 +215,8 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 }
 
 // awaitGone polls until no object of the given resources remains in the
-// namespace, or the deadline passes. Returns how many were still present.
+// namespace, or the deadline passes. Returns how many were still unaccounted
+// for — objects still present, plus kinds whose state could not be established.
 //
 // It counts rather than returning a bool so the caller can say how many did not
 // drain — "2 objects did not finalize" is actionable and "the wait timed out" is
@@ -221,7 +230,8 @@ func awaitGone(
 	poll time.Duration,
 ) int {
 	for {
-		left := countIn(ctx, dc, gvrs, ns)
+		present, unknown := countIn(ctx, dc, gvrs, ns)
+		left := present + unknown
 		if left == 0 {
 			return 0
 		}
@@ -236,17 +246,46 @@ func awaitGone(
 	}
 }
 
-// countIn totals the objects of the given resources present in one namespace.
-func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string) int {
-	n := 0
+// countIn totals the objects of the given resources present in one namespace,
+// separating those it could count from those it could not.
+//
+// A LIST ERROR IS NOT ZERO OBJECTS. Counting every failure as "nothing there"
+// meant an unreachable API server read as a successful drain, and the teardown
+// then announced "drained N resources" having verified nothing — the same
+// cries-wolf logging this change exists to remove, in the other direction.
+//
+// But fail-closed is wrong too: a kind whose CRD is already gone also errors on
+// list, and waiting for it would add the full timeout to every teardown. So the
+// two are told apart. NotFound and NoMatch mean the type itself is gone and
+// there is nothing left to wait for; anything else is genuinely unknown and is
+// reported as such rather than as drained.
+func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string) (present, unknown int) {
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
-		if err != nil || list == nil {
+		if err != nil {
+			if typeIsGone(err) {
+				continue
+			}
+			unknown++
 			continue
 		}
-		n += len(list.Items)
+		if list == nil {
+			continue
+		}
+		present += len(list.Items)
 	}
-	return n
+	return present, unknown
+}
+
+// typeIsGone reports whether an error means the RESOURCE TYPE no longer exists,
+// as opposed to the request having failed.
+//
+// Both forms occur: the API server answers NotFound once a CRD is deleted, and
+// the RESTMapper answers NoMatch once discovery has caught up. Either way there
+// is nothing left to wait for.
+func typeIsGone(err error) bool {
+	return apierrors.IsNotFound(err) || meta.IsNoMatchError(err) ||
+		runtime.IsNotRegisteredError(err)
 }
 
 // discoverBNKNamespacedGVRs resolves the namespaced, listable, deletable
@@ -257,10 +296,10 @@ func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersi
 // finalizer-bearing F5 CRs, so a list would sweep three and report success.
 // Both callers share BNKCRDGroups, which is the part that would otherwise drift.
 //
-// Returns whatever resolved on a PARTIAL discovery failure. CRDs are being torn
-// down while this runs, so a group that fails to resolve is expected; giving up
-// on all of them because one was mid-deletion would skip the sweep exactly when
-// it is needed.
+// The client call and the SELECTION are separated on purpose. Selection decides
+// what this code deletes — the only part of the sweep that can destroy something
+// it was never meant to touch — so it is a pure function with its own tests,
+// while this wrapper is the untestable half that merely fetches.
 func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource {
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
@@ -271,10 +310,32 @@ func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource 
 		return nil
 	}
 	lists, err := disc.ServerPreferredNamespacedResources()
+	// Returns whatever resolved on a PARTIAL discovery failure. CRDs are being
+	// torn down while this runs, so a group that fails to resolve is expected;
+	// giving up on all of them because one was mid-deletion would skip the sweep
+	// exactly when it is needed.
 	if lists == nil && err != nil {
 		return nil
 	}
+	return selectBNKResources(lists)
+}
 
+// selectBNKResources picks the resources the drain is allowed to delete.
+//
+// THIS FUNCTION IS THE BLAST RADIUS. Everything else in this file operates on
+// whatever it returns, so a wrong answer here means deleting custom resources
+// that belong to something else that happens to live in the BNK namespace.
+//
+// Three conditions, all required:
+//
+//   - the API group is one of BNKCRDGroups — F5's own, nothing else;
+//   - the resource can be listed, or the drain cannot tell when it is gone;
+//   - the resource can be deleted, or selecting it only produces noise.
+//
+// Verbs are matched exactly. A substring check over the joined verb list accepts
+// "delete" inside "deletecollection" and selects resources the drain cannot
+// actually delete one at a time.
+func selectBNKResources(lists []*metav1.APIResourceList) []schema.GroupVersionResource {
 	groups := make(map[string]bool, len(BNKCRDGroups))
 	for _, g := range BNKCRDGroups {
 		groups[g] = true
@@ -282,6 +343,9 @@ func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource 
 
 	var out []schema.GroupVersionResource
 	for _, rl := range lists {
+		if rl == nil {
+			continue
+		}
 		gv, perr := schema.ParseGroupVersion(rl.GroupVersion)
 		if perr != nil || !groups[gv.Group] {
 			continue
@@ -316,14 +380,6 @@ func hasVerb(verbs []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// isNotFound reports whether an error is an already-deleted object.
-//
-// Matched on the API machinery's reason rather than the message so a translated
-// or reworded server string still counts.
-func isNotFound(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 // dedupeNonEmpty returns the distinct non-empty values, in the order given.

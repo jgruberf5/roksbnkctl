@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -412,3 +413,134 @@ func callsInFunc(t *testing.T, file, name string) []string {
 // The drain is written against dynamic.Interface so the fake can stand in for a
 // real API server; this pins that the seam stays an interface.
 var _ dynamic.Interface = (*dynfake.FakeDynamicClient)(nil)
+
+// ── selection: the blast radius ──────────────────────────────────────────────
+//
+// selectBNKResources decides what the drain deletes. Every other test here hands
+// drainBNKCustomResources a hand-built GVR list, so without these the one part
+// that can destroy something it was never meant to touch is the one part with no
+// coverage.
+
+func apiList(gv string, res ...metav1.APIResource) *metav1.APIResourceList {
+	return &metav1.APIResourceList{GroupVersion: gv, APIResources: res}
+}
+
+func listable(name string) metav1.APIResource {
+	return metav1.APIResource{Name: name, Namespaced: true, Verbs: []string{"get", "list", "delete"}}
+}
+
+// The whole point of the group filter: somebody else's CRs in the BNK namespace
+// are not F5's to delete.
+func TestSelectionNeverReachesOutsideTheF5APIGroups(t *testing.T) {
+	got := selectBNKResources([]*metav1.APIResourceList{
+		apiList("k8s.f5.com/v1", listable("cneinstances")),
+		apiList("cert-manager.io/v1", listable("certificates"), listable("clusterissuers")),
+		apiList("velero.io/v1", listable("backups")),
+		apiList("apps/v1", listable("deployments")),
+		apiList("k8s.f5net.com/v1", listable("f5spkvlans")),
+	})
+	for _, g := range got {
+		switch g.Group {
+		case "k8s.f5.com", "k8s.f5net.com":
+		default:
+			t.Errorf("selected %s/%s — outside BNKCRDGroups, so the drain would delete "+
+				"a resource belonging to something else that happens to share the namespace", g.Group, g.Resource)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("selected %d resource(s), want the 2 F5 ones: %v", len(got), got)
+	}
+}
+
+// Every group in BNKCRDGroups must actually be selectable. A typo in that list
+// is silent: the sweep just quietly skips a whole family of CRs.
+func TestEveryDeclaredBNKGroupIsSelected(t *testing.T) {
+	var lists []*metav1.APIResourceList
+	for _, g := range BNKCRDGroups {
+		lists = append(lists, apiList(g+"/v1", listable("things")))
+	}
+	got := selectBNKResources(lists)
+	if len(got) != len(BNKCRDGroups) {
+		t.Fatalf("selected %d of %d declared groups: %v", len(got), len(BNKCRDGroups), got)
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		seen[g.Group] = true
+	}
+	for _, want := range BNKCRDGroups {
+		if !seen[want] {
+			t.Errorf("group %q is in BNKCRDGroups but was never selected", want)
+		}
+	}
+}
+
+// A resource the drain cannot list is one it can never tell has drained; a
+// resource it cannot delete is noise. Both must be skipped.
+func TestSelectionSkipsResourcesItCannotListOrDelete(t *testing.T) {
+	got := selectBNKResources([]*metav1.APIResourceList{
+		apiList("k8s.f5.com/v1",
+			metav1.APIResource{Name: "readonlys", Verbs: []string{"get", "list"}},
+			metav1.APIResource{Name: "writeonlys", Verbs: []string{"create", "delete"}},
+			metav1.APIResource{Name: "collectiononlys", Verbs: []string{"list", "deletecollection"}},
+			listable("cneinstances"),
+		),
+	})
+	if len(got) != 1 || got[0].Resource != "cneinstances" {
+		t.Errorf("selected %v, want only cneinstances — the others lack list or delete", got)
+	}
+}
+
+// Discovery is running while CRDs are being deleted, so malformed and nil
+// entries are ordinary. Panicking there would break the teardown it is fixing.
+func TestSelectionSurvivesMalformedDiscoveryOutput(t *testing.T) {
+	got := selectBNKResources([]*metav1.APIResourceList{
+		nil,
+		{GroupVersion: "!!not a group version!!", APIResources: []metav1.APIResource{listable("x")}},
+		apiList("k8s.f5.com/v1", listable("cneinstances")),
+	})
+	if len(got) != 1 || got[0].Resource != "cneinstances" {
+		t.Errorf("got %v, want the one well-formed F5 resource", got)
+	}
+}
+
+// ── counting: a failing API server is not an empty namespace ─────────────────
+
+// If a list error counts as zero objects, an unreachable API server reads as a
+// successful drain and the teardown announces "drained N" having verified
+// nothing — the cries-wolf logging this change exists to remove, inverted.
+func TestAFailingListIsNotCountedAsDrained(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("etcdserver: request timed out")
+	})
+	present, unknown := countIn(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk")
+	if unknown == 0 {
+		t.Errorf("a failing list produced present=%d unknown=%d; it must not read as drained", present, unknown)
+	}
+}
+
+// The opposite error must NOT be treated as unknown. A kind whose CRD is already
+// gone errors on list too, and waiting for it would add the full timeout to
+// every teardown — trading a 5-minute stall for a 4-minute one.
+func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
+	dc := newFake()
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "fic.f5.com", Resource: "ipams"}, "")
+	})
+	present, unknown := countIn(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk")
+	if present != 0 || unknown != 0 {
+		t.Errorf("present=%d unknown=%d; a deleted CRD has nothing left to wait for", present, unknown)
+	}
+
+	start := time.Now()
+	remaining := awaitGone(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Now().Add(2*time.Second), 50*time.Millisecond)
+	if remaining != 0 {
+		t.Errorf("remaining = %d for an absent CRD", remaining)
+	}
+	if time.Since(start) > time.Second {
+		t.Errorf("waited %s for a CRD that no longer exists", time.Since(start))
+	}
+}
