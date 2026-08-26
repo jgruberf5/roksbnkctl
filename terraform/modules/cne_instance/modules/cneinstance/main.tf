@@ -182,17 +182,15 @@ locals {
   # It also avoids asserting that an empty GTM_URL means "off". If a controller
   # build does read that name, an empty value may select a GSLB path with a blank
   # endpoint rather than no path at all.
-  cnecontroller_gtm_env = var.cneinstance_gtm_url == "" ? [] : [
-    { name = "GSLB_GTM_URL", value = var.cneinstance_gtm_url },
-    { name = "GSLB_GTM_USERNAME", value = var.cneinstance_gtm_username },
-    { name = "GSLB_GTM_PASSWORD", value = var.cneinstance_gtm_password },
-    # Emitted under both prefixes for the same reason CLOUD_VPC sits beside
-    # VPC_NAME: the real names are F5's contract from the install guide.
-    # VERIFY against BNK 2.3 and drop the pair that is not real.
-    { name = "GTM_URL", value = var.cneinstance_gtm_url },
-    { name = "GTM_USERNAME", value = var.cneinstance_gtm_username },
-    { name = "GTM_PASSWORD", value = var.cneinstance_gtm_password },
-  ]
+  # The GTM CONNECTION env (GSLB_GTM_URL/USERNAME/PASSWORD and the bare GTM_*
+  # pair) was REMOVED in #227. The comment that stood here said "VERIFY against
+  # BNK 2.3 and drop the pair that is not real"; the answer is that NEITHER pair
+  # is real. The f5ingress binary contains zero occurrences of all six names on
+  # both lines -- 2.3 v14.59.1-0.0.70 and 2.4 v14.91.12-0.1.66 -- while
+  # GSLB_DATACENTER_NAME, CLOUD_PROVIDER and (2.4 only) USE_GATEWAY_SETTINGS are
+  # present exactly where expected.
+  #
+  # GSLB_DATACENTER_NAME is emitted below and is real.
 
   # ── advanced.<component>.env ────────────────────────────────────────────────
   #
@@ -268,12 +266,7 @@ locals {
           value = var.cneinstance_ibm_trusted_profile_id
         }
       ],
-      # 2.3 ONLY. On 2.4 the controller reads Infra + GatewaySettings and ignores
-      # the ConfigMap entirely; F5's approved reference carries neither this env var
-      # nor the ConfigMap. Emitting both formats at once is the device-IP conflict
-      # the 2.4 guide warns about (#172), and it leaves F5Tmm at Reconciled=False so
-      # the internal macvlan NAD is never created (#187).
-    local.cnecontroller_gtm_env)
+    )
     tmm = [
       {
         name  = "TMM_CALICO_ROUTER"

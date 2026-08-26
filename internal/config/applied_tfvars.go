@@ -196,13 +196,15 @@ var redactedVarNames = map[string]struct{}{
 	// that is not listed here is a secret that ends up in a repository.
 	//
 	// bigip_password and registry_mirror_password predate this list and were
-	// missed; cneinstance_gtm_password arrived with the GTM work and would have
-	// been missed the same way. Adding a rendered credential to vars.go means
-	// adding it here — the comment above promised a one-line change, and three
-	// releases went by without anyone making it.
+	// missed. Adding a rendered credential to vars.go means adding it here — the
+	// comment above promised a one-line change, and three releases went by
+	// without anyone making it.
+	//
+	// cneinstance_gtm_password was here until #227 removed the tfvar entirely;
+	// the entry goes with it rather than lingering as a redaction rule for
+	// something nothing renders.
 	"bigip_password":           {},
 	"registry_mirror_password": {},
-	"cneinstance_gtm_password": {},
 }
 
 // tfvarsAssignmentRE matches one HCL-tfvars assignment per line. The

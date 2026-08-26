@@ -86,7 +86,6 @@ The variables that matter for day-to-day BNK trial work, ordered by likely-to-to
 | `testing_create_tgw_jumphost` | `true` | Create the testing jumphost in a client VPC over Transit Gateway. |
 | `testing_ssh_key_name` | `""` (must set) | Existing IBM Cloud SSH key name for jumphost provisioning. |
 | `flo_trusted_profile_sa_name` / `flo_trusted_profile_roles` | the CNE controller's IBM Cloud identity — modelled as `bnk.trusted_profile.*` |
-| `cneinstance_gtm_url` / `_username` / `_password` | the BIG-IP DNS the GSLB datacenter registers with — modelled as `bnk.gtm.*` |
 | `cneinstance_vlan_prefixlen_external` / `_internal` | per-VLAN self-IP masks — modelled as `bnk.network.vlan_prefixlen_{external,internal}` |
 | `cneinstance_gslb_datacenter_name` | `""` | Set when wiring BNK into an F5 BIG-IP GSLB datacenter. |
 | `cneinstance_network_zones` | `[]` (install-guide defaults) | Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors `config.yaml`'s `bnk.network.zones`. Supply all three zones or none. |

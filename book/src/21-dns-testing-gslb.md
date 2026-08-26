@@ -13,11 +13,14 @@ The flag surface, the JSON output, and the multi-vantage workflow on this page a
 
 
 > **Pointing the deployment at a BIG-IP DNS.** This chapter covers *testing* GSLB
-> behaviour. The deployment side is two settings: `bnk.gslb_datacenter_name` names
-> the datacenter, and `bnk.gtm.{url,username,password_b64}` is the BIG-IP DNS it
-> registers **with**. Setting the name alone leaves a label pointing at nothing.
-> See [Chapter 28](./28-configuration-reference.md) — env equivalents are
-> `ROKSBNKCTL_GTM_URL` / `_USERNAME` / `_PASSWORD` (raw password; stored base64).
+> behaviour. The deployment side is one setting: `bnk.gslb_datacenter_name`, which
+> names the datacenter the CNEInstance registers as.
+>
+> There was also a `bnk.gtm.{url,username,password_b64}` block for the BIG-IP DNS
+> connection. It was **removed in #227**: the environment variables it produced
+> appear nowhere in the f5ingress controller binary on either BNK line, so it
+> configured nothing. The GTM side of the relationship is configured on the GTM,
+> not from here.
 
 ## Three vantages, one comparison
 

@@ -211,9 +211,6 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 | `ROKSBNKCTL_VLAN_PREFIXLEN` | `bnk.network.vlan_prefixlen` | TMM self-IP mask. **Independent of the zone CIDRs and never derived from them** — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are **silently ignored** and the terraform default stands. |
 | `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL` | `bnk.network.vlan_prefixlen_external` | Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range. |
 | `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL` | `bnk.network.vlan_prefixlen_internal` | Same, internal VLAN. The two need not match. |
-| `ROKSBNKCTL_GTM_URL` | `bnk.gtm.url` | BIG-IP DNS / GTM the GSLB datacenter registers **with**. Without it, `gslb_datacenter_name` is a label pointing at nothing. |
-| `ROKSBNKCTL_GTM_USERNAME` | `bnk.gtm.username` | GTM user. |
-| `ROKSBNKCTL_GTM_PASSWORD` | `bnk.gtm.password_b64` | GTM password — supplied **raw**, stored base64 (like `IBMCLOUD_API_KEY` and `ROKSBNKCTL_BIGIP_PASSWORD`). |
 | `ROKSBNKCTL_GENERIC_CA_B64` | `registry.generic_ca_b64` | Mirror CA, **verbatim** — already base64, not re-encoded. |
 | `ROKSBNKCTL_GENERIC_CA_SHA256` | `registry.generic_ca_sha256` | The out-of-band CA pin. |
 | `ROKSBNKCTL_REACHABILITY_RETRY_SECONDS` | `bnk.preflight.reachability_retry_seconds` | Per-target retry window before the verdict is believed. |
