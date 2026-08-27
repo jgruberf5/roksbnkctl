@@ -554,7 +554,7 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 	// helper alive is testing code no teardown runs.
 	start := time.Now()
 	deleted, remaining := drainPhase(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		[]schema.GroupVersionResource{gvrIPAM}, []schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
 		time.Now().Add(2*time.Second), 50*time.Millisecond, time.Second, nil, nil)
 	if deleted != 0 || remaining != 0 {
 		t.Errorf("deleted=%d remaining=%d for an absent CRD", deleted, remaining)
@@ -1050,8 +1050,8 @@ func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T
 	called := 0
 	neutralise := func(context.Context) bool { called++; return false }
 
-	p := deleteAllIn(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", nil, map[string]bool{}, neutralise)
+	gvrs := []schema.GroupVersionResource{gvrIPAM}
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", nil, map[string]bool{}, neutralise)
 
 	if called != 1 {
 		t.Fatalf("neutralise called %d time(s); want 1 — the refusal should have triggered it", called)
@@ -1065,5 +1065,97 @@ func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T
 	if p.accepted != 1 || p.refused != 0 {
 		t.Errorf("accepted=%d refused=%d, want 1/0 — the retry succeeded, so the pass made progress "+
 			"and must not count toward the give-up clock", p.accepted, p.refused)
+	}
+}
+
+// THE REMAINING HALF OF #241, found by a live teardown after #244/#245/#261.
+//
+// Four of BNK 2.4's seven namespaced CRs are owned by the CNEInstance -- verified
+// on a real 2.4.0-EA install:
+//
+//	CNEController  ownedBy CNEInstance/f5-bnk-f5-cne-controller
+//	F5Tmm          ownedBy CNEInstance/f5-bnk-f5-cne-controller
+//	Afm            ownedBy CNEInstance/f5-bnk-f5-cne-controller
+//	Downloader     ownedBy CNEInstance/f5-bnk-f5-cne-controller
+//
+// The drain deleted them anyway, while the CNEInstance that declares them still
+// existed. That fights the operator: the CNEInstance IS the statement that those
+// objects should exist, so the controller reconciles them back or their uninstall
+// finalizers wait for a teardown nobody has asked for. They never finalized inside
+// the 4m budget, and the repair path cleared their finalizers by hand on every
+// single teardown.
+//
+// None of the earlier fixes could have helped, and the reason is worth stating:
+// the webhook only guards k8s.f5net.com, while all seven of these are k8s.f5.com.
+// The webhook never touched them.
+func TestOwnedChildrenAreLeftToTheirOwner(t *testing.T) {
+	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
+	child.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "k8s.f5.com/v1",
+		Kind:       "CNEInstance",
+		Name:       "f5-bnk-f5-cne-controller",
+	}})
+	dc := newFake(child, cr(gvrCNEInstance, "CNEInstance", "f5-bnk", "f5-bnk-f5-cne-controller"))
+
+	var mu sync.Mutex
+	var deletedNames []string
+	dc.PrependReactor("delete", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		deletedNames = append(deletedNames, a.(k8stesting.DeleteAction).GetName())
+		mu.Unlock()
+		return false, nil, nil
+	})
+
+	var buf bytes.Buffer
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
+
+	mu.Lock()
+	got := append([]string(nil), deletedNames...)
+	mu.Unlock()
+
+	for _, n := range got {
+		if n == "owned-child" {
+			t.Errorf("the drain deleted owned-child, which is owned by a CNEInstance this same "+
+				"drain removes.\nDeleting a child while its owner still exists fights the "+
+				"controller: the owner is the declaration that the child should exist, so it is "+
+				"reconciled back or its finalizer waits forever. Deletions attempted: %v", got)
+		}
+	}
+}
+
+// An object owned by something the drain is NOT deleting must still be deleted --
+// otherwise the skip becomes a way to leave objects behind forever.
+func TestAnObjectOwnedBySomethingElseIsStillDeleted(t *testing.T) {
+	orphanish := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-elsewhere")
+	orphanish.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       "something-we-do-not-touch",
+	}})
+	dc := newFake(orphanish)
+
+	var mu sync.Mutex
+	deletes := 0
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		deletes++
+		mu.Unlock()
+		return false, nil, nil
+	})
+
+	var buf bytes.Buffer
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
+
+	mu.Lock()
+	n := deletes
+	mu.Unlock()
+	if n == 0 {
+		t.Error("an object owned by a Deployment the drain never touches was skipped. " +
+			"The skip must only apply when the OWNER is also being deleted, or objects are " +
+			"left behind on the strength of an ownerReference nobody is acting on.")
 	}
 }

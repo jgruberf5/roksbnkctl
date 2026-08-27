@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
@@ -182,7 +183,7 @@ func drainBNKCustomResources(
 		if len(phase) == 0 {
 			continue
 		}
-		d, left := drainPhase(ctx, dc, phase, ns, deadline, poll, refusalGrace, w, neutralise)
+		d, left := drainPhase(ctx, dc, phase, gvrs, ns, deadline, poll, refusalGrace, w, neutralise)
 		deleted += d
 		if left > 0 {
 			// The leaf phase did not drain, so the CNEInstance is deliberately
@@ -219,7 +220,7 @@ func drainBNKCustomResources(
 func drainPhase(
 	ctx context.Context,
 	dc dynamic.Interface,
-	phase []schema.GroupVersionResource,
+	phase, allGVRs []schema.GroupVersionResource,
 	ns string,
 	deadline time.Time,
 	poll, refusalGrace time.Duration,
@@ -233,7 +234,7 @@ func drainPhase(
 	logged := map[string]bool{}
 
 	for {
-		p := deleteAllIn(ctx, dc, phase, ns, w, logged, neutralise)
+		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, neutralise)
 		deleted += p.accepted
 
 		if p.present == 0 && p.unknown == 0 {
@@ -315,6 +316,7 @@ type deletePass struct {
 	refused  int // delete calls that came back with a real error
 	marked   int // objects already carrying a deletionTimestamp
 	unknown  int // kinds whose contents could not be established this pass
+	owned    int // objects left to their owner's garbage collection
 }
 
 // deleteAllIn issues a delete for every object of every resource in one
@@ -332,7 +334,7 @@ type deletePass struct {
 // existing test uses.
 type neutraliseFunc func(ctx context.Context) bool
 
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer, logged map[string]bool, neutralise neutraliseFunc) deletePass {
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged map[string]bool, neutralise neutraliseFunc) deletePass {
 	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
@@ -355,6 +357,34 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 		p.present += len(list.Items)
 		for i := range list.Items {
 			item := list.Items[i]
+
+			// DO NOT DELETE WHAT AN OWNER WILL DELETE (#241).
+			//
+			// Four of BNK 2.4's seven namespaced CRs are owned by the CNEInstance:
+			//
+			//   CNEController  ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   F5Tmm          ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   Afm            ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   Downloader     ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//
+			// Deleting a child while its owner still exists fights the operator.
+			// The CNEInstance IS the declaration that those objects should exist,
+			// so the controller reconciles them back or their uninstall finalizers
+			// sit waiting for a teardown nobody has asked for -- which is why they
+			// never finalized inside the 4m budget and had to have their
+			// finalizers cleared by the repair path on every teardown.
+			//
+			// The 2.4 guide never asks for them individually. Its order is
+			// use-case CRs, GatewaySettings, Infra, License, VERIFY IPAM gone,
+			// then CNEInstance -- and the children go with the CNEInstance, by
+			// ownership. #217's leaves-first insight was right about the objects
+			// the guide names; it was applied to every F5 CR in the namespace,
+			// which swept in the ones ownership already handles.
+			if ownedByKindIn(item, allGVRs) {
+				p.owned++
+				continue
+			}
+
 			if item.GetDeletionTimestamp() != nil {
 				// Already marked: the API server took the delete on an earlier
 				// pass and a finalizer is holding it. Counting it as accepted
@@ -587,4 +617,36 @@ func webhookRefusal(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "failed calling webhook") ||
 		(strings.Contains(msg, "webhook") && strings.Contains(msg, "no endpoints available"))
+}
+
+// ownedByKindIn reports whether item has an ownerReference to a KIND this drain is
+// also deleting, ANYWHERE in the run rather than in the current phase.
+//
+// That distinction is the whole thing: splitCNEInstance puts cneinstances in the
+// ROOT phase, so a leaf-phase check against its own phase's GVRs cannot see the
+// CNEInstance and every owned child is deleted exactly as before. The first
+// version of this did that and the test caught it. Such an object does not need deleting: removing the owner removes
+// it, and deleting it first fights the controller that owns it.
+//
+// Matched on Kind rather than on the exact owner object, because the drain works
+// through GVRs and a resource name ("cneinstances") is not a Kind ("CNEInstance").
+// Deriving the Kind from the resource would need a RESTMapper the drain does not
+// otherwise carry; comparing case-insensitively against the resource name with the
+// plural dropped is enough to tell CNEInstance from Afm, and a miss here is safe
+// in the conservative direction -- the object is deleted as before.
+func ownedByKindIn(item unstructured.Unstructured, gvrs []schema.GroupVersionResource) bool {
+	owners := item.GetOwnerReferences()
+	if len(owners) == 0 {
+		return false
+	}
+	for _, o := range owners {
+		k := strings.ToLower(o.Kind)
+		for _, gvr := range gvrs {
+			r := strings.ToLower(gvr.Resource)
+			if r == k+"s" || r == k+"es" || r == k {
+				return true
+			}
+		}
+	}
+	return false
 }
