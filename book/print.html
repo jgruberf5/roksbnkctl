@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e48676bd.js";
+            window.path_to_searchindex_js = "searchindex-c585b643.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -10040,6 +10040,64 @@ roksbnkctl logs flo
 <h3 id="symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes"><a class="header" href="#symptom-terraform-destroy-leaves-orphan-ibm-cloud-resources-lbs-security-groups-vpes">Symptom: <code>terraform destroy</code> leaves orphan IBM Cloud resources (LBs, security groups, VPEs)</a></h3>
 <p><strong>Root cause</strong>: ROKS occasionally leaves dangling cluster-owned resources after the cluster itself is destroyed — the destroy returns success but the IBM Cloud account still shows a load balancer or a Virtual Private Endpoint Gateway tagged with the deleted cluster’s ID.</p>
 <p><strong>Fix</strong>: run <a href="#roksbnkctl-cleanup--recovering-from-a-failed-down"><code>roksbnkctl cleanup</code></a>. It sweeps the account for every resource named after the workspace prefix (<code>&lt;prefix&gt;-*</code>) — VPC instances/subnets/security-groups/floating-IPs/public-gateways/VPCs, the Transit Gateway, registry COS, the cluster, and the BNK trusted profile — and deletes them in dependency order. Preview first with <code>roksbnkctl cleanup --dry-run</code>; add <code>--all-regions</code> if resources landed in a region not recorded in <code>config.yaml</code>. (For one-off resource types not covered by the prefix sweep, <code>roksbnkctl ibmcloud is load-balancers | grep &lt;cluster-name&gt;</code> + <code>ibmcloud is load-balancer-delete &lt;id&gt;</code> still works as a manual fallback.)</p>
+<h2 id="teardown-1"><a class="header" href="#teardown-1">Teardown</a></h2>
+<h3 id="bnk-down-sits-for-four-minutes-then-the-namespace-hangs-in-terminating"><a class="header" href="#bnk-down-sits-for-four-minutes-then-the-namespace-hangs-in-terminating"><code>bnk down</code> sits for four minutes, then the namespace hangs in <code>Terminating</code></a></h3>
+<pre><code>⚠ 7 BNK custom resource(s) in f5-bnk did not finalize within 4m0s.
+⚠ namespace "f5-bnk" was stuck Terminating; cleared F5 finalizers on 2 object(s).
+Error: context deadline exceeded
+</code></pre>
+<p>Fixed in v1.59.0. If you see this, you are on v1.58.0 or earlier.</p>
+<p>The teardown drains BNK’s custom resources before destroying the namespace, so
+that the F5 Lifecycle Operator is still running to finalize them — a finalizer
+that outlives its controller blocks the namespace forever. Three things made that
+drain unable to finish:</p>
+<ul>
+<li><strong>It deleted the components FLO manages.</strong> <code>cnecontrollers</code>, <code>f5tmms</code>, <code>dssms</code>,
+<code>afms</code>, <code>downloaders</code> and <code>cnemanifests</code> are declared by the <code>CNEInstance</code>, and
+FLO recreates any of them within about five seconds for as long as the
+<code>CNEInstance</code> exists. Deleting the <code>CNEInstance</code> <em>is</em> the uninstall; the
+components go with it.</li>
+<li><strong>Two product defaults cannot be drained at all.</strong>
+<code>f5-big-tcp-settings/sys-default-tcp</code> is refused by BNK’s own admission webhook
+(<code>Default TCP parameters CR cannot be deleted!</code>) and
+<code>f5-big-dns-caches/security-fqdn-dns-resolver</code> is recreated on sight. Neither
+carries a finalizer, so the namespace delete removes them; waiting for them
+achieves nothing.</li>
+<li><strong><code>f5validate-&lt;ns&gt;</code> blocks its own removal.</strong> It has <code>failurePolicy: Fail</code> and
+is served from the namespace being destroyed, so once the controller stops
+answering the API server refuses every <code>DELETE</code> of a <code>k8s.f5net.com</code> object.
+Removing it does not hold — FLO restores it in under a second.</li>
+</ul>
+<p>If you are stuck on an older version, the manual escape is to delete the
+<code>CNEInstance</code> and let FLO remove the rest, rather than deleting the components
+individually:</p>
+<pre><code class="language-bash">kubectl -n f5-bnk delete cneinstance --all
+kubectl get validatingwebhookconfiguration | grep f5validate   # delete if the namespace will not terminate
+</code></pre>
+<h3 id="the-teardown-says-a-custom-resource-did-not-finalize"><a class="header" href="#the-teardown-says-a-custom-resource-did-not-finalize">The teardown says a custom resource “did not finalize”</a></h3>
+<p>The message names the object. Two cases, and they need opposite responses:</p>
+<ul>
+<li><strong><code>cneinstances/...</code></strong> — the <code>CNEInstance</code> finalizer tears down the whole
+product, so this is legitimately slow work rather than a stall. Let it run.</li>
+<li><strong>anything else</strong> — check whether it is being recreated:
+<code>kubectl -n f5-bnk get &lt;kind&gt; &lt;name&gt; -o jsonpath='{.metadata.uid}'</code> before and
+after a delete. A <strong>new UID</strong> means a controller replaced it, and no amount of
+waiting will remove it while its controller is running.</li>
+</ul>
+<h3 id="cluster-scoped-objects-remain-after-a-successful-bnk-down"><a class="header" href="#cluster-scoped-objects-remain-after-a-successful-bnk-down">Cluster-scoped objects remain after a successful <code>bnk down</code></a></h3>
+<p>Expected. A BNK 2.4 install leaves 95 <code>CustomResourceDefinition</code>s, 10
+<code>APIService</code>s and a <code>ValidatingAdmissionPolicy</code> behind, none of which a namespace
+delete touches. They are shared with any other BNK install on the cluster, so
+removing them is a deliberate operator decision rather than a side effect of one
+workspace’s teardown. Reinstalling over them works — verified across consecutive
+install/uninstall cycles at the same manifest version.</p>
+<p><code>scripts/testing/cluster-residue-check.sh</code> reports what is left, and excludes
+cert-manager: it is shared infrastructure, and removing its CRDs would delete
+every <code>Certificate</code> and <code>Issuer</code> on the cluster including ones BNK never created.</p>
+<p>What must <strong>not</strong> remain is a <code>ValidatingWebhookConfiguration</code> served from the BNK
+namespace. It is named for one namespace and points at a Service that no longer
+exists, and because it matches by <code>namespaceSelector</code>, recreating a namespace of
+the same name re-arms a webhook whose backend will never answer.</p>
 <h2 id="workspaces-1"><a class="header" href="#workspaces-1">Workspaces</a></h2>
 <h3 id="symptom-after-roksbnkctl-ws-delete-name-which-workspace-is-current"><a class="header" href="#symptom-after-roksbnkctl-ws-delete-name-which-workspace-is-current">Symptom: after <code>roksbnkctl ws delete &lt;name&gt;</code>, which workspace is current?</a></h3>
 <p><strong>Behaviour (since <code>v1.9.0</code>)</strong>: you can delete the current workspace directly — <code>ws delete</code> moves the <code>current_workspace</code> pointer to another existing workspace (alphabetically first), or clears it when you delete the last one. There’s no “switch first” requirement and no phantom <code>default</code> fallback.</p>
@@ -12647,7 +12705,7 @@ value is meaningful. It does not mean you must type it into your <code>config.ya
 default is declared — either the zero value applies, or the default is computed at
 run time and belongs in the prose rather than a table cell.</p>
 <h2 id="workspace-1"><a class="header" href="#workspace-1"><code>Workspace</code></a></h2>
-<p>Workspace is ~/.roksbnkctl/<name>/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no <code>api_key</code> field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.</name></p>
+<p>Workspace is ~/.roksbnkctl/<code>&lt;name&gt;</code>/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no <code>api_key</code> field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -12763,7 +12821,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>hugepages</code></td><td><code>*HugepagesCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator.</td></tr>
 <tr><td><code>tcp_settings</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {“congestionControl”: “bbr”, “delayedAcks”: “true”} — the key is the CR’s own spec field.</td></tr>
 <tr><td><code>tcp_settings_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>sys-default-tcp</code></td><td>no</td><td>TCPSettingsName is the F5BigTcpSetting to write.</td></tr>
-<tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<component>.env[] lists (#175).</component></td></tr>
+<tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<code>&lt;component&gt;</code>.env[] lists (#175).</td></tr>
 <tr><td><code>tmm_resources</code></td><td><code>map[string]map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TMMResources overrides the TMM pod’s resource requests/limits, rendered as the CNEInstance’s advanced.tmm.resources (#203).</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name).</td></tr>
 <tr><td><code>cert_manager</code></td><td><code>*BNKCertManagerCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CertManager overrides cert-manager’s namespace + chart version.</td></tr>
@@ -12843,8 +12901,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>ssh_key</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman pod, Vault, logs).</td></tr>
 <tr><td><code>floating_ip</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FloatingIP attaches an operator floating IP to the FLP VSI for remote management — running <code>roksbnkctl flp status</code> and reaching the :80 web UI + the :8443 proxy from a machine OUTSIDE the VPC.</td></tr>
 <tr><td><code>status_image</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusImage, when set, runs the flp-status web UI as a container in the FLP pod (mobile-friendly status page + /api/status + live logs on :80, no auth — a read-only private status endpoint).</td></tr>
-<tr><td><code>status_registry_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<host>/ca.crt before the pod comes up.</host></td></tr>
-<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryCAB64 is that registry’s CA, base64-encoded, written to /etc/containers/certs.d/<host>/ca.crt on the VSI.</host></td></tr>
+<tr><td><code>status_registry_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<code>&lt;host&gt;</code>/ca.crt before the pod comes up.</td></tr>
+<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryCAB64 is that registry’s CA, base64-encoded, written to /etc/containers/certs.d/<code>&lt;host&gt;</code>/ca.crt on the VSI.</td></tr>
 <tr><td><code>forward_proxy</code></td><td><code>*BNKFLPForwardProxyCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ForwardProxy optionally routes the VSI’s egress to F5 licensing through an HTTP forward proxy (air-gapped/egress-controlled networks).</td></tr>
 </tbody>
 </table>
@@ -12986,14 +13044,14 @@ run time and belongs in the prose rather than a table cell.</p>
 </table>
 </div>
 <h2 id="dnscfg"><a class="header" href="#dnscfg"><code>DNSCfg</code></a></h2>
-<p>DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §“DNS probe (GSLB-aware)” §“Server resolution”). The map’s keys are the names users pass to <code>--server &lt;name&gt;</code> and the values are concrete “<ip>[:<port>]” strings the miekg/dns client dials. DefaultTarget is used when –target isn’t passed on the command line.  Example:  test: dns: resolvers: google:     “8.8.8.8:53” cloudflare: “1.1.1.1:53” gslb-vip:   “169.45.91.5:53” default_target: “www.example.com”</port></ip></p>
+<p>DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §“DNS probe (GSLB-aware)” §“Server resolution”). The map’s keys are the names users pass to <code>--server &lt;name&gt;</code> and the values are concrete “<code>&lt;ip&gt;</code>[:<code>&lt;port&gt;</code>]” strings the miekg/dns client dials. DefaultTarget is used when –target isn’t passed on the command line.  Example:  test: dns: resolvers: google:     “8.8.8.8:53” cloudflare: “1.1.1.1:53” gslb-vip:   “169.45.91.5:53” default_target: “www.example.com”</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Resolvers names the DNS servers to query, as name → “<ip>[:<port>]”.</port></ip></td></tr>
+<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Resolvers names the DNS servers to query, as name → “<code>&lt;ip&gt;</code>[:<code>&lt;port&gt;</code>]”.</td></tr>
 <tr><td><code>default_target</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>DefaultTarget is the resolver queried when a probe names none.</td></tr>
 </tbody>
 </table>
@@ -13006,7 +13064,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>backend</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Backend is the execution-backend spec: “local” | “docker” | “k8s” | “ssh:<target>”.</target></td></tr>
+<tr><td><code>backend</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Backend is the execution-backend spec: “local” | “docker” | “k8s” | “ssh:<code>&lt;target&gt;</code>”.</td></tr>
 </tbody>
 </table>
 </div>
@@ -13184,7 +13242,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>22</code></td><td>no</td><td>Port is its SSH port.</td></tr>
 <tr><td><code>user</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>User is the SSH login.</td></tr>
 <tr><td><code>key_path</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>file path (PEM).</td></tr>
-<tr><td><code>key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“agent” | “tf-output:<name>”.</name></td></tr>
+<tr><td><code>key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“agent” | “tf-output:<code>&lt;name&gt;</code>”.</td></tr>
 </tbody>
 </table>
 </div>
@@ -13273,7 +13331,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>bigip_url</code></td><td><code>string</code></td><td><code>"192.168.1.245"</code></td><td>BIG-IP URL for the CIS controller</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM Cloud Trusted Profile ID created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>flo_trusted_profile_sa_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes service account name the CNE controller’s IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC.</td><td>no</td></tr>
-<tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles granted to the CNE controller’s Trusted Profile, scoped to the cluster’s OWN VPC (serviceName=is, vpcId=<cluster vpc="">).</cluster></td><td>no</td></tr>
+<tr><td><code>flo_trusted_profile_roles</code></td><td><code>list(string)</code></td><td><code>["Viewer", "Editor"]</code></td><td>IAM roles granted to the CNE controller’s Trusted Profile, scoped to the cluster’s OWN VPC (serviceName=is, vpcId=<code>&lt;cluster vpc&gt;</code>).</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>

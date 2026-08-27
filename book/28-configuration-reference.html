@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e48676bd.js";
+            window.path_to_searchindex_js = "searchindex-c585b643.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -203,7 +203,7 @@ value is meaningful. It does not mean you must type it into your <code>config.ya
 default is declared — either the zero value applies, or the default is computed at
 run time and belongs in the prose rather than a table cell.</p>
 <h2 id="workspace"><a class="header" href="#workspace"><code>Workspace</code></a></h2>
-<p>Workspace is ~/.roksbnkctl/<name>/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no <code>api_key</code> field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.</name></p>
+<p>Workspace is ~/.roksbnkctl/<code>&lt;name&gt;</code>/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no <code>api_key</code> field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -319,7 +319,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>hugepages</code></td><td><code>*HugepagesCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator.</td></tr>
 <tr><td><code>tcp_settings</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {“congestionControl”: “bbr”, “delayedAcks”: “true”} — the key is the CR’s own spec field.</td></tr>
 <tr><td><code>tcp_settings_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>sys-default-tcp</code></td><td>no</td><td>TCPSettingsName is the F5BigTcpSetting to write.</td></tr>
-<tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<component>.env[] lists (#175).</component></td></tr>
+<tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<code>&lt;component&gt;</code>.env[] lists (#175).</td></tr>
 <tr><td><code>tmm_resources</code></td><td><code>map[string]map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TMMResources overrides the TMM pod’s resource requests/limits, rendered as the CNEInstance’s advanced.tmm.resources (#203).</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name).</td></tr>
 <tr><td><code>cert_manager</code></td><td><code>*BNKCertManagerCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CertManager overrides cert-manager’s namespace + chart version.</td></tr>
@@ -399,8 +399,8 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>ssh_key</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman pod, Vault, logs).</td></tr>
 <tr><td><code>floating_ip</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>FloatingIP attaches an operator floating IP to the FLP VSI for remote management — running <code>roksbnkctl flp status</code> and reaching the :80 web UI + the :8443 proxy from a machine OUTSIDE the VPC.</td></tr>
 <tr><td><code>status_image</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusImage, when set, runs the flp-status web UI as a container in the FLP pod (mobile-friendly status page + /api/status + live logs on :80, no auth — a read-only private status endpoint).</td></tr>
-<tr><td><code>status_registry_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<host>/ca.crt before the pod comes up.</host></td></tr>
-<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryCAB64 is that registry’s CA, base64-encoded, written to /etc/containers/certs.d/<host>/ca.crt on the VSI.</host></td></tr>
+<tr><td><code>status_registry_host</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<code>&lt;host&gt;</code>/ca.crt before the pod comes up.</td></tr>
+<tr><td><code>status_registry_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>StatusRegistryCAB64 is that registry’s CA, base64-encoded, written to /etc/containers/certs.d/<code>&lt;host&gt;</code>/ca.crt on the VSI.</td></tr>
 <tr><td><code>forward_proxy</code></td><td><code>*BNKFLPForwardProxyCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ForwardProxy optionally routes the VSI’s egress to F5 licensing through an HTTP forward proxy (air-gapped/egress-controlled networks).</td></tr>
 </tbody>
 </table>
@@ -542,14 +542,14 @@ run time and belongs in the prose rather than a table cell.</p>
 </table>
 </div>
 <h2 id="dnscfg"><a class="header" href="#dnscfg"><code>DNSCfg</code></a></h2>
-<p>DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §“DNS probe (GSLB-aware)” §“Server resolution”). The map’s keys are the names users pass to <code>--server &lt;name&gt;</code> and the values are concrete “<ip>[:<port>]” strings the miekg/dns client dials. DefaultTarget is used when –target isn’t passed on the command line.  Example:  test: dns: resolvers: google:     “8.8.8.8:53” cloudflare: “1.1.1.1:53” gslb-vip:   “169.45.91.5:53” default_target: “www.example.com”</port></ip></p>
+<p>DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §“DNS probe (GSLB-aware)” §“Server resolution”). The map’s keys are the names users pass to <code>--server &lt;name&gt;</code> and the values are concrete “<code>&lt;ip&gt;</code>[:<code>&lt;port&gt;</code>]” strings the miekg/dns client dials. DefaultTarget is used when –target isn’t passed on the command line.  Example:  test: dns: resolvers: google:     “8.8.8.8:53” cloudflare: “1.1.1.1:53” gslb-vip:   “169.45.91.5:53” default_target: “www.example.com”</p>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Resolvers names the DNS servers to query, as name → “<ip>[:<port>]”.</port></ip></td></tr>
+<tr><td><code>resolvers</code></td><td><code>map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Resolvers names the DNS servers to query, as name → “<code>&lt;ip&gt;</code>[:<code>&lt;port&gt;</code>]”.</td></tr>
 <tr><td><code>default_target</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>DefaultTarget is the resolver queried when a probe names none.</td></tr>
 </tbody>
 </table>
@@ -562,7 +562,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>backend</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Backend is the execution-backend spec: “local” | “docker” | “k8s” | “ssh:<target>”.</target></td></tr>
+<tr><td><code>backend</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>Backend is the execution-backend spec: “local” | “docker” | “k8s” | “ssh:<code>&lt;target&gt;</code>”.</td></tr>
 </tbody>
 </table>
 </div>
@@ -740,7 +740,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>port</code></td><td><code>int</code></td><td>2.3 + 2.4</td><td><code>22</code></td><td>no</td><td>Port is its SSH port.</td></tr>
 <tr><td><code>user</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>yes</td><td>User is the SSH login.</td></tr>
 <tr><td><code>key_path</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>file path (PEM).</td></tr>
-<tr><td><code>key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“agent” | “tf-output:<name>”.</name></td></tr>
+<tr><td><code>key_source</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>“agent” | “tf-output:<code>&lt;name&gt;</code>”.</td></tr>
 </tbody>
 </table>
 </div>
