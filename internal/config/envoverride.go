@@ -30,6 +30,10 @@ import (
 //	IBMCLOUD_API_KEY                 → ibmcloud.api_key_b64   (raw key, base64-encoded)
 //	ROKSBNKCTL_API_KEY_B64          → ibmcloud.api_key_b64   (verbatim; pre-encoded)
 //	ROKSBNKCTL_PREFIX               → prefix
+//	ROKSBNKCTL_TF_SOURCE_TYPE       → tf_source.type (embedded/github/local)
+//	ROKSBNKCTL_TF_SOURCE_REPO       → tf_source.repo (owner/name, when type=github)
+//	ROKSBNKCTL_TF_SOURCE_REF        → tf_source.ref  (tag/branch/commit, when type=github)
+//	ROKSBNKCTL_TF_SOURCE_PATH       → tf_source.path (directory, when type=local)
 //	ROKSBNKCTL_REGION               → ibmcloud.region
 //	ROKSBNKCTL_RESOURCE_GROUP       → ibmcloud.resource_group
 //	ROKSBNKCTL_CLUSTER_NAME         → cluster.name
@@ -909,6 +913,28 @@ type stringOverride struct {
 
 var stringOverrides = []stringOverride{
 	{"ROKSBNKCTL_PREFIX", "prefix", func(ws *Workspace, v string) { ws.Prefix = v }},
+
+	// tf_source decides WHICH TERRAFORM RUNS, so a workspace that cannot express
+	// it from the environment cannot be reproduced from the environment (#248).
+	//
+	// tf_source.type is also the only REQUIRED field that had no override, which
+	// made `config yaml --from-env` structurally unable to emit a complete config:
+	// the one field the loader insists on was the one the env form could not
+	// carry. A github-pinned workspace round-tripped through .env came back as
+	// "", which init then defaults to "embedded" -- silently swapping a tree
+	// pinned to a tag for the one compiled into the binary.
+	//
+	// init --tf-source is not a substitute. It takes a single path or URL, so it
+	// cannot express repo and ref separately, and it covers `init` alone rather
+	// than the env round-trip env.example's own header tells operators to use.
+	//
+	// Not validated here. "embedded" | "github" | "local" is checked where the
+	// source is resolved, with the repo/ref/path combination in view; rejecting a
+	// value here would report it twice and in the less informative place.
+	{"ROKSBNKCTL_TF_SOURCE_TYPE", "tf_source.type", func(ws *Workspace, v string) { ws.TFSource.Type = v }},
+	{"ROKSBNKCTL_TF_SOURCE_REPO", "tf_source.repo", func(ws *Workspace, v string) { ws.TFSource.Repo = v }},
+	{"ROKSBNKCTL_TF_SOURCE_REF", "tf_source.ref", func(ws *Workspace, v string) { ws.TFSource.Ref = v }},
+	{"ROKSBNKCTL_TF_SOURCE_PATH", "tf_source.path", func(ws *Workspace, v string) { ws.TFSource.Path = v }},
 	{"ROKSBNKCTL_REGION", "ibmcloud.region", func(ws *Workspace, v string) { ws.IBMCloud.Region = v }},
 	{"ROKSBNKCTL_RESOURCE_GROUP", "ibmcloud.resource_group", func(ws *Workspace, v string) { ws.IBMCloud.ResourceGroup = v }},
 	{"ROKSBNKCTL_CLUSTER_NAME", "cluster.name", func(ws *Workspace, v string) { ws.Cluster.Name = v }},
