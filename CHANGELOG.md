@@ -32,6 +32,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   warning** rather than stored as a zero: a toggle silently set to the opposite of
   what a pipeline meant is harder to diagnose than one that was never set.
 
+  Chapter 07a's override table was introduced as "a fixed field map" while
+  listing 79 of them — a hand-written copy of a generated surface, already stale
+  before this change and more so after. It now says plainly that it is a
+  selection chosen for the encodings that need explaining, and points at
+  `roksbnkctl config env` and the cheatsheet for the complete list. No count is
+  quoted, because a number in prose is the next thing to drift.
+
   **Not** added, with the reason recorded: `state.*` is bootstrap config read
   before a workspace exists — and `access_key_source` / `secret_key_source`
   deliberately *name* an env var, so an override would be a variable naming a

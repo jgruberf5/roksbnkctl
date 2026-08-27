@@ -189,10 +189,26 @@ authentication in this release; use a presigned or public URL.
 
 ## `--override-from-env`
 
-`--override-from-env` overlays a **fixed set** of `config.yaml` fields from
-environment variables that are set and non-empty, after the file/interview has
-produced the config. **The environment wins** over the seeded value — it is the
-explicit late-binding step. This is a fixed field map, not arbitrary templating.
+`--override-from-env` overlays `config.yaml` fields from environment variables
+that are set and non-empty, after the file/interview has produced the config.
+**The environment wins** over the seeded value — it is the explicit late-binding
+step. This is a fixed field map, not arbitrary templating.
+
+> **This table is a selection, not the whole surface.** The ones below are what
+> most deployments set, chosen because their encoding or precedence needs
+> explaining — a hand-written table of every override would be a second copy of
+> the schema, and this book has been bitten by one of those before. The
+> **complete** list is generated from the override machinery itself and cannot
+> drift from it:
+>
+> ```console
+> $ roksbnkctl config env > .env          # every variable, commented, with its field
+> ```
+>
+> or the [config.yaml cheatsheet](https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html),
+> which shows every field beside the variable that sets it. Prefer either of those
+> when you are looking for a specific field; use this table when you want to know
+> *how* a value is interpreted.
 
 | Environment variable | `config.yaml` field | Encoding |
 |---|---|---|
