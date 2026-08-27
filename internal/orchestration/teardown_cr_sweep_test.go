@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -329,33 +330,47 @@ func TestRunTrialDownDrainsCustomResourcesOnEveryBackend(t *testing.T) {
 	}
 }
 
-// The deletes go through f5validate-f5-bnk, and #208's sweep is what removes it.
-// Reversing the two takes away the validating webhook and then asks the API
-// server to call it.
+// THE WEBHOOK SWEEP MUST COME FIRST (#235).
 //
-// PAIRWISE, not first-occurrence. RunTrialDown calls both sweeps twice — once on
-// the containerised path and once on the local one — so comparing the first of
-// each only ever inspects the containerised branch, and a swap in the local path
-// survives. That is not hypothetical: the first version of this test passed
-// against exactly that mutation.
-func TestTheCRDrainRunsBeforeTheWebhookSweep(t *testing.T) {
+// #217 pinned the opposite order here, and the test made the defect durable.
+// Its reasoning was that "the CR deletes are validated by f5validate-f5-bnk, so
+// removing it first means the API server calls a webhook whose service is gone".
+// That is backwards: removing the ValidatingWebhookConfiguration means the API
+// server has NOTHING to call.
+//
+// The webhook is served BY the install being torn down -- f5-validation-svc
+// selects app=f5-cne-controller -- with failurePolicy: Fail. Leaving it in place
+// while the controller goes away makes the API server REFUSE every delete:
+//
+//	failed calling webhook "f5validate.f5net.com": no endpoints available
+//	for service "f5-validation-svc"
+//
+// which timed the drain out at 4m per namespace, left the finalizers in place,
+// and produced the exact namespace stall #217 existed to prevent.
+//
+// PAIRWISE, for the reason the original was: RunTrialDown calls both sweeps
+// twice, so comparing the first of each only ever inspects the containerised
+// branch and a swap in the local path survives.
+func TestTheWebhookSweepRunsBeforeTheCRDrain(t *testing.T) {
 	calls := callsInFunc(t, "lifecycle.go", "RunTrialDown")
-	drains := indicesOf(calls, "sweepBNKCustomResources")
 	webhooks := indicesOf(calls, "sweepTeardownWebhooks")
+	drains := indicesOf(calls, "sweepBNKCustomResources")
 
-	if len(drains) == 0 || len(webhooks) == 0 {
-		t.Fatalf("expected both sweeps in RunTrialDown; drains=%v webhooks=%v", drains, webhooks)
+	if len(webhooks) == 0 || len(drains) == 0 {
+		t.Fatalf("expected both sweeps in RunTrialDown; webhooks=%v drains=%v", webhooks, drains)
 	}
-	if len(drains) != len(webhooks) {
-		t.Fatalf("the sweeps are not paired: %d drain(s) at %v, %d webhook sweep(s) at %v.\n"+
+	if len(webhooks) != len(drains) {
+		t.Fatalf("the sweeps are not paired: %d webhook sweep(s) at %v, %d drain(s) at %v.\n"+
 			"Every destroy path needs both, so an unpaired call means one path is missing one.",
-			len(drains), drains, len(webhooks), webhooks)
+			len(webhooks), webhooks, len(drains), drains)
 	}
-	for i := range drains {
-		if drains[i] > webhooks[i] {
-			t.Errorf("on path %d the webhook sweep (call %d) runs before the CR drain (call %d).\n"+
-				"The CR deletes are validated by f5validate-f5-bnk; removing it first means the "+
-				"API server calls a webhook whose service is gone.", i+1, webhooks[i], drains[i])
+	for i := range webhooks {
+		if webhooks[i] > drains[i] {
+			t.Errorf("on path %d the CR drain (call %d) runs before the webhook sweep (call %d).\n"+
+				"f5validate-f5-bnk is served by the CNE controller with failurePolicy: Fail, so "+
+				"leaving it in place makes the API server refuse every delete once that controller "+
+				"is gone — the drain then times out and the namespace stalls (#235).",
+				i+1, drains[i], webhooks[i])
 		}
 	}
 }
@@ -542,5 +557,85 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("waited %s for a CRD that no longer exists", time.Since(start))
+	}
+}
+
+// #235 review. The ordering fix removes the CAUSE of the 8-minute stall; this
+// removes the ability to burn the budget at all.
+//
+// sweepTeardownWebhooks is best-effort by design — it returns quietly on an
+// unreachable cluster, credentials that no longer resolve, or a webhook it does
+// not match. Any of those and the drain meets a live failurePolicy: Fail webhook
+// whose backend is already gone, and the API server refuses EVERY delete.
+// Polling the full budget then waits on a condition nothing will change.
+func TestADrainWhereEveryDeleteIsRefusedDoesNotWait(t *testing.T) {
+	dc := newFake(
+		cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"),
+		cr(gvrIPAMRange, "IPAMRange", "f5-bnk", "range-1"),
+	)
+	// What a failurePolicy: Fail webhook with no endpoints actually returns.
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+			`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+	})
+
+	var buf bytes.Buffer
+	start := time.Now()
+	deleted, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
+		"f5-bnk", 30*time.Second, 50*time.Millisecond, &buf)
+	elapsed := time.Since(start)
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 — every delete was refused", deleted)
+	}
+	if remaining != 2 {
+		t.Errorf("remaining = %d, want 2 — both objects are still there", remaining)
+	}
+	// The point of the change: it must not spend the budget discovering this.
+	if elapsed > 5*time.Second {
+		t.Errorf("waited %s against a webhook refusing every delete.\n"+
+			"Zero accepted with objects present cannot resolve by waiting — that is the "+
+			"4m-per-namespace stall in #235, reachable whenever the webhook sweep does not "+
+			"do its job.", elapsed)
+	}
+	if !strings.Contains(buf.String(), "every delete was refused") {
+		t.Errorf("the operator is not told why it stopped early:\n%s", buf.String())
+	}
+}
+
+// The fail-fast must not fire when deletes ARE being accepted but finalizers are
+// still holding the objects — that is normal progress and must still be waited
+// for, which is the whole reason the drain exists.
+func TestASlowFinalizerIsStillWaitedFor(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	var mu sync.Mutex
+	lists := 0
+	dc.PrependReactor("delete", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // accepted, but the object lingers
+	})
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		lists++
+		gone := lists > 3
+		mu.Unlock()
+		l := &unstructured.UnstructuredList{}
+		l.SetGroupVersionKind(gvrIPAM.GroupVersion().WithKind("IPAMList"))
+		if !gone {
+			l.Items = []unstructured.Unstructured{*cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1")}
+		}
+		return true, l, nil
+	})
+
+	var buf bytes.Buffer
+	_, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
+		"f5-bnk", 5*time.Second, time.Millisecond, &buf)
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0 — the delete was accepted and the object did drain", remaining)
+	}
+	if strings.Contains(buf.String(), "every delete was refused") {
+		t.Error("the fail-fast fired on a delete that WAS accepted — that is ordinary " +
+			"finalizer progress and must still be waited for")
 	}
 }
