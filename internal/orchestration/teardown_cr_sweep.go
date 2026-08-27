@@ -317,6 +317,7 @@ type deletePass struct {
 	marked   int // objects already carrying a deletionTimestamp
 	unknown  int // kinds whose contents could not be established this pass
 	owned    int // objects left to their owner's garbage collection
+	denied   int // objects an admission webhook refuses to delete, by design
 }
 
 // deleteAllIn issues a delete for every object of every resource in one
@@ -354,7 +355,6 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			p.unknown++
 			continue
 		}
-		p.present += len(list.Items)
 		for i := range list.Items {
 			item := list.Items[i]
 
@@ -380,10 +380,18 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			// ownership. #217's leaves-first insight was right about the objects
 			// the guide names; it was applied to every F5 CR in the namespace,
 			// which swept in the ones ownership already handles.
+			// NOT COUNTED AS PRESENT. present drives "has this phase drained yet",
+			// and an owned child is not this drain's to drain -- it goes when its
+			// owner goes. Counting it kept the leaf phase permanently non-empty,
+			// so the wait always timed out and the ROOT phase never ran, so the
+			// CNEInstance was never deleted and the children were never collected.
+			// The skip without this is worse than no skip at all.
 			if ownedByKindIn(item, allGVRs) {
 				p.owned++
 				continue
 			}
+
+			p.present++
 
 			if item.GetDeletionTimestamp() != nil {
 				// Already marked: the API server took the delete on an earlier
@@ -435,6 +443,28 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			if apierrors.IsNotFound(err) {
 				continue
 			}
+			// A DELIBERATE DENIAL IS NOT A REFUSAL TO RETRY PAST.
+			//
+			//   admission webhook "f5validate.f5net.com" denied the request:
+			//   Default TCP parameters CR cannot be deleted!
+			//
+			// F5 ships default CRs its own webhook refuses to delete. No amount of
+			// retrying changes that, and removing the webhook to force it through
+			// would be deleting an object the product says must not be deleted.
+			// They go when the namespace goes. Counting them as present kept the
+			// phase from ever draining, which is the same dead end as the owned
+			// children.
+			if webhookDenial(err) {
+				p.denied++
+				p.present--
+				if w != nil && !logged[gvr.Resource+"/"+item.GetName()] {
+					logged[gvr.Resource+"/"+item.GetName()] = true
+					fmt.Fprintf(w, "    %s/%s cannot be deleted (the product's own webhook forbids it); leaving it to the namespace delete\n",
+						gvr.Resource, item.GetName())
+				}
+				continue
+			}
+
 			p.refused++
 			// Logged on the FIRST pass only. The drain now retries every few
 			// seconds for up to four minutes, and one line per object per pass
@@ -649,4 +679,24 @@ func ownedByKindIn(item unstructured.Unstructured, gvrs []schema.GroupVersionRes
 		}
 	}
 	return false
+}
+
+// webhookDenial reports whether an admission webhook DELIBERATELY rejected the
+// request, as opposed to being uncallable.
+//
+// The two need opposite handling and the messages are easy to conflate:
+//
+//	failed calling webhook "..." : no endpoints available   -> transient, retry past it
+//	admission webhook "..." denied the request: ...         -> permanent, respect it
+//
+// The second is the product stating a rule. f5-big-tcp-settings/sys-default-tcp
+// answers "Default TCP parameters CR cannot be deleted!" every time, and removing
+// the webhook to force it through would be deleting an object BNK says must not be
+// deleted. It goes when the namespace goes.
+func webhookDenial(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "admission webhook") && strings.Contains(msg, "denied the request")
 }

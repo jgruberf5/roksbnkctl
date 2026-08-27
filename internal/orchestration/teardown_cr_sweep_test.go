@@ -1159,3 +1159,83 @@ func TestAnObjectOwnedBySomethingElseIsStillDeleted(t *testing.T) {
 			"left behind on the strength of an ownerReference nobody is acting on.")
 	}
 }
+
+// An owned child must not count as PRESENT, or skipping it is worse than not
+// skipping it.
+//
+// present drives "has this phase drained yet". If an owned child keeps the leaf
+// phase non-empty, the wait always times out, the ROOT phase never runs, the
+// CNEInstance is never deleted -- and so the children are never garbage-collected
+// either. The first version of the skip did exactly that: it stopped deleting the
+// children and then blocked forever waiting for them to disappear.
+func TestAnOwnedChildDoesNotKeepThePhaseFromDraining(t *testing.T) {
+	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
+	child.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "k8s.f5.com/v1", Kind: "CNEInstance", Name: "root",
+	}})
+	dc := newFake(child)
+
+	gvrs := []schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}
+	p := deleteAllIn(context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
+		gvrs, "f5-bnk", nil, map[string]bool{}, nil)
+
+	if p.owned != 1 {
+		t.Errorf("owned = %d, want 1", p.owned)
+	}
+	if p.present != 0 {
+		t.Errorf("present = %d, want 0.\n"+
+			"An owned child is not this drain's to drain — it goes when its owner goes. "+
+			"Counting it keeps the phase permanently non-empty, so the wait times out and the "+
+			"root phase never deletes the owner that would have collected it.", p.present)
+	}
+}
+
+// A CR the product's own webhook forbids deleting must not block the phase either.
+//
+//	admission webhook "f5validate.f5net.com" denied the request:
+//	Default TCP parameters CR cannot be deleted!
+//
+// f5-big-tcp-settings/sys-default-tcp answers this every time. Retrying cannot
+// change it, and removing the webhook to force it through would be deleting an
+// object BNK states must not be deleted. It goes when the namespace goes.
+func TestADeliberateWebhookDenialDoesNotBlockTheDrain(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "sys-default-tcp"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`admission webhook "f5validate.f5net.com" denied the request: ` +
+			`Default TCP parameters CR cannot be deleted!`)
+	})
+
+	var buf bytes.Buffer
+	gvrs := []schema.GroupVersionResource{gvrIPAM}
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", &buf, map[string]bool{}, nil)
+
+	if p.denied != 1 {
+		t.Errorf("denied = %d, want 1", p.denied)
+	}
+	if p.present != 0 {
+		t.Errorf("present = %d, want 0 — a CR the product forbids deleting cannot be drained by "+
+			"anyone, so counting it keeps the phase from ever completing", p.present)
+	}
+	if p.refused != 0 {
+		t.Errorf("refused = %d, want 0 — a deliberate denial is not a refusal to retry past, and "+
+			"must not start the give-up clock", p.refused)
+	}
+	if !strings.Contains(buf.String(), "cannot be deleted") {
+		t.Errorf("the operator is not told why it was left behind:\n%s", buf.String())
+	}
+}
+
+func TestWebhookDenialIsNotConfusedWithAnUncallableWebhook(t *testing.T) {
+	denial := fmt.Errorf(`admission webhook "f5validate.f5net.com" denied the request: Default TCP parameters CR cannot be deleted!`)
+	uncallable := fmt.Errorf(`Internal error occurred: failed calling webhook "f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+
+	if !webhookDenial(denial) || webhookDenial(uncallable) {
+		t.Errorf("webhookDenial: denial=%v uncallable=%v; want true/false",
+			webhookDenial(denial), webhookDenial(uncallable))
+	}
+	// The two need OPPOSITE handling, so neither predicate may claim both.
+	if webhookRefusal(denial) || !webhookRefusal(uncallable) {
+		t.Errorf("webhookRefusal: denial=%v uncallable=%v; want false/true",
+			webhookRefusal(denial), webhookRefusal(uncallable))
+	}
+}
