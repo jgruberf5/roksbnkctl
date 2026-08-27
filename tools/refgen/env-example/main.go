@@ -94,10 +94,16 @@ func main() {
 				fmt.Fprintf(&b, "# %s=\n#   -> %s\n", n, strings.ReplaceAll(path, ",", ", "))
 				continue
 			}
+			// The variable FIRST, then its description -- matching the two
+			// branches above. Emitting the description first put every one of
+			// them directly under the PREVIOUS variable, so read top-down the
+			// whole file attributed each description to the wrong name:
+			// ROKSBNKCTL_TGW_JUMPHOST_CREATE appeared to be documented as "the
+			// name or ID of the resource to adopt", which is `existing`.
+			fmt.Fprintf(&b, "# %s=          # -> %s\n", n, path)
 			if d := docs[path]; d != "" {
 				fmt.Fprintf(&b, "#   %s\n", d)
 			}
-			fmt.Fprintf(&b, "# %s=          # -> %s\n", n, path)
 		}
 	}
 	fmt.Print(b.String())
