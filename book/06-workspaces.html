@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -244,7 +244,7 @@
 <li><strong>Never read by <code>roksbnkctl</code> itself.</strong> The snapshot is an output for the user — never an input the tool depends on. Making it an input would create a feedback loop where redacted values get written back as the literal string <code>&lt;redacted&gt;</code>.</li>
 </ul>
 <h3 id="redaction"><a class="header" href="#redaction">Redaction</a></h3>
-<p>Every variable carrying a credential is redacted: <code>ibmcloud_api_key</code>, <code>bigip_password</code>, <code>registry_mirror_password</code>, and <code>cneinstance_gtm_password</code>. <code>ibmcloud_api_key</code> is the one whose value comes from the <a href="./14-credentials-resolver.html">cred resolver</a> rather than being authored by the user; the other three are authored in <code>config.yaml</code> (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to <code>redactedVarNames</code> now fails a test. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
+<p>Every variable carrying a credential is redacted: <code>ibmcloud_api_key</code>, <code>bigip_password</code>, and <code>registry_mirror_password</code>. <code>ibmcloud_api_key</code> is the one whose value comes from the <a href="./14-credentials-resolver.html">cred resolver</a> rather than being authored by the user; the other two are authored in <code>config.yaml</code> (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to <code>redactedVarNames</code> now fails a test. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
 <pre><code class="language-hcl">ibmcloud_api_key = "&lt;redacted&gt;"  # source: cred resolver, not persisted
 </code></pre>
 <p>For team-handoff scenarios (a teammate receives this file out-of-band and wants to re-create the workspace): replace the <code>&lt;redacted&gt;</code> value with the teammate’s own API key, or simply remove the <code>ibmcloud_api_key</code> line so the <a href="./14-credentials-resolver.html">cred resolver</a> supplies it from the teammate’s own environment (keychain, shell env, <code>~/.bluemix/api_key</code>, etc.) at apply time. Every other line round-trips verbatim.</p>

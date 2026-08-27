@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -189,11 +189,13 @@ Chapter 28 is right.</p>
 <p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
 <blockquote>
 <p><strong>Pointing the deployment at a BIG-IP DNS.</strong> This chapter covers <em>testing</em> GSLB
-behaviour. The deployment side is two settings: <code>bnk.gslb_datacenter_name</code> names
-the datacenter, and <code>bnk.gtm.{url,username,password_b64}</code> is the BIG-IP DNS it
-registers <strong>with</strong>. Setting the name alone leaves a label pointing at nothing.
-See <a href="./28-configuration-reference.html">Chapter 28</a> — env equivalents are
-<code>ROKSBNKCTL_GTM_URL</code> / <code>_USERNAME</code> / <code>_PASSWORD</code> (raw password; stored base64).</p>
+behaviour. The deployment side is one setting: <code>bnk.gslb_datacenter_name</code>, which
+names the datacenter the CNEInstance registers as.</p>
+<p>There was also a <code>bnk.gtm.{url,username,password_b64}</code> block for the BIG-IP DNS
+connection. It was <strong>removed in #227</strong>: the environment variables it produced
+appear nowhere in the f5ingress controller binary on either BNK line, so it
+configured nothing. The GTM side of the relationship is configured on the GTM,
+not from here.</p>
 </blockquote>
 <h2 id="three-vantages-one-comparison"><a class="header" href="#three-vantages-one-comparison">Three vantages, one comparison</a></h2>
 <p><code>--gslb-compare</code> is the flagship workflow: a single <code>roksbnkctl test dns</code> invocation fans out across <code>local</code>, <code>k8s</code>, and (optionally) <code>ssh:&lt;target&gt;</code> vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.</p>

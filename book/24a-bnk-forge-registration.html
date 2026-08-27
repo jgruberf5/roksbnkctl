@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -223,9 +223,28 @@ this flow.)</p>
 </li>
 <li>
 <p><strong>The Forge URL and credentials.</strong> <code>BNK_FORGE_URL</code>, <code>BNK_FORGE_USER</code> and
-<code>BNK_FORGE_PASSWORD</code> (or <code>bnkforge.url</code> / <code>--url</code> / <code>--username</code>). The password is
-<strong>never persisted</strong> — the resulting session token is cached in the OS keychain, and
-reused until it expires. <code>roksbnkctl bnkforge status</code> shows what is resolved.</p>
+<code>BNK_FORGE_PASSWORD</code> (or <code>bnkforge.url</code> / <code>--url</code> / <code>--username</code>). The session
+token that results is cached in the OS keychain and reused until it expires, so
+the password is normally used once. <code>roksbnkctl bnkforge status</code> shows what is
+resolved.</p>
+<p>The password can also be stored as <code>bnkforge.password_b64</code>, base64-encoded,
+the same shape as every other machine credential this tool takes
+(<code>ibmcloud.api_key_b64</code>, <code>bnk.cis.bigip_password_b64</code>,
+<code>registry.generic_password_b64</code>). Precedence is <code>BNK_FORGE_PASSWORD</code>, then
+<code>--password</code>, then the field, then the prompt — so a stored value never
+prevents a runner overriding it.</p>
+<p><strong>base64 is obfuscation, not encryption.</strong> Anyone holding the file holds the
+password. Storing it trades a long-lived secret on disk for not being asked,
+which is the right trade for an unattended runner and the wrong one for a
+laptop. Use <code>scripts/generate_b64_password.sh</code> to produce the value without it
+reaching your shell history:</p>
+<pre><code class="language-console">$ ./scripts/generate_b64_password.sh bnkforge.password_b64
+Password:
+Re-enter:
+
+  # config.yaml — under the bnkforge block
+  password_b64: aHVudGVyMg==
+</code></pre>
 <p>On a terminal, <code>bnkforge register</code> prompts for anything missing. The automatic
 post-<code>up</code> hook runs <strong>non-interactively</strong>: with no cached token and no env
 credentials it declines with a one-line note rather than blocking a deploy on a
@@ -311,10 +330,10 @@ This is what gets stored as the credential template, so Forge can re-derive the
 kubeconfig on demand instead of holding a perishable one.</li>
 <li><strong>Authenticates to Forge over its REST API.</strong> A cached session token from the OS
 keychain is reused when still valid; otherwise it logs in with
-<code>BNK_FORGE_USER</code> / <code>BNK_FORGE_PASSWORD</code> and caches the new token. The password
-itself is never persisted. The auto-hook runs <strong>non-interactively</strong>, so with no
-valid token and no env credentials it declines rather than blocking a deploy on
-a prompt.</li>
+<code>BNK_FORGE_USER</code> / <code>BNK_FORGE_PASSWORD</code> — or <code>bnkforge.password_b64</code> — and
+caches the new token. The auto-hook runs <strong>non-interactively</strong>, so with no valid
+token, no env credentials and no stored password it declines rather than
+blocking a deploy on a prompt.</li>
 <li><strong>Ensures the credential template and the project</strong>, then <strong>registers the
 cluster</strong> by id + region + template.</li>
 </ol>
@@ -571,9 +590,10 @@ the prerequisite and run <code>roksbnkctl bnkforge register</code> — no re-<co
 <li>
 <p><strong><code>no BNK Forge username</code> / <code>no BNK Forge password</code></strong> — the cached session token
 is absent or expired and there is nothing to log in with. Set <code>BNK_FORGE_USER</code> and
-<code>BNK_FORGE_PASSWORD</code>, or run <code>roksbnkctl bnkforge register</code> at a terminal to be
-prompted. On a CI runner the env vars are the only path — there is no prompt to
-fall back to.</p>
+<code>BNK_FORGE_PASSWORD</code>, store <code>bnkforge.password_b64</code>, or run
+<code>roksbnkctl bnkforge register</code> at a terminal to be prompted. On a CI runner the
+env var and the stored field are the only paths — there is no prompt to fall
+back to.</p>
 </li>
 <li>
 <p><strong><code>cluster is registered to another BNK Forge project</code></strong> — the name is held by a

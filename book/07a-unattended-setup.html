@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -364,9 +364,6 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN</code></td><td><code>bnk.network.vlan_prefixlen</code></td><td>TMM self-IP mask. <strong>Independent of the zone CIDRs and never derived from them</strong> — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are <strong>silently ignored</strong> and the terraform default stands.</td></tr>
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_external</code></td><td>Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range.</td></tr>
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_internal</code></td><td>Same, internal VLAN. The two need not match.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_URL</code></td><td><code>bnk.gtm.url</code></td><td>BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong>. Without it, <code>gslb_datacenter_name</code> is a label pointing at nothing.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_USERNAME</code></td><td><code>bnk.gtm.username</code></td><td>GTM user.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_PASSWORD</code></td><td><code>bnk.gtm.password_b64</code></td><td>GTM password — supplied <strong>raw</strong>, stored base64 (like <code>IBMCLOUD_API_KEY</code> and <code>ROKSBNKCTL_BIGIP_PASSWORD</code>).</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_CA_B64</code></td><td><code>registry.generic_ca_b64</code></td><td>Mirror CA, <strong>verbatim</strong> — already base64, not re-encoded.</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_CA_SHA256</code></td><td><code>registry.generic_ca_sha256</code></td><td>The out-of-band CA pin.</td></tr>
 <tr><td><code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code></td><td><code>bnk.preflight.reachability_retry_seconds</code></td><td>Per-target retry window before the verdict is believed.</td></tr>

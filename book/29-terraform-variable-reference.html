@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -238,9 +238,6 @@
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)</td><td>no</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen_external</code></td><td><code>number</code></td><td><code>0</code></td><td>External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value.</td><td>no</td></tr>
@@ -393,9 +390,6 @@
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM IAM Trusted Profile ID for provisioning VPC routes</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>mTLS certificate issuer name</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>The Multus Network Attachment Definitions for the CNEInstance TMM deployments</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)</td><td>no</td></tr>

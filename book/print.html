@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c7861f14.js";
+            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -949,7 +949,7 @@ fi
 <li><strong>Never read by <code>roksbnkctl</code> itself.</strong> The snapshot is an output for the user — never an input the tool depends on. Making it an input would create a feedback loop where redacted values get written back as the literal string <code>&lt;redacted&gt;</code>.</li>
 </ul>
 <h3 id="redaction"><a class="header" href="#redaction">Redaction</a></h3>
-<p>Every variable carrying a credential is redacted: <code>ibmcloud_api_key</code>, <code>bigip_password</code>, <code>registry_mirror_password</code>, and <code>cneinstance_gtm_password</code>. <code>ibmcloud_api_key</code> is the one whose value comes from the <a href="#credentials-and-the-resolver-chain">cred resolver</a> rather than being authored by the user; the other three are authored in <code>config.yaml</code> (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to <code>redactedVarNames</code> now fails a test. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
+<p>Every variable carrying a credential is redacted: <code>ibmcloud_api_key</code>, <code>bigip_password</code>, and <code>registry_mirror_password</code>. <code>ibmcloud_api_key</code> is the one whose value comes from the <a href="#credentials-and-the-resolver-chain">cred resolver</a> rather than being authored by the user; the other two are authored in <code>config.yaml</code> (base64-obfuscated there) and would otherwise appear in this file in the clear. Since this page tells you the snapshot is suitable for committing, a rendered credential missing from that list is a credential in a repository — so adding one to the render without adding it to <code>redactedVarNames</code> now fails a test. See <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/04-CREDENTIALS.md#cred-tmpfile-bind-mount-pattern-docker-backend">PRD 04 §“Cred tmpfile-bind-mount pattern”</a> for why the API key isn’t in tfvars in the first place. The redacted line carries an inline comment:</p>
 <pre><code class="language-hcl">ibmcloud_api_key = "&lt;redacted&gt;"  # source: cred resolver, not persisted
 </code></pre>
 <p>For team-handoff scenarios (a teammate receives this file out-of-band and wants to re-create the workspace): replace the <code>&lt;redacted&gt;</code> value with the teammate’s own API key, or simply remove the <code>ibmcloud_api_key</code> line so the <a href="#credentials-and-the-resolver-chain">cred resolver</a> supplies it from the teammate’s own environment (keychain, shell env, <code>~/.bluemix/api_key</code>, etc.) at apply time. Every other line round-trips verbatim.</p>
@@ -1564,9 +1564,6 @@ explicit late-binding step. This is a fixed field map, not arbitrary templating.
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN</code></td><td><code>bnk.network.vlan_prefixlen</code></td><td>TMM self-IP mask. <strong>Independent of the zone CIDRs and never derived from them</strong> — a deliberate disagreement, plus static routes, is how a traffic pattern is forced. Out-of-range values are <strong>silently ignored</strong> and the terraform default stands.</td></tr>
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_external</code></td><td>Overrides the shared mask for the external VLAN only. Unset = inherit. Silently ignored if out of range.</td></tr>
 <tr><td><code>ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL</code></td><td><code>bnk.network.vlan_prefixlen_internal</code></td><td>Same, internal VLAN. The two need not match.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_URL</code></td><td><code>bnk.gtm.url</code></td><td>BIG-IP DNS / GTM the GSLB datacenter registers <strong>with</strong>. Without it, <code>gslb_datacenter_name</code> is a label pointing at nothing.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_USERNAME</code></td><td><code>bnk.gtm.username</code></td><td>GTM user.</td></tr>
-<tr><td><code>ROKSBNKCTL_GTM_PASSWORD</code></td><td><code>bnk.gtm.password_b64</code></td><td>GTM password — supplied <strong>raw</strong>, stored base64 (like <code>IBMCLOUD_API_KEY</code> and <code>ROKSBNKCTL_BIGIP_PASSWORD</code>).</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_CA_B64</code></td><td><code>registry.generic_ca_b64</code></td><td>Mirror CA, <strong>verbatim</strong> — already base64, not re-encoded.</td></tr>
 <tr><td><code>ROKSBNKCTL_GENERIC_CA_SHA256</code></td><td><code>registry.generic_ca_sha256</code></td><td>The out-of-band CA pin.</td></tr>
 <tr><td><code>ROKSBNKCTL_REACHABILITY_RETRY_SECONDS</code></td><td><code>bnk.preflight.reachability_retry_seconds</code></td><td>Per-target retry window before the verdict is believed.</td></tr>
@@ -4892,9 +4889,9 @@ cos:             # optional COS supply-chain config
   flp:
     storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
-<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults. The field spec is <a href="#bnkcfg">Chapter 28 §<code>BNKCfg</code></a>, with the sub-blocks broken out as <a href="#bnktrustedprofilecfg">§<code>BNKTrustedProfileCfg</code></a>, <a href="#bnkgtmcfg">§<code>BNKGTMCfg</code></a>, <a href="#bnkcertmanagercfg">§<code>BNKCertManagerCfg</code></a>, <a href="#bnkflpcfg">§<code>BNKFLPCfg</code></a> and <a href="#bnkpreflightcfg">§<code>BNKPreflightCfg</code></a>. Chapter 28’s <code>line</code> column matters here more than anywhere else in the config: a good part of <code>bnk:</code> is 2.4-only, and <code>manifest_version</code> is the only thing that selects the line.</p>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults. The field spec is <a href="#bnkcfg">Chapter 28 §<code>BNKCfg</code></a>, with the sub-blocks broken out as <a href="#bnktrustedprofilecfg">§<code>BNKTrustedProfileCfg</code></a>, <a href="#bnkcertmanagercfg">§<code>BNKCertManagerCfg</code></a>, <a href="#bnkflpcfg">§<code>BNKFLPCfg</code></a> and <a href="#bnkpreflightcfg">§<code>BNKPreflightCfg</code></a>. Chapter 28’s <code>line</code> column matters here more than anywhere else in the config: a good part of <code>bnk:</code> is 2.4-only, and <code>manifest_version</code> is the only thing that selects the line.</p>
 <p><strong><code>cneinstance_size</code> is passed through unvalidated, on purpose.</strong> The legal set of sizes is a property of the BNK manifest, not of this tool. Hardcoding a list would go stale the first time F5 adds one and would then refuse a size the product supports, so a size a given manifest does not define is rejected by the operator on the cluster, not here. <code>Tiny</code> is what the BNK 2.4 install guide uses, and on ROKS it is the only size that runs: everything above it requests hugepages (<code>Small</code> 4 GiB, <code>Medium</code> 8 GiB) that the platform has no supported way to allocate. Do not reach for <code>bnk.hugepages</code> — it is a no-op on ROKS and issue #203 explains why. Capacity comes from <code>bnk.tmm_replicas</code> and node size instead; see Appendix C.</p>
-<p><strong><code>gslb_datacenter_name</code> and <code>gtm:</code> are two halves of one feature.</strong> The datacenter name is what the CNEInstance calls itself in GSLB; <code>gtm.url</code> is the BIG-IP DNS it registers that name <em>with</em>. The name is emitted whenever it is set, but the GTM connection is emitted only when <code>gtm.url</code> is non-empty — so a datacenter name with no URL is a label pointing at nothing, and nothing warns you. Set both or neither. The credentials follow the same rule as the IBM Cloud key: <code>gtm.password_b64</code> is base64 <strong>obfuscation, not encryption</strong>. <code>ROKSBNKCTL_GTM_URL</code> / <code>ROKSBNKCTL_GTM_USERNAME</code> / <code>ROKSBNKCTL_GTM_PASSWORD</code> set them from the environment, and the password variable takes the <em>raw</em> value rather than the encoded one.</p>
+<p><strong><code>gslb_datacenter_name</code> is the whole feature.</strong> It is what the CNEInstance calls itself in GSLB, and it is emitted whenever set. There was also a <code>gtm:</code> block carrying the BIG-IP DNS url, username and password; it was <strong>removed in #227</strong> because nothing read it — the f5ingress controller binary contains no occurrence of the environment variables it produced, on either BNK line. A <code>config.yaml</code> still carrying <code>bnk.gtm</code> needs no edit: an unrecognised key is ignored.</p>
 <p><strong><code>trusted_profile.service_account</code> is a matcher, not a pointer — and getting it wrong fails silently.</strong> The IBM Cloud Trusted Profile is the identity the CNE controller assumes to manage the VPC network attachments it creates for TMM, so it works without a stored API key. IBM’s trust relationship compares a pod’s service-account token against <code>crn</code> / <code>namespace</code> / <code>name</code> with <code>EQUALS</code>. Left empty, <code>roksbnkctl</code> derives the name FLO actually creates — <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code> — and the match holds. Write a different name and nothing can assume the profile, <strong>and nothing reports an error</strong>: the pod simply loses its IBM Cloud permissions, and it surfaces much later as an authorization failure at VPC-attachment time that names neither this setting nor the profile. The profile looks correct in the IBM Cloud console the whole time.</p>
 <p>So set it only if you can <em>also</em> make FLO name the account differently — and <code>roksbnkctl</code> cannot, because FLO creates that account when it reconciles the CNEInstance and the CNEInstance spec has no service-account field. In practice this field exists for estates driving FLO by some other means. The derived name is safe to share across clusters: uniqueness comes from the profile name (which carries the cluster name) and from the link’s cluster CRN, not from the account name.</p>
 <p><strong><code>cert_manager:</code> overrides coordinates, not the decision.</strong> <code>bnk.cert_manager.namespace</code> / <code>.version</code> say <em>where</em> and <em>which chart</em>; whether cert-manager is installed at all stays on <code>resources.cert_manager.create</code>. The two are easy to confuse because they share a name.</p>
@@ -5332,7 +5329,6 @@ lives in a handful of <code>.tf</code> files.</p>
 <tr><td><code>testing_create_tgw_jumphost</code></td><td><code>true</code></td><td>Create the testing jumphost in a client VPC over Transit Gateway.</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>""</code> (must set)</td><td>Existing IBM Cloud SSH key name for jumphost provisioning.</td></tr>
 <tr><td><code>flo_trusted_profile_sa_name</code> / <code>flo_trusted_profile_roles</code></td><td>the CNE controller’s IBM Cloud identity — modelled as <code>bnk.trusted_profile.*</code></td><td></td></tr>
-<tr><td><code>cneinstance_gtm_url</code> / <code>_username</code> / <code>_password</code></td><td>the BIG-IP DNS the GSLB datacenter registers with — modelled as <code>bnk.gtm.*</code></td><td></td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen_external</code> / <code>_internal</code></td><td>per-VLAN self-IP masks — modelled as <code>bnk.network.vlan_prefixlen_{external,internal}</code></td><td></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>""</code></td><td>Set when wiring BNK into an F5 BIG-IP GSLB datacenter.</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>[]</code> (install-guide defaults)</td><td>Per-zone VLAN/SNAT/VIP subnets + TMM self-IPs. Mirrors <code>config.yaml</code>’s <code>bnk.network.zones</code>. Supply all three zones or none.</td></tr>
@@ -7763,11 +7759,13 @@ Chapter 28 is right.</p>
 <p>The flag surface, the JSON output, and the multi-vantage workflow on this page are all what v1.0 ships. The design rationale lives in <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/docs/prd/03-EXECUTION-BACKENDS.md#dns-probe-gslb-aware">PRD 03 §“DNS probe (GSLB-aware)”</a>; read that for the <em>why</em>, this chapter for the <em>how</em>.</p>
 <blockquote>
 <p><strong>Pointing the deployment at a BIG-IP DNS.</strong> This chapter covers <em>testing</em> GSLB
-behaviour. The deployment side is two settings: <code>bnk.gslb_datacenter_name</code> names
-the datacenter, and <code>bnk.gtm.{url,username,password_b64}</code> is the BIG-IP DNS it
-registers <strong>with</strong>. Setting the name alone leaves a label pointing at nothing.
-See <a href="#configuration-reference">Chapter 28</a> — env equivalents are
-<code>ROKSBNKCTL_GTM_URL</code> / <code>_USERNAME</code> / <code>_PASSWORD</code> (raw password; stored base64).</p>
+behaviour. The deployment side is one setting: <code>bnk.gslb_datacenter_name</code>, which
+names the datacenter the CNEInstance registers as.</p>
+<p>There was also a <code>bnk.gtm.{url,username,password_b64}</code> block for the BIG-IP DNS
+connection. It was <strong>removed in #227</strong>: the environment variables it produced
+appear nowhere in the f5ingress controller binary on either BNK line, so it
+configured nothing. The GTM side of the relationship is configured on the GTM,
+not from here.</p>
 </blockquote>
 <h2 id="three-vantages-one-comparison"><a class="header" href="#three-vantages-one-comparison">Three vantages, one comparison</a></h2>
 <p><code>--gslb-compare</code> is the flagship workflow: a single <code>roksbnkctl test dns</code> invocation fans out across <code>local</code>, <code>k8s</code>, and (optionally) <code>ssh:&lt;target&gt;</code> vantages in parallel, asks each one to resolve the same name, and reports whether the answers diverged.</p>
@@ -9306,9 +9304,28 @@ this flow.)</p>
 </li>
 <li>
 <p><strong>The Forge URL and credentials.</strong> <code>BNK_FORGE_URL</code>, <code>BNK_FORGE_USER</code> and
-<code>BNK_FORGE_PASSWORD</code> (or <code>bnkforge.url</code> / <code>--url</code> / <code>--username</code>). The password is
-<strong>never persisted</strong> — the resulting session token is cached in the OS keychain, and
-reused until it expires. <code>roksbnkctl bnkforge status</code> shows what is resolved.</p>
+<code>BNK_FORGE_PASSWORD</code> (or <code>bnkforge.url</code> / <code>--url</code> / <code>--username</code>). The session
+token that results is cached in the OS keychain and reused until it expires, so
+the password is normally used once. <code>roksbnkctl bnkforge status</code> shows what is
+resolved.</p>
+<p>The password can also be stored as <code>bnkforge.password_b64</code>, base64-encoded,
+the same shape as every other machine credential this tool takes
+(<code>ibmcloud.api_key_b64</code>, <code>bnk.cis.bigip_password_b64</code>,
+<code>registry.generic_password_b64</code>). Precedence is <code>BNK_FORGE_PASSWORD</code>, then
+<code>--password</code>, then the field, then the prompt — so a stored value never
+prevents a runner overriding it.</p>
+<p><strong>base64 is obfuscation, not encryption.</strong> Anyone holding the file holds the
+password. Storing it trades a long-lived secret on disk for not being asked,
+which is the right trade for an unattended runner and the wrong one for a
+laptop. Use <code>scripts/generate_b64_password.sh</code> to produce the value without it
+reaching your shell history:</p>
+<pre><code class="language-console">$ ./scripts/generate_b64_password.sh bnkforge.password_b64
+Password:
+Re-enter:
+
+  # config.yaml — under the bnkforge block
+  password_b64: aHVudGVyMg==
+</code></pre>
 <p>On a terminal, <code>bnkforge register</code> prompts for anything missing. The automatic
 post-<code>up</code> hook runs <strong>non-interactively</strong>: with no cached token and no env
 credentials it declines with a one-line note rather than blocking a deploy on a
@@ -9394,10 +9411,10 @@ This is what gets stored as the credential template, so Forge can re-derive the
 kubeconfig on demand instead of holding a perishable one.</li>
 <li><strong>Authenticates to Forge over its REST API.</strong> A cached session token from the OS
 keychain is reused when still valid; otherwise it logs in with
-<code>BNK_FORGE_USER</code> / <code>BNK_FORGE_PASSWORD</code> and caches the new token. The password
-itself is never persisted. The auto-hook runs <strong>non-interactively</strong>, so with no
-valid token and no env credentials it declines rather than blocking a deploy on
-a prompt.</li>
+<code>BNK_FORGE_USER</code> / <code>BNK_FORGE_PASSWORD</code> — or <code>bnkforge.password_b64</code> — and
+caches the new token. The auto-hook runs <strong>non-interactively</strong>, so with no valid
+token, no env credentials and no stored password it declines rather than
+blocking a deploy on a prompt.</li>
 <li><strong>Ensures the credential template and the project</strong>, then <strong>registers the
 cluster</strong> by id + region + template.</li>
 </ol>
@@ -9654,9 +9671,10 @@ the prerequisite and run <code>roksbnkctl bnkforge register</code> — no re-<co
 <li>
 <p><strong><code>no BNK Forge username</code> / <code>no BNK Forge password</code></strong> — the cached session token
 is absent or expired and there is nothing to log in with. Set <code>BNK_FORGE_USER</code> and
-<code>BNK_FORGE_PASSWORD</code>, or run <code>roksbnkctl bnkforge register</code> at a terminal to be
-prompted. On a CI runner the env vars are the only path — there is no prompt to
-fall back to.</p>
+<code>BNK_FORGE_PASSWORD</code>, store <code>bnkforge.password_b64</code>, or run
+<code>roksbnkctl bnkforge register</code> at a terminal to be prompted. On a CI runner the
+env var and the stored field are the only paths — there is no prompt to fall
+back to.</p>
 </li>
 <li>
 <p><strong><code>cluster is registered to another BNK Forge project</code></strong> — the name is held by a
@@ -12598,6 +12616,10 @@ which one commands run against; -w/–workspace overrides for one invocation.</p
 <a href="https://github.com/jgruberf5/roksbnkctl/blob/main/internal/config/workspace.go"><code>Workspace</code> struct</a>
 in <code>internal/config/workspace.go</code>. This chapter is the single source of truth for
 what a field is called, what type it takes, and which BNK line it applies to.</p>
+<p>For a one-page version carrying the full dotted paths and each field’s
+<code>ROKSBNKCTL_*</code> override, see the
+<a href="https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html"><strong>config.yaml cheatsheet</strong></a>
+— generated from the same struct, so the two cannot disagree.</p>
 <p><a href="#workspace-config-configyaml">Chapter 12 — Workspace config</a> is the <em>teaching</em> chapter:
 use it to learn the shape. Use this one to look up a specific field. Every other
 chapter links here rather than restating fields, because a field restated in four
@@ -12662,7 +12684,7 @@ run time and belongs in the prose rather than a table cell.</p>
 </table>
 </div>
 <h2 id="bnkciscfg"><a class="header" href="#bnkciscfg"><code>BNKCISCfg</code></a></h2>
-<p>BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64); the raw value is rendered to terraform.tfvars as bigip_password at apply time.</p>
+<p>BNKCISCfg configures the BNK CIS controller’s BIG-IP target. All optional. BigIPPasswordB64 stores the password base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64); the raw value is rendered to terraform.tfvars as bigip_password at apply time.</p>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -12730,7 +12752,6 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>advanced</code></td><td><code>map[string]AdvancedComponentCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Advanced carries per-component environment passthrough for the 2.4 CNEInstance’s advanced.<component>.env[] lists (#175).</component></td></tr>
 <tr><td><code>tmm_resources</code></td><td><code>map[string]map[string]string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>TMMResources overrides the TMM pod’s resource requests/limits, rendered as the CNEInstance’s advanced.tmm.resources (#203).</td></tr>
 <tr><td><code>gslb_datacenter_name</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name).</td></tr>
-<tr><td><code>gtm</code></td><td><code>*BNKGTMCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GTM is the BIG-IP DNS the datacenter above registers with (#51).</td></tr>
 <tr><td><code>cert_manager</code></td><td><code>*BNKCertManagerCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CertManager overrides cert-manager’s namespace + chart version.</td></tr>
 <tr><td><code>network</code></td><td><code>*BNKNetworkCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Network holds the optional per-zone subnet CIDRs + TMM self-IPs for the cloud-network-mapping ConfigMap and the external/internal F5SPKVlan CRs (BNK install-guide “Configuration”).</td></tr>
 <tr><td><code>cis</code></td><td><code>*BNKCISCfg</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CIS holds the BIG-IP management endpoint + credentials the BNK CIS controller (k8s-bigip-ctlr) uses.</td></tr>
@@ -12826,22 +12847,9 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL is the BNK Forge server base URL (e.g. https://forge.example.com).</td></tr>
 <tr><td><code>project</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Project is the target BNK Forge project NAME.</td></tr>
 <tr><td><code>username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Username is the BNK Forge login user.</td></tr>
+<tr><td><code>password_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>PasswordB64 is that user’s password, base64-encoded — obfuscation, NOT encryption, exactly as bnk.cis.bigip_password_b64 and registry.generic_password_b64 are.</td></tr>
 <tr><td><code>insecure</code></td><td><code>bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Insecure skips TLS verification against the Forge server.</td></tr>
 <tr><td><code>ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>CAB64 pins the CA the Forge server’s certificate must chain to, PEM, base64-encoded.</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="bnkgtmcfg"><a class="header" href="#bnkgtmcfg"><code>BNKGTMCfg</code></a></h2>
-<p>BNKCISCfg configures the BNK CIS controller’s BIG-IP target. All optional. BNKGTMCfg is the BIG-IP DNS / GTM the CNE controller registers its GSLB datacenter with (#51) — the connection half of GSLB, which until now only had the datacenter NAME.  The password is stored base64-encoded (obfuscation, NOT encryption — like ibmcloud.api_key_b64 and bnk.cis.bigip_password_b64) and rendered raw into terraform.tfvars at apply time.  Absent → nothing is emitted and the CNEInstance is unchanged, so GSLB stays exactly as it behaves today for every workspace that does not use it.</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>key</th><th>type</th><th>line</th><th>default</th><th>required</th><th>description</th></tr>
-</thead>
-<tbody>
-<tr><td><code>url</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>URL of the GTM/BIG-IP DNS management endpoint, e.g. https://gtm.example.com.</td></tr>
-<tr><td><code>username</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Username to authenticate with.</td></tr>
-<tr><td><code>password_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>PasswordB64 is the base64 of the password.</td></tr>
 </tbody>
 </table>
 </div>
@@ -13255,9 +13263,6 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>Network attachment names for cne_instance — wired automatically from flo output; set here to override</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use install-guide defaults)</td><td>no</td></tr>
 <tr><td><code>cneinstance_vlan_prefixlen_external</code></td><td><code>number</code></td><td><code>0</code></td><td>External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value.</td><td>no</td></tr>
@@ -13410,9 +13415,6 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>flo_trusted_profile_id</code></td><td><code>string</code></td><td><code>""</code></td><td>IBM IAM Trusted Profile ID for provisioning VPC routes</td><td>no</td></tr>
 <tr><td><code>flo_cluster_issuer_name</code></td><td><code>string</code></td><td><code>""</code></td><td>mTLS certificate issuer name</td><td>no</td></tr>
 <tr><td><code>cneinstance_deployment_size</code></td><td><code>string</code></td><td><code>""</code></td><td>Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5’s reference cluster use). Tiny is what the BNK 2.4 install guide uses.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_url</code></td><td><code>string</code></td><td><code>""</code></td><td>BIG-IP DNS / GTM management URL the CNE controller registers its GSLB datacenter with (#51). Empty disables GTM entirely.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_username</code></td><td><code>string</code></td><td><code>""</code></td><td>Username for the GTM at cneinstance_gtm_url.</td><td>no</td></tr>
-<tr><td><code>cneinstance_gtm_password</code></td><td><code>string</code></td><td><code>""</code></td><td>Password for the GTM at cneinstance_gtm_url.</td><td><strong>yes</strong></td></tr>
 <tr><td><code>cneinstance_gslb_datacenter_name</code></td><td><code>string</code></td><td><code>""</code></td><td>GSLB datacenter name for CNEInstance (optional)</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_attachments</code></td><td><code>list(string)</code></td><td><code>["ens3-ipvlan-l2", "macvlan-conf"]</code></td><td>The Multus Network Attachment Definitions for the CNEInstance TMM deployments</td><td>no</td></tr>
 <tr><td><code>cneinstance_network_zones</code></td><td><code>list(object({</code></td><td><code>[]</code></td><td>Per-zone subnet CIDRs + TMM self-IPs (empty = use the install-guide defaults)</td><td>no</td></tr>
