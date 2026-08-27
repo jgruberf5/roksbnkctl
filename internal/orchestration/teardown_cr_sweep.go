@@ -298,9 +298,48 @@ func splitCNEInstance(gvrs []schema.GroupVersionResource) (leaves, roots []schem
 			roots = append(roots, g)
 			continue
 		}
+		if floManagedComponent(g) {
+			// Neither deleted nor waited for. See floManagedComponent.
+			continue
+		}
 		leaves = append(leaves, g)
 	}
 	return leaves, roots
+}
+
+// floManagedComponent reports whether a resource is a component the F5 Lifecycle
+// Operator creates FROM the CNEInstance and will recreate for as long as the
+// CNEInstance exists.
+//
+// THE k8s.f5.com GROUP IS NOT A LIST OF THINGS TO DELETE. It holds the
+// CNEInstance and the components it declares:
+//
+//	cneinstances    <- the declaration. Deleting THIS is the uninstall.
+//	cnecontrollers  //	f5tmms           |
+//	dssms            |- components. FLO recreates each one, immediately, for as
+//	afms             |  long as the CNEInstance above still exists.
+//	downloaders      |
+//	cnemanifests    /
+//
+// Measured on a live 2.4.0-EA install: deleting f5-dssm by hand while the
+// CNEInstance was present had it back in under five seconds. So a drain that
+// deletes them cannot ever finish -- it deletes, FLO restores, it counts them
+// present again, and the phase times out with nothing achieved. That is the 4m
+// timeout on every teardown, and it was never the admission webhook: the webhook
+// guards k8s.f5net.com, and every one of these is k8s.f5.com.
+//
+// OWNERSHIP IS NOT ENOUGH TO DETECT THIS. Four of the six carry an
+// ownerReference to the CNEInstance and two -- dssms and cnemanifests -- do not,
+// even though FLO recreates them just the same. A skip keyed on ownerReferences
+// alone leaves those two fighting the operator forever, which is exactly what the
+// first version of this did.
+//
+// The 2.4 guide agrees and never asks for any of them: its order is use-case CRs,
+// GatewaySettings, Infra, License, VERIFY IPAM gone, then CNEInstance. #217's
+// leaves-first insight was right about the objects the guide NAMES; it was applied
+// to every F5 CR in the namespace, which swept in the ones FLO owns.
+func floManagedComponent(g schema.GroupVersionResource) bool {
+	return g.Group == "k8s.f5.com" && g.Resource != cneInstanceResource
 }
 
 // deletePass is what one pass over a phase actually observed. The counts are

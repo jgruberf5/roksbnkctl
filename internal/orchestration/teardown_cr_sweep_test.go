@@ -1274,3 +1274,71 @@ func TestTheRemainingCountExcludesWhatTheDrainDeliberatelyLeft(t *testing.T) {
 			"neither is something that failed to finalize.", present)
 	}
 }
+
+// THE ACTUAL CAUSE of the 4m drain timeout on every teardown (#241).
+//
+// Measured on a live 2.4.0-EA install: delete f5-dssm by hand while the
+// CNEInstance is present and FLO has it back in under five seconds. So a drain
+// that deletes FLO's components cannot ever finish -- it deletes, FLO restores,
+// it counts them present again, and the phase times out having achieved nothing.
+//
+// OWNERSHIP DOES NOT DETECT THIS. dssms and cnemanifests carry NO ownerReference,
+// while cnecontrollers/f5tmms/afms/downloaders do -- and FLO recreates all six
+// identically. A skip keyed on ownerReferences alone leaves those two fighting the
+// operator forever, which is what the first version of this did.
+//
+// The rule is the group: k8s.f5.com holds the CNEInstance and the components it
+// declares. Deleting the CNEInstance IS the uninstall; the rest go with it.
+func TestFLOManagedComponentsAreNeverDeletedDirectly(t *testing.T) {
+	g := func(res string) schema.GroupVersionResource {
+		return schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: res}
+	}
+	all := []schema.GroupVersionResource{
+		g("cneinstances"), g("cnecontrollers"), g("f5tmms"), g("dssms"),
+		g("afms"), g("downloaders"), g("cnemanifests"),
+		gvrIPAM, // fic.f5.com — a real leaf the guide DOES name
+	}
+
+	leaves, roots := splitCNEInstance(all)
+
+	if len(roots) != 1 || roots[0].Resource != "cneinstances" {
+		t.Fatalf("roots = %v, want exactly cneinstances", roots)
+	}
+	for _, l := range leaves {
+		if l.Group == "k8s.f5.com" {
+			t.Errorf("%s/%s is in the leaf phase.\n"+
+				"Every k8s.f5.com resource except the CNEInstance is a component FLO recreates "+
+				"for as long as the CNEInstance exists, so deleting it can never make progress.",
+				l.Group, l.Resource)
+		}
+	}
+	// The genuine leaf must survive: the skip must not swallow the objects the
+	// guide explicitly requires removing before the CNEInstance.
+	found := false
+	for _, l := range leaves {
+		if l.Resource == "ipams" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ipams was dropped from the leaf phase — IPAM/IPAMRange are exactly what the 2.4 " +
+			"guide requires be confirmed gone BEFORE the CNEInstance, so they must still be drained")
+	}
+}
+
+// dssms and cnemanifests are the two that ownership cannot catch. Pinned by name,
+// because they are the reason the group rule exists rather than an owner check.
+func TestTheUnownedFLOComponentsAreStillSkipped(t *testing.T) {
+	for _, res := range []string{"dssms", "cnemanifests"} {
+		gvr := schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: res}
+		if !floManagedComponent(gvr) {
+			t.Errorf("%s is not treated as FLO-managed. It carries no ownerReference, so the "+
+				"ownership skip misses it, and FLO recreates it within seconds of deletion.", res)
+		}
+	}
+	// And the CNEInstance itself must NOT be skipped — deleting it is the uninstall.
+	root := schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}
+	if floManagedComponent(root) {
+		t.Error("the CNEInstance was treated as a managed component; deleting it IS the uninstall")
+	}
+}
