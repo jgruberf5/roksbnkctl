@@ -112,8 +112,20 @@ resource "helm_release" "cert_manager" {
   wait    = true
   timeout = var.timeout
 
+  # crds.enabled, NOT installCRDs. cert-manager >= 1.15 replaced installCRDs with
+  # crds.enabled (and crds.keep); 1.17.3 still honours the old name as an alias
+  # and prints on every plan and apply:
+  #
+  #   ⚠️  WARNING: `installCRDs` is deprecated, use `crds.enabled` instead.
+  #
+  # Same value, same behaviour, and it keeps working when the alias is dropped.
+  #
+  # crds.keep is deliberately left at its default (true), which is what the alias
+  # already did: cert-manager's CRDs are cluster-scoped and shared, and removing
+  # them on uninstall would delete every Certificate and Issuer on the cluster,
+  # including ones this deployment never created.
   set {
-    name  = "installCRDs"
+    name  = "crds.enabled"
     value = "true"
   }
 

@@ -21,6 +21,11 @@ import (
 // working.
 var deprecatedAttributes = []struct{ banned, use, why string }{
 	{
+		banned: "installCRDs",
+		use:    "crds.enabled",
+		why:    "cert-manager >= 1.15: \"installCRDs is deprecated, use crds.enabled instead\" (#243)",
+	},
+	{
 		banned: "primary_ipv4_address",
 		use:    "primary_network_interface[0].primary_ip[0].address",
 		why:    "ibm-cloud/ibm: \"primary_ipv4_address is deprecated and support will be removed. Use primary_ip instead\" (#242)",
@@ -62,6 +67,13 @@ func TestTheShippedTerraformUsesNoDeprecatedProviderAttributes(t *testing.T) {
 			return rerr
 		}
 		for i, line := range strings.Split(string(b), "\n") {
+			// Comments are skipped. A comment explaining WHY an attribute was
+			// replaced necessarily names it, and flagging that is a false positive
+			// that pushes people to delete the explanation to satisfy the check.
+			// This test caught its own fix's comment block the first time it ran.
+			if t := strings.TrimSpace(line); strings.HasPrefix(t, "#") || strings.HasPrefix(t, "//") {
+				continue
+			}
 			for _, dep := range deprecatedAttributes {
 				if strings.Contains(line, dep.banned) {
 					findings = append(findings, "  "+p+":"+strconv.Itoa(i+1)+"\n"+
