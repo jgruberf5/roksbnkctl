@@ -9,6 +9,14 @@
 # real BNK install answers it, and only repeatedly — a race that loses one time in
 # four looks like a pass on a single run.
 #
+# THE CLUSTER IS CREATED ONCE, OUTSIDE THE LOOP. `bnk up` / `bnk down` drive the
+# BNK phase and leave the cluster in place, which is what makes repetition
+# affordable -- a full `up`/`down` spends 27 minutes creating a ROKS cluster and 6
+# destroying it, and none of that is what is under test. It is also the topology
+# #241 was reported against (cluster.create: false on an existing cluster), and
+# the only one where anything cluster-scoped can survive to be checked (#250).
+#
+#   roksbnkctl cluster up -w <workspace> --auto        # once
 #   ./scripts/testing/241-up-down-loop.sh -w <workspace> [-n 3]
 #
 # Every cycle writes its own log; the script greps both phases for the error
@@ -64,7 +72,7 @@ for i in $(seq 1 "$CYCLES"); do
     echo "  cycle $i/$CYCLES — up"
     echo "=============================================================="
     up_log="$LOGDIR/cycle-$i-up.log"
-    if ! "$BNK" up -w "$WS" --auto 2>&1 | tee "$up_log"; then
+    if ! "$BNK" bnk up -w "$WS" --auto 2>&1 | tee "$up_log"; then
         echo "✗ cycle $i: 'bnk up' exited non-zero — stopping, cluster left as-is"
         echo "  log: $up_log"
         exit 1
@@ -81,7 +89,7 @@ for i in $(seq 1 "$CYCLES"); do
     echo "=============================================================="
     down_log="$LOGDIR/cycle-$i-down.log"
     start=$(date +%s)
-    if ! "$BNK" down -w "$WS" --auto 2>&1 | tee "$down_log"; then
+    if ! "$BNK" bnk down -w "$WS" --auto 2>&1 | tee "$down_log"; then
         echo "✗ cycle $i: 'bnk down' exited non-zero — stopping, cluster left as-is"
         echo "  log: $down_log"
         exit 1
@@ -106,6 +114,24 @@ for i in $(seq 1 "$CYCLES"); do
     if [ "$elapsed" -gt 480 ]; then
         echo "  ⚠ down took ${elapsed}s — over 8 minutes is the pre-#235 cost profile; check $down_log"
     fi
+
+    # #250: the cluster survives this teardown, so anything cluster-scoped that
+    # should have gone is still observable. The webhook is the one that MUST be
+    # gone -- it is named for the namespace, belongs to this workspace alone, and
+    # a stale one pointing at a service that no longer exists blocks unrelated
+    # work on the whole cluster. Retained CRDs and APIServices are reported by
+    # the residue check but are a deliberate decision, not a failure.
+    if kubectl get validatingwebhookconfiguration 2>/dev/null | grep -q "f5validate"; then
+        echo "✗ cycle $i: a validating webhook served from the BNK namespace SURVIVED the teardown:"
+        kubectl get validatingwebhookconfiguration 2>/dev/null | grep f5validate | sed 's/^/      /'
+        exit 1
+    fi
+    if kubectl get ns 2>/dev/null | grep -E "f5-" | grep -q Terminating; then
+        echo "✗ cycle $i: a BNK namespace is stuck Terminating after the teardown:"
+        kubectl get ns 2>/dev/null | grep -E "f5-" | sed 's/^/      /'
+        exit 1
+    fi
+    echo "  ✓ no webhook or Terminating namespace left behind"
 done
 
 echo ""
