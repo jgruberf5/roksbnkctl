@@ -56,7 +56,7 @@ Source: `terraform/variables.tf`
 | `bigip_url` | `string` | `"192.168.1.245"` | BIG-IP URL for the CIS controller | no |
 | `flo_trusted_profile_id` | `string` | `""` | IBM Cloud Trusted Profile ID created by flo — wired automatically from flo output; set here to override | no |
 | `flo_trusted_profile_sa_name` | `string` | `""` | Kubernetes service account name the CNE controller's IBM Cloud Trusted Profile is linked to — i.e. which service account may ASSUME the profile and act on the VPC. | no |
-| `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=<cluster vpc>). | no |
+| `flo_trusted_profile_roles` | `list(string)` | `["Viewer", "Editor"]` | IAM roles granted to the CNE controller's Trusted Profile, scoped to the cluster's OWN VPC (serviceName=is, vpcId=`<cluster vpc>`). | no |
 | `flo_cluster_issuer_name` | `string` | `""` | Kubernetes ClusterIssuer name created by flo — wired automatically from flo output; set here to override | no |
 | `cneinstance_network_attachments` | `list(string)` | `["ens3-ipvlan-l2", "macvlan-conf"]` | Network attachment names for cne_instance — wired automatically from flo output; set here to override | no |
 | `cneinstance_deployment_size` | `string` | `""` | Deployment size for CNEInstance (Tiny, Small, Medium, Large). EMPTY takes the line default: Small on 2.3, Tiny on 2.4 (what the 2.4 install guide and F5's reference cluster use). Tiny is what the BNK 2.4 install guide uses; it is passed through unvalidated, so a size a given manifest does not define is rejected by the operator, not here. | no |
@@ -106,9 +106,9 @@ Source: `terraform/variables.tf`
 | `flp_status_registry_host` | `string` | `""` | Registry host:port whose CA to trust so the FLP VSI can pull flp_status_image (e.g. Harbor's `<ip>`). | no |
 | `flp_status_registry_ca_b64` | `string` | `""` | Base64 CA cert for flp_status_registry_host. | no |
 | `flp_vsi_ssh_key` | `string` | `""` | Existing IBM Cloud VPC SSH key name to attach to the standalone FLP VSI (operator access). Empty = no key. | no |
-| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile for the FLP (>= 4 vCPU / 8 GB). | no |
+| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile for the FLP (&gt;= 4 vCPU / 8 GB). | no |
 | `flp_vsi_zone` | `string` | `""` | Zone for the FLP VSI. Empty → `<region>`-1. | no |
-| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size (GB) for the FLP VSI (>= 80). | no |
+| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size (GB) for the FLP VSI (&gt;= 80). | no |
 | `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management (flp status + web UI + 8443 from another machine). Not the CWC endpoint. Reachability still gated by flp_vsi_allowed_cidrs. Default true. | no |
 | `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :80 flp-status web UI (read-only). Empty → 0.0.0.0/0 (open). | no |
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs for the FLP VSI's :8443 proxy (+ :22 SSH). Empty → RFC-1918 private ranges. | no |
@@ -331,9 +331,9 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `ibmcloud_api_key` | `string` | _required_ | IBM Cloud API key (provider + COS/IAM REST auth). | **yes** |
 | `ibmcloud_cluster_region` | `string` | _required_ | Region of the ROKS cluster / where the FLP VSI is provisioned. | no |
 | `ibmcloud_resource_group` | `string` | `""` | Resource group for the VSI + network (empty = account default). | no |
-| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile (>= 4 vCPU / 8 GB). | no |
+| `flp_vsi_profile` | `string` | `"bx2-4x16"` | VSI instance profile (&gt;= 4 vCPU / 8 GB). | no |
 | `flp_vsi_zone` | `string` | `""` | Zone for the VSI (e.g. us-south-1). Empty → `<region>`-1. | no |
-| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size in GB (>= 80). | no |
+| `flp_vsi_boot_size_gb` | `number` | `100` | Boot volume size in GB (&gt;= 80). | no |
 | `flp_vsi_floating_ip` | `bool` | `true` | Attach an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + :8443 proxy from another machine. NOT the CWC endpoint (the cluster always reaches the proxy privately). The floating IP is added to the leaf-cert SAN; reachability is still gated by flp_vsi_allowed_cidrs. Default true. | no |
 | `flp_vsi_management_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :80 flp-status web UI (read-only status). Empty → 0.0.0.0/0 (open — the page carries no secrets). | no |
 | `flp_vsi_licensing_allowed_cidrs` | `list(string)` | `[]` | Source CIDRs allowed to reach the :8443 licensing proxy (and :22 SSH). Empty → the RFC-1918 private ranges (the cluster reaches the proxy privately over the VPC / Transit Gateway). | no |

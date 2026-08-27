@@ -33,7 +33,7 @@ run time and belongs in the prose rather than a table cell.
 
 ## `Workspace`
 
-Workspace is ~/.roksbnkctl/<name>/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no `api_key` field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.
+Workspace is ~/.roksbnkctl/`<name>`/config.yaml.  Mirrors the per-workspace example in docs/PRD.md. Note that there is no `api_key` field — secrets live in env vars or the OS keychain, never in this struct. Plaintext keys in the YAML are rejected at load time by rejectPlaintextSecrets.
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
@@ -125,7 +125,7 @@ BNKCertManagerCfg overrides cert-manager's install coordinates. All optional; th
 | `hugepages` | `*HugepagesCfg` | 2.3 + 2.4 | — | no | Hugepages optionally allocates hugepages on the worker pool via the OpenShift Node Tuning Operator. |
 | `tcp_settings` | `map[string]string` | 2.3 + 2.4 | — | no | TCPSettings overrides individual fields on the data-plane F5BigTcpSetting CR by name, e.g. {"congestionControl": "bbr", "delayedAcks": "true"} — the key is the CR's own spec field. |
 | `tcp_settings_name` | `string` | 2.3 + 2.4 | `sys-default-tcp` | no | TCPSettingsName is the F5BigTcpSetting to write. |
-| `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.<component>.env[] lists (#175). |
+| `advanced` | `map[string]AdvancedComponentCfg` | 2.3 + 2.4 | — | no | Advanced carries per-component environment passthrough for the 2.4 CNEInstance's advanced.`<component>`.env[] lists (#175). |
 | `tmm_resources` | `map[string]map[string]string` | 2.3 + 2.4 | — | no | TMMResources overrides the TMM pod's resource requests/limits, rendered as the CNEInstance's advanced.tmm.resources (#203). |
 | `gslb_datacenter_name` | `string` | 2.3 + 2.4 | — | no | GSLBDatacenterName sets the optional CNEInstance GSLB datacenter name (rendered as cneinstance_gslb_datacenter_name). |
 | `cert_manager` | `*BNKCertManagerCfg` | 2.3 + 2.4 | — | no | CertManager overrides cert-manager's namespace + chart version. |
@@ -189,8 +189,8 @@ BNKFLPVSICfg configures the mode: vsi FLP backend — a standalone VSI running t
 | `ssh_key` | `string` | 2.3 + 2.4 | — | no | SSHKey is the name of an existing IBM Cloud VPC SSH key (RSA) to attach to the FLP VSI, so an operator can SSH in to inspect/recover the licensing appliance (podman pod, Vault, logs). |
 | `floating_ip` | `*bool` | 2.3 + 2.4 | — | no | FloatingIP attaches an operator floating IP to the FLP VSI for remote management — running `roksbnkctl flp status` and reaching the :80 web UI + the :8443 proxy from a machine OUTSIDE the VPC. |
 | `status_image` | `string` | 2.3 + 2.4 | — | no | StatusImage, when set, runs the flp-status web UI as a container in the FLP pod (mobile-friendly status page + /api/status + live logs on :80, no auth — a read-only private status endpoint). |
-| `status_registry_host` | `string` | 2.3 + 2.4 | — | no | StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/<host>/ca.crt before the pod comes up. |
-| `status_registry_ca_b64` | `string` | 2.3 + 2.4 | — | no | StatusRegistryCAB64 is that registry's CA, base64-encoded, written to /etc/containers/certs.d/<host>/ca.crt on the VSI. |
+| `status_registry_host` | `string` | 2.3 + 2.4 | — | no | StatusRegistryHost + StatusRegistryCAB64 make the VSI trust a self-signed mirror so it can pull StatusImage: cloud-init drops the (base64) CA into /etc/containers/certs.d/`<host>`/ca.crt before the pod comes up. |
+| `status_registry_ca_b64` | `string` | 2.3 + 2.4 | — | no | StatusRegistryCAB64 is that registry's CA, base64-encoded, written to /etc/containers/certs.d/`<host>`/ca.crt on the VSI. |
 | `forward_proxy` | `*BNKFLPForwardProxyCfg` | 2.3 + 2.4 | — | no | ForwardProxy optionally routes the VSI's egress to F5 licensing through an HTTP forward proxy (air-gapped/egress-controlled networks). |
 
 ## `BNKForgeCfg`
@@ -292,11 +292,11 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 
 ## `DNSCfg`
 
-DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe (GSLB-aware)" §"Server resolution"). The map's keys are the names users pass to `--server <name>` and the values are concrete "<ip>[:<port>]" strings the miekg/dns client dials. DefaultTarget is used when --target isn't passed on the command line.  Example:  test: dns: resolvers: google:     "8.8.8.8:53" cloudflare: "1.1.1.1:53" gslb-vip:   "169.45.91.5:53" default_target: "www.example.com"
+DNSCfg drives the Sprint 5 flag-driven DNS probe (PRD 03 §"DNS probe (GSLB-aware)" §"Server resolution"). The map's keys are the names users pass to `--server <name>` and the values are concrete "`<ip>`[:`<port>`]" strings the miekg/dns client dials. DefaultTarget is used when --target isn't passed on the command line.  Example:  test: dns: resolvers: google:     "8.8.8.8:53" cloudflare: "1.1.1.1:53" gslb-vip:   "169.45.91.5:53" default_target: "www.example.com"
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `resolvers` | `map[string]string` | 2.3 + 2.4 | — | no | Resolvers names the DNS servers to query, as name → "<ip>[:<port>]". |
+| `resolvers` | `map[string]string` | 2.3 + 2.4 | — | no | Resolvers names the DNS servers to query, as name → "`<ip>`[:`<port>`]". |
 | `default_target` | `string` | 2.3 + 2.4 | — | no | DefaultTarget is the resolver queried when a probe names none. |
 
 ## `ExecToolCfg`
@@ -305,7 +305,7 @@ ExecToolCfg is one entry under workspace.Exec — the chosen backend for a given
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
-| `backend` | `string` | 2.3 + 2.4 | — | yes | Backend is the execution-backend spec: "local" \| "docker" \| "k8s" \| "ssh:<target>". |
+| `backend` | `string` | 2.3 + 2.4 | — | yes | Backend is the execution-backend spec: "local" \| "docker" \| "k8s" \| "ssh:`<target>`". |
 
 ## `GatewayCfg`
 
@@ -400,7 +400,7 @@ ResourcesCfg holds the per-resource create toggles for a prefix-driven workspace
 
 ## `StateCfg`
 
-GatewayCfg carries optional overrides for the Gateway phase (the BNK data-plane config). Every field is optional — unset values fall back to the terraform gateway module's BNK install-guide defaults. Rendered as gateway_* tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a toggle here. StateCfg selects where terraform state lives (PRD 16). Backend "" or "local" (the default) keeps per-phase local tfstate under the workspace dir — the original behaviour. "s3" stores each phase's state in an S3-compatible bucket (IBM COS), so a stateless runner / parallel CI needs no shared volume, with native lockfile locking (terraform >= 1.10). Additive + omitempty — an absent `state:` block loads as the local default.
+GatewayCfg carries optional overrides for the Gateway phase (the BNK data-plane config). Every field is optional — unset values fall back to the terraform gateway module's BNK install-guide defaults. Rendered as gateway_* tfvars. The phase itself is driven by `roksbnkctl gateway up/down`, not a toggle here. StateCfg selects where terraform state lives (PRD 16). Backend "" or "local" (the default) keeps per-phase local tfstate under the workspace dir — the original behaviour. "s3" stores each phase's state in an S3-compatible bucket (IBM COS), so a stateless runner / parallel CI needs no shared volume, with native lockfile locking (terraform &gt;= 1.10). Additive + omitempty — an absent `state:` block loads as the local default.
 
 | key | type | line | default | required | description |
 |---|---|---|---|---|---|
@@ -441,7 +441,7 @@ TargetCfg is the on-disk shape of one entry under `targets:` in the workspace co
 | `port` | `int` | 2.3 + 2.4 | `22` | no | Port is its SSH port. |
 | `user` | `string` | 2.3 + 2.4 | — | yes | User is the SSH login. |
 | `key_path` | `string` | 2.3 + 2.4 | — | no | file path (PEM). |
-| `key_source` | `string` | 2.3 + 2.4 | — | no | "agent" \| "tf-output:<name>". |
+| `key_source` | `string` | 2.3 + 2.4 | — | no | "agent" \| "tf-output:`<name>`". |
 
 ## `TestCfg`
 

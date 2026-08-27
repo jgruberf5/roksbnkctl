@@ -32,7 +32,7 @@ run: build
 clean:
 	rm -rf bin/
 
-.PHONY: audit-env generate book book-pdf book-test book-serve book-clean release release-publish \
+.PHONY: audit-env generate book book-run book-pdf book-test book-serve book-clean release release-publish \
         book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
         pages-assure staticcheck build-integration-tags integration-test
 
@@ -64,12 +64,41 @@ MDBOOK = mdbook
 MDBOOK_SERVE = mdbook serve book/ --open
 endif
 
+# BOOK_STRICT (default on) fails the build on mdbook's "unclosed HTML tag"
+# warning. #239 shipped because that warning fired eleven times on every single
+# build and scrolled past: a placeholder like <name> in a doc comment reached
+# markdown as a live tag and rendered as NOTHING, so the published reference read
+# "Workspace is ~/.roksbnkctl//config.yaml".
+#
+# TestGeneratedChaptersHaveNoRawHTMLTags covers the three GENERATED chapters. This
+# covers the hand-written ones too, which no test regenerates. Set BOOK_STRICT=0
+# to get the old behaviour while iterating.
+BOOK_STRICT ?= 1
+
 book:
 ifeq ($(BOOK_BACKEND),docker)
-	$(MDBOOK) build
+	@$(MAKE) --no-print-directory book-run MDBOOK_ARGS="build"
 else
-	$(MDBOOK) build book/
+	@$(MAKE) --no-print-directory book-run MDBOOK_ARGS="build book/"
 endif
+
+# book-run: runs mdbook, echoes its output unchanged, and (when BOOK_STRICT=1)
+# fails if it reported an unclosed HTML tag. `set -o pipefail` keeps mdbook's own
+# non-zero exit from being masked by the tee.
+book-run:
+	@set -o pipefail; \
+	out=$$(mktemp) && trap 'rm -f $$out' EXIT && \
+	$(MDBOOK) $(MDBOOK_ARGS) 2>&1 | tee $$out; \
+	if [ "$(BOOK_STRICT)" = "1" ] && grep -q "unclosed HTML tag" $$out; then \
+	    echo "" >&2; \
+	    echo "==> mdbook reported unclosed HTML tags — the text inside them renders as NOTHING." >&2; \
+	    grep "unclosed HTML tag" $$out >&2; \
+	    echo "" >&2; \
+	    echo "    In a GENERATED chapter (27/28/29): the description text did not go through" >&2; \
+	    echo "    tools/refgen/mdesc. In a hand-written one: wrap the placeholder in backticks." >&2; \
+	    echo "    Set BOOK_STRICT=0 to build anyway." >&2; \
+	    exit 1; \
+	fi
 
 # book-pdf: PDF-only build. Requires BOOK_BACKEND=docker since the
 # host-install path doesn't include pandoc + LaTeX + mermaid-cli (and we
