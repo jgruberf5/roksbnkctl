@@ -23,6 +23,11 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   badge rolls forward with the release; `TestConfigCheatsheetIsCurrent` fails the
   build if the checked-in copy drifts.
 
+  The **Req** column comes from `config.RequiredConfigFields`, the one list
+  `init` itself checks — not from `omitempty`, which is a marshalling directive
+  and says nothing about whether a value must be supplied. Deriving from it
+  marked 25 fields required when four are, and missed `prefix`.
+
   It also documents what is **deliberately not** in `config.yaml` —
   `IBMCLOUD_API_KEY`, `BNK_FORGE_PASSWORD`, `BNK_FORGE_USER`, `BNK_FORGE_URL` —
   because a fields-only page answers "every field" and not "how do I set the

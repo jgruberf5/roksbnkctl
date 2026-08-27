@@ -77,7 +77,6 @@ type field struct {
 	Line     string // BNK line: 2.3, 2.4, or both
 	Default  string
 	Doc      string
-	Optional bool
 	TypeName string // the named struct type to recurse into, if any
 }
 
@@ -132,15 +131,24 @@ func main() {
 		sort.Strings(envFor[k])
 	}
 
+	// Requiredness comes from config.RequiredConfigFields, NOT from `omitempty`.
+	// omitempty is a marshalling directive and says nothing about whether a value
+	// must be supplied; deriving from it marked 25 fields required when four are,
+	// and missed `prefix` (#229 review).
+	required := map[string]bool{}
+	for _, f := range config.RequiredConfigFields {
+		required[f] = true
+	}
+
 	var entries []entry
-	walk(structs, root, "", "", 0, envFor, &entries)
+	walk(structs, root, "", "", 0, envFor, required, &entries)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 
 	fmt.Print(render(entries, structs, currentVersion(), outsideConfig()))
 }
 
 // walk resolves every leaf under sd, following named struct types.
-func walk(all map[string]*structDoc, sd *structDoc, prefix, section string, depth int, envFor map[string][]string, out *[]entry) {
+func walk(all map[string]*structDoc, sd *structDoc, prefix, section string, depth int, envFor map[string][]string, required map[string]bool, out *[]entry) {
 	if depth > maxDepth {
 		fmt.Fprintf(os.Stderr, "warning: %s exceeds depth %d — the schema nests deeper than expected, "+
 			"and the cheatsheet is truncated there rather than looping\n", prefix, maxDepth)
@@ -170,13 +178,13 @@ func walk(all map[string]*structDoc, sd *structDoc, prefix, section string, dept
 			*out = append(*out, entry{
 				Path: path, Section: sec, GoType: f.GoType, Line: f.Line,
 				Default: f.Default, Doc: f.Doc,
-				Env: strings.Join(envAt(envFor, path), " / "), Req: !f.Optional,
+				Env: strings.Join(envAt(envFor, path), " / "), Req: required[path],
 			})
-			walk(all, child, path+"[]", sec, depth+1, envFor, out)
+			walk(all, child, path+"[]", sec, depth+1, envFor, required, out)
 			continue
 		}
 		if nested {
-			walk(all, child, path, sec, depth+1, envFor, out)
+			walk(all, child, path, sec, depth+1, envFor, required, out)
 			continue
 		}
 		*out = append(*out, entry{
@@ -187,7 +195,7 @@ func walk(all map[string]*structDoc, sd *structDoc, prefix, section string, dept
 			Default: f.Default,
 			Doc:     f.Doc,
 			Env:     strings.Join(envAt(envFor, path), " / "),
-			Req:     !f.Optional,
+			Req:     required[path],
 		})
 	}
 }
@@ -238,7 +246,6 @@ func parseStructs(src string) (map[string]*structDoc, error) {
 					Line:     line,
 					Default:  tag.Get("default"),
 					Doc:      firstSentence(docText(fl.Doc, fl.Comment)),
-					Optional: strings.Contains(y, "omitempty"),
 					TypeName: baseTypeName(gt),
 				})
 			}

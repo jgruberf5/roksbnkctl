@@ -229,21 +229,14 @@ func runInitFromConfigFile(cctx *config.Context) error {
 // an IBM Cloud region + resource group, a name prefix, and a terraform source.
 // The API key is intentionally NOT required here — it resolves from the env /
 // keychain / config at run time.
+// missingRequiredConfigFields delegates to config.MissingRequiredFields.
+//
+// The list lives there because the cheatsheet generator marks the same fields on
+// its "Req" column, and two copies would disagree the first time one moved. It
+// already had: the generator derived requiredness from `omitempty` and marked 25
+// fields required when four are (#229 review).
 func missingRequiredConfigFields(ws *config.Workspace) []string {
-	var missing []string
-	if ws.IBMCloud.Region == "" {
-		missing = append(missing, "ibmcloud.region")
-	}
-	if ws.IBMCloud.ResourceGroup == "" {
-		missing = append(missing, "ibmcloud.resource_group")
-	}
-	if strings.TrimSpace(ws.Prefix) == "" {
-		missing = append(missing, "prefix")
-	}
-	if ws.TFSource.Type == "" {
-		missing = append(missing, "tf_source.type")
-	}
-	return missing
+	return config.MissingRequiredFields(ws)
 }
 
 // invalidResourceCombo reports a resources block terraform cannot plan, so the
