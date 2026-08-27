@@ -166,3 +166,28 @@ func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.
 	}
 	return len(deleted)
 }
+
+// webhookNeutraliser returns the callback the CR drain uses to clear a webhook
+// that has just refused a delete (#241).
+//
+// It is built from the SAME kubeconfig bytes the drain resolved, not a fresh
+// lookup: the forge kubeconfig is shared between workspaces and sessions, and
+// deleting admission webhooks on the wrong cluster is a considerably worse bug
+// than the stall being fixed. Reusing the bytes the caller already proved point
+// at the cluster being destroyed removes the chance of the two disagreeing.
+//
+// Returns nil when a client cannot be built, which deleteAllIn treats as "nothing
+// to try" -- the drain then behaves exactly as it did before.
+func webhookNeutraliser(kubeconfig []byte, floNS string) neutraliseFunc {
+	if floNS == "" {
+		return nil
+	}
+	cl, err := k8s.NewFromKubeconfigBytes(kubeconfig)
+	if err != nil {
+		return nil
+	}
+	return func(ctx context.Context) bool {
+		deleted, err := k8s.DeleteOrphanedAdmissionWebhooks(ctx, cl.Clientset(), floNS, nil)
+		return err == nil && len(deleted) > 0
+	}
+}
