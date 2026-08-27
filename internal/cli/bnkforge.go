@@ -150,12 +150,27 @@ func registerWithBNKForge(ctx context.Context, cctx *config.Context, bf *config.
 
 // resolveForgePassword returns the BNK Forge password: BNK_FORGE_PASSWORD env,
 // else a hidden interactive prompt. Never persisted.
-func resolveForgePassword(interactive bool) (string, error) {
+func resolveForgePassword(interactive bool, bf *config.BNKForgeCfg) (string, error) {
+	// Precedence: env, then the workspace field, then the prompt. The env wins so
+	// a CI runner can override a stored value without editing the file, matching
+	// how every other credential in this tool resolves.
 	if p := os.Getenv(envForgePassword); p != "" {
 		return p, nil
 	}
+	if bf != nil && bf.PasswordB64 != "" {
+		raw, err := base64.StdEncoding.DecodeString(bf.PasswordB64)
+		if err != nil {
+			return "", fmt.Errorf("bnkforge.password_b64 is not valid base64: %w\n"+
+				"  It holds the base64 of the password, not the password itself — "+
+				"`printf %%s 'secret' | base64`", err)
+		}
+		if p := strings.TrimSpace(string(raw)); p != "" {
+			return p, nil
+		}
+	}
 	if !interactive || !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("no BNK Forge password (set %s, or run `roksbnkctl bnkforge register` at a terminal)", envForgePassword)
+		return "", fmt.Errorf("no BNK Forge password (set %s, set bnkforge.password_b64, "+
+			"or run `roksbnkctl bnkforge register` at a terminal)", envForgePassword)
 	}
 	fmt.Fprint(os.Stderr, "Enter BNK Forge password: ")
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -312,7 +327,7 @@ func newForgeClientForWorkspace(ctx context.Context, cctx *config.Context, bf *c
 	if user == "" {
 		return nil, fmt.Errorf("no BNK Forge username (set bnkforge.username, %s, or --username)", envForgeUser)
 	}
-	pass, perr := resolveForgePassword(interactive)
+	pass, perr := resolveForgePassword(interactive, bf)
 	if perr != nil {
 		return nil, perr
 	}

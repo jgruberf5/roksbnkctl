@@ -10,6 +10,11 @@ Field-by-field schema for the workspace `config.yaml`, generated from the
 in `internal/config/workspace.go`. This chapter is the single source of truth for
 what a field is called, what type it takes, and which BNK line it applies to.
 
+For a one-page version carrying the full dotted paths and each field's
+`ROKSBNKCTL_*` override, see the
+[**config.yaml cheatsheet**](https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html)
+— generated from the same struct, so the two cannot disagree.
+
 [Chapter 12 — Workspace config](./12-workspace-config.md) is the *teaching* chapter:
 use it to learn the shape. Use this one to look up a specific field. Every other
 chapter links here rather than restating fields, because a field restated in four
@@ -199,6 +204,7 @@ BNKForgeCfg is the optional integration with a co-located BNK Forge (v3) install
 | `url` | `string` | 2.3 + 2.4 | — | no | URL is the BNK Forge server base URL (e.g. https://forge.example.com). |
 | `project` | `string` | 2.3 + 2.4 | — | no | Project is the target BNK Forge project NAME. |
 | `username` | `string` | 2.3 + 2.4 | — | no | Username is the BNK Forge login user. |
+| `password_b64` | `string` | 2.3 + 2.4 | — | no | PasswordB64 is that user's password, base64-encoded — obfuscation, NOT encryption, exactly as bnk.cis.bigip_password_b64 and registry.generic_password_b64 are. |
 | `insecure` | `bool` | 2.3 + 2.4 | — | no | Insecure skips TLS verification against the Forge server. |
 | `ca_b64` | `string` | 2.3 + 2.4 | — | no | CAB64 pins the CA the Forge server's certificate must chain to, PEM, base64-encoded. |
 

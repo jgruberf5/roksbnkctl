@@ -120,10 +120,25 @@ type BNKForgeCfg struct {
 	// register time. Empty = the workspace name.
 	Project string `yaml:"project,omitempty"`
 	// Username is the BNK Forge login user. Also settable via BNK_FORGE_USER /
-	// --username. The password is NEVER stored here — it comes from
-	// BNK_FORGE_PASSWORD or an interactive prompt; the resulting session token
-	// is cached in the OS keychain.
+	// --username.
 	Username string `yaml:"username,omitempty"`
+
+	// PasswordB64 is that user's password, base64-encoded — obfuscation, NOT
+	// encryption, exactly as bnk.cis.bigip_password_b64 and
+	// registry.generic_password_b64 are. Every machine credential this tool
+	// takes now has the same shape, so an operator does not have to remember
+	// which one is the exception.
+	//
+	// LOWEST PRECEDENCE, and deliberately so. BNK_FORGE_PASSWORD wins, then
+	// --password, then this, then the prompt. The password is exchanged ONCE for
+	// a session token cached in the OS keychain, so a workspace that sets this is
+	// trading a long-lived secret on disk for not being asked — the right trade
+	// for unattended CI and the wrong one for a laptop.
+	//
+	// chmod 600 the workspace, .gitignore it, and prefer the env var where you
+	// can. scripts/generate_b64_password.sh produces the value without it
+	// reaching your shell history.
+	PasswordB64 string `yaml:"password_b64,omitempty"`
 	// Insecure skips TLS verification against the Forge server.
 	//
 	// The session token is sent on every request, so this makes the connection

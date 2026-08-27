@@ -6,6 +6,52 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **A generated `config.yaml` cheatsheet**, published at
+  [jgruberf5.github.io/roksbnkctl/config-cheatsheet.html](https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html)
+  and checked in at `scripts/demos/config-cheatsheet.html`. One white page listing
+  every field the workspace schema accepts, with the **full dotted path** an
+  operator actually types (`bnk.flp.vsi.subnet_cidr`, not `SubnetCIDR` on
+  `FLPVSICfg`) and the `ROKSBNKCTL_*` override that sets it. Filter-as-you-type,
+  and toggles for required / has-an-override / BNK 2.4.
+
+  Generated, not written. It walks the same `Workspace` struct the loader uses
+  and takes the override mapping from the derived probe rather than a parallel
+  table, so it cannot list a field that does not exist or miss one that does.
+  `make generate` refreshes it and `make release` runs that first, so the version
+  badge rolls forward with the release; `TestConfigCheatsheetIsCurrent` fails the
+  build if the checked-in copy drifts.
+
+  The **Req** column comes from `config.RequiredConfigFields`, the one list
+  `init` itself checks — not from `omitempty`, which is a marshalling directive
+  and says nothing about whether a value must be supplied. Deriving from it
+  marked 25 fields required when four are, and missed `prefix`.
+
+  It also documents what is **deliberately not** in `config.yaml` —
+  `IBMCLOUD_API_KEY`, `BNK_FORGE_PASSWORD`, `BNK_FORGE_USER`, `BNK_FORGE_URL` —
+  because a fields-only page answers "every field" and not "how do I set the
+  password", and the two are easy to confuse for *unsupported*.
+
+- **`bnkforge.password_b64`**, so every machine credential this tool takes has
+  the same shape. It was the only password with no `_b64` field, which meant
+  remembering that one exception. Precedence is `BNK_FORGE_PASSWORD`, then
+  `--password`, then the field, then the prompt — the environment still wins, so
+  a stored value never stops a runner overriding it. Seedable via
+  `ROKSBNKCTL_BNKFORGE_PASSWORD`.
+
+  base64 is obfuscation, not encryption. Storing it trades a long-lived secret on
+  disk for not being asked, which is right for an unattended runner and wrong for
+  a laptop.
+
+- **`scripts/generate_b64_password.sh`** — prompts twice without echoing and
+  prints the base64 for any `*_b64` field. It exists because `echo secret | base64`
+  puts the password in shell history, appends a newline that some consumers
+  reject as a wrong password, and wraps at 76 columns on GNU. It also states the
+  rule the variable names encode: `ROKSBNKCTL_*_B64` take the base64,
+  `ROKSBNKCTL_*_PASSWORD` take the RAW value and encode it themselves — feeding
+  one the other double-encodes and the credential silently does not work.
+
 ## v1.56.0 — 2026-08-26
 
 **Three things BNK Forge and the registry mirror were handed that they could not

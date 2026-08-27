@@ -32,7 +32,7 @@ run: build
 clean:
 	rm -rf bin/
 
-.PHONY: book book-pdf book-test book-serve book-clean release release-publish \
+.PHONY: generate book book-pdf book-test book-serve book-clean release release-publish \
         book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
         pages-assure staticcheck build-integration-tags integration-test
 
@@ -286,7 +286,29 @@ tf-validation-test:
 # moved). Default is unset — step 4 runs.
 SKIP_INTEGRATION_TEST ?=
 
+# generate — refresh every GENERATED artifact from its source.
+#
+# The generated files carry a version badge or are derived from the config
+# struct, so "keep it updated" has to be a build step rather than a habit.
+# `release` runs this BEFORE its gates, so a release that rolls the CHANGELOG
+# version forward also restamps the cheatsheet, and the currency tests in
+# internal/config then verify the checked-in copies match. A drifted file is a
+# failing test, not a reader's problem.
+generate:
+	@echo "==> Regenerating book chapters 27/28/29"
+	@go run ./tools/refgen/cobra-md  > book/src/27-command-reference.md
+	@go run ./tools/refgen/config-md > book/src/28-configuration-reference.md
+	@go run ./tools/refgen/tfvars-md > book/src/29-terraform-variable-reference.md
+	@echo "==> Regenerating internal/cli/env.example"
+	@go run ./tools/refgen/env-example > internal/cli/env.example
+	@echo "==> Regenerating scripts/demos/config-cheatsheet.html"
+	@go run ./tools/refgen/config-cheatsheet > scripts/demos/config-cheatsheet.html
+	@echo "    $$(grep -c '<tr data-req' scripts/demos/config-cheatsheet.html) fields, stamped $$(grep -o 'class=\"ver\">[^<]*' scripts/demos/config-cheatsheet.html | sed 's/.*>//')"
+
 release:
+	@echo "==> [0/9] Regenerating derived files (cheatsheet version stamp, book chapters)"
+	@$(MAKE) generate
+	@echo ""
 	@echo "==> [1/9] Stamping CHANGELOG.md release-date placeholder (one-time, was for v1.0.0)"
 	@$(MAKE) stamp-changelog
 	@echo ""
@@ -360,7 +382,8 @@ release:
 	fi
 
 # book-publish: push the locally-built book/book/html/ tree to the
-# gh-pages branch under /book/. Replaces what .github/workflows/book.yml
+# gh-pages branch under /book/, and the generated config.yaml cheatsheet to
+# /config-cheatsheet.html beside it. Replaces what .github/workflows/book.yml
 # used to do via peaceiris/actions-gh-pages — but with no runner, no
 # image pull, just a git worktree + push from the integrator's machine.
 #
@@ -376,6 +399,10 @@ book-publish:
 	    echo "book/book/html missing — run 'make book' or 'make book-pdf BOOK_BACKEND=docker' first" >&2; \
 	    exit 2; \
 	fi
+	@if [ ! -f scripts/demos/config-cheatsheet.html ]; then \
+	    echo "scripts/demos/config-cheatsheet.html missing — run 'make generate' first" >&2; \
+	    exit 2; \
+	fi
 	@echo "==> Fetching origin/gh-pages"
 	@git fetch origin gh-pages
 	@tmp=$$(mktemp -d -t roksbnkctl-gh-pages.XXXXXX) && \
@@ -384,16 +411,19 @@ book-publish:
 	    rm -rf $$tmp/book && \
 	    mkdir -p $$tmp/book && \
 	    cp -r book/book/html/. $$tmp/book/ && \
+	    cp scripts/demos/config-cheatsheet.html $$tmp/config-cheatsheet.html && \
 	    cd $$tmp && \
-	    git add -A book/ && \
+	    git add -A book/ config-cheatsheet.html && \
 	    if git diff --cached --quiet; then \
-	        echo "    gh-pages /book/ already up to date — nothing to push"; \
+	        echo "    gh-pages already up to date — nothing to push"; \
 	    else \
 	        git -c user.name="$$(git -C $(CURDIR) config user.name)" \
 	            -c user.email="$$(git -C $(CURDIR) config user.email)" \
 	            commit -m "book: publish $$(git -C $(CURDIR) describe --tags --always)" && \
 	        git push origin HEAD:gh-pages && \
-	        echo "    Pushed to gh-pages — https://jgruberf5.github.io/roksbnkctl/book/"; \
+	        echo "    Pushed to gh-pages:"; \
+	        echo "      book:       https://jgruberf5.github.io/roksbnkctl/book/"; \
+	        echo "      cheatsheet: https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html"; \
 	    fi
 
 # release-publish: post-tag publish step. Run after .github/workflows/release.yml

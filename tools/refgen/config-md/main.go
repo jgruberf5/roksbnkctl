@@ -261,6 +261,11 @@ Field-by-field schema for the workspace ` + "`config.yaml`" + `, generated from 
 in ` + "`internal/config/workspace.go`" + `. This chapter is the single source of truth for
 what a field is called, what type it takes, and which BNK line it applies to.
 
+For a one-page version carrying the full dotted paths and each field's
+` + "`ROKSBNKCTL_*`" + ` override, see the
+[**config.yaml cheatsheet**](https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html)
+— generated from the same struct, so the two cannot disagree.
+
 [Chapter 12 — Workspace config](./12-workspace-config.md) is the *teaching* chapter:
 use it to learn the shape. Use this one to look up a specific field. Every other
 chapter links here rather than restating fields, because a field restated in four

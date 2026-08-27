@@ -31,7 +31,13 @@ func TestDemoEnvAllowlistCoversEveryOverride(t *testing.T) {
 	// Deliberately absent, with the reason. A name here is a decision, not an
 	// oversight — that distinction is the whole point of the list.
 	excluded := map[string]string{
-		"ROKSBNKCTL_API_KEY_B64":                 "redundant: IBMCLOUD_API_KEY carries the key, and it is routed to the Secret",
+		"ROKSBNKCTL_API_KEY_B64": "redundant: IBMCLOUD_API_KEY carries the key, and it is routed to the Secret",
+		// Same reasoning as API_KEY_B64, one layer along. The demo already passes
+		// BNK_FORGE_PASSWORD, which is read at register time and never written
+		// down; ROKSBNKCTL_BNKFORGE_PASSWORD is the SEEDING path, which stores the
+		// password into the workspace's config.yaml. Seeding it here would put a
+		// credential on disk in a demo that does not need one.
+		"ROKSBNKCTL_BNKFORGE_PASSWORD":           "redundant: the demo passes BNK_FORGE_PASSWORD at register time; seeding password_b64 would write a credential into the demo workspace",
 		"ROKSBNKCTL_FAR_AUTH_LOCAL_FILE":         "the demo resolves the supply chain from COS, never local files",
 		"ROKSBNKCTL_SUBSCRIPTION_JWT_LOCAL_FILE": "as above",
 		"ROKSBNKCTL_CLIENT_VPC_CREATE":           "the blueprint demo does not run the testing phase",
