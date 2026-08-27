@@ -83,6 +83,18 @@ numbers to adjectives: "FLO restores it in 375–815ms against a 3s tick" says w
 Do not add `Claude-Session:` trailers. No AI references in the book except the
 agentic-mode feature.
 
+## Never `git add -A`
+
+Other agent sessions work in this same checkout. `git add -A` and `git add .`
+sweep up their in-progress untracked files, and the first sign is someone else's
+document failing your spellcheck. It happened here:
+`docs/prd/19-SUPPORT-SUBCOMMAND.md` — a PRD another session was drafting — landed
+in a teardown-fix commit and failed CI with 18 unknown words.
+
+Stage by path, or `git add -u` for tracked files only. Before committing, read
+`git status --porcelain` and confirm every path is yours; before pushing, check
+`git diff --name-only origin/main...HEAD` for the same reason.
+
 ## Stacked PRs
 
 `gh pr merge --delete-branch` **closes** any PR based on that branch instead of
