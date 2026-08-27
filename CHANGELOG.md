@@ -32,6 +32,15 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   warning** rather than stored as a zero: a toggle silently set to the opposite of
   what a pipeline meant is harder to diagnose than one that was never set.
 
+  **Also fixes a pre-existing defect this widened.** When the `resources:` block
+  was absent, an override created an empty one — leaving every toggle it did not
+  set at `false`, while five of them default to `true`. So
+  `ROKSBNKCTL_BNK_CREATE=true`, which reads as "turn BNK on", silently disabled
+  the transit gateway, the registry COS bucket and cert-manager: a deploy that
+  comes up missing three prerequisites with nothing saying so. Nine hand-written
+  blocks had the empty-struct form and exactly one had the correct
+  `DefaultResources()`; they now all route through one helper.
+
   Chapter 07a's override table was introduced as "a fixed field map" while
   listing 79 of them — a hand-written copy of a generated surface, already stale
   before this change and more so after. It now says plainly that it is a

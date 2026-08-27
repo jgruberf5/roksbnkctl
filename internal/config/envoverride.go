@@ -315,17 +315,14 @@ func OverrideFromEnv(ws *Workspace) []string {
 		env, path string
 		set       func(bool)
 	}{
-		{"ROKSBNKCTL_CERT_MANAGER_CREATE", "resources.cert_manager.create", func(b bool) { ws.Resources.CertManager.Create = b }},
-		{"ROKSBNKCTL_REGISTRY_COS_CREATE", "resources.registry_cos.create", func(b bool) { ws.Resources.RegistryCOS.Create = b }},
-		{"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE", "resources.cluster_jumphosts.create", func(b bool) { ws.Resources.ClusterJumphosts.Create = b }},
+		{"ROKSBNKCTL_CERT_MANAGER_CREATE", "resources.cert_manager.create", func(b bool) { resourcesCfg(ws).CertManager.Create = b }},
+		{"ROKSBNKCTL_REGISTRY_COS_CREATE", "resources.registry_cos.create", func(b bool) { resourcesCfg(ws).RegistryCOS.Create = b }},
+		{"ROKSBNKCTL_CLUSTER_JUMPHOSTS_CREATE", "resources.cluster_jumphosts.create", func(b bool) { resourcesCfg(ws).ClusterJumphosts.Create = b }},
 	} {
 		if v := envValue(o.env); v != "" {
 			if b, err := strconv.ParseBool(v); err == nil {
 				// env-only init starts from an empty Workspace, so Resources
 				// is nil here far more often than on the file-loaded path.
-				if ws.Resources == nil {
-					ws.Resources = &ResourcesCfg{}
-				}
 				o.set(b)
 				applied = append(applied, o.path+" ("+o.env+")")
 			}
@@ -422,19 +419,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// Lets a cluster attach to a shared TGW; `cluster up`/`register` then connects
 	// it. Preserves the other resource toggles.
 	if v := envValue("ROKSBNKCTL_TRANSIT_GATEWAY_NAME"); v != "" {
-		if ws.Resources == nil {
-			ws.Resources = &ResourcesCfg{}
-		}
-		ws.Resources.TransitGateway = ResourceToggle{Create: false, Existing: v}
+		resourcesCfg(ws).TransitGateway = ResourceToggle{Create: false, Existing: v}
 		applied = append(applied, "resources.transit_gateway.existing (ROKSBNKCTL_TRANSIT_GATEWAY_NAME)")
 	}
 	// Adopt an existing cluster VPC by ID (create=false + existing). Brings your
 	// own VPC for a NEW cluster instead of provisioning one.
 	if v := envValue("ROKSBNKCTL_CLUSTER_VPC_ID"); v != "" {
-		if ws.Resources == nil {
-			ws.Resources = &ResourcesCfg{}
-		}
-		ws.Resources.ClusterVPC = ResourceToggle{Create: false, Existing: v}
+		resourcesCfg(ws).ClusterVPC = ResourceToggle{Create: false, Existing: v}
 		applied = append(applied, "resources.cluster_vpc.existing (ROKSBNKCTL_CLUSTER_VPC_ID)")
 	}
 	// The optional testing client (jumphost VSI + client VPC). Both default OFF,
@@ -443,19 +434,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// creating one unasked is not a free mistake.
 	if v := envValue("ROKSBNKCTL_TGW_JUMPHOST_CREATE"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
-			if ws.Resources == nil {
-				ws.Resources = &ResourcesCfg{}
-			}
-			ws.Resources.TGWJumphost.Create = b
+			resourcesCfg(ws).TGWJumphost.Create = b
 			applied = append(applied, "resources.tgw_jumphost.create (ROKSBNKCTL_TGW_JUMPHOST_CREATE)")
 		}
 	}
 	if v := envValue("ROKSBNKCTL_CLIENT_VPC_CREATE"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
-			if ws.Resources == nil {
-				ws.Resources = &ResourcesCfg{}
-			}
-			ws.Resources.ClientVPC.Create = b
+			resourcesCfg(ws).ClientVPC.Create = b
 			applied = append(applied, "resources.client_vpc.create (ROKSBNKCTL_CLIENT_VPC_CREATE)")
 		}
 	}
@@ -466,19 +451,13 @@ func OverrideFromEnv(ws *Workspace) []string {
 	// express the create branch, so opting the jumphost in without also creating
 	// a VPC produced a config terraform cannot plan.
 	if v := envValue("ROKSBNKCTL_CLIENT_VPC_NAME"); v != "" {
-		if ws.Resources == nil {
-			ws.Resources = &ResourcesCfg{}
-		}
-		ws.Resources.ClientVPC.Existing = v
+		resourcesCfg(ws).ClientVPC.Existing = v
 		applied = append(applied, "resources.client_vpc.existing (ROKSBNKCTL_CLIENT_VPC_NAME)")
 	}
 
 	// Name the testing client VPC to create (rendered as testing_client_vpc_name).
 	if v := envValue("ROKSBNKCTL_TESTING_VPC_NAME"); v != "" {
-		if ws.Resources == nil {
-			ws.Resources = &ResourcesCfg{}
-		}
-		ws.Resources.TestingClientVPCName = v
+		resourcesCfg(ws).TestingClientVPCName = v
 		applied = append(applied, "resources.testing_client_vpc_name (ROKSBNKCTL_TESTING_VPC_NAME)")
 	}
 
@@ -495,10 +474,7 @@ func OverrideFromEnv(ws *Workspace) []string {
 	applied = append(applied, overrideVLANPrefixLenFromEnv(ws)...)
 	applied = append(applied, overrideVLANPrefixLenPerVLANFromEnv(ws)...)
 	if v := envValue("ROKSBNKCTL_TESTING_SSH_KEY_NAME"); v != "" {
-		if ws.Resources == nil {
-			ws.Resources = &ResourcesCfg{}
-		}
-		ws.Resources.TestingSSHKeyName = v
+		resourcesCfg(ws).TestingSSHKeyName = v
 		applied = append(applied, "resources.testing_ssh_key_name (ROKSBNKCTL_TESTING_SSH_KEY_NAME)")
 	}
 
@@ -1054,11 +1030,21 @@ func networkCfg(ws *Workspace) *BNKNetworkCfg {
 }
 
 // resourcesCfg lazily creates the resources block so the tables above can write
-// into it. The hand-written bool overrides each carried their own three-line
-// nil check; this is the same thing once.
+// into it.
+//
+// DefaultResources(), NOT &ResourcesCfg{}. An empty struct leaves every toggle
+// false, and five of them default to TRUE -- so creating one to set a single
+// override silently turned the other four OFF. `ROKSBNKCTL_BNK_CREATE=true`,
+// which reads as "turn BNK on", disabled the transit gateway, the registry COS
+// bucket and cert-manager, and nothing said so: a deploy that comes up missing
+// three of its prerequisites.
+//
+// Nine hand-written blocks had `&ResourcesCfg{}` and exactly one site had
+// DefaultResources(). They now all route through here, so there is one answer
+// instead of ten.
 func resourcesCfg(ws *Workspace) *ResourcesCfg {
 	if ws.Resources == nil {
-		ws.Resources = &ResourcesCfg{}
+		ws.Resources = DefaultResources()
 	}
 	return ws.Resources
 }
@@ -1183,13 +1169,13 @@ var sgCIDROverrides = []struct {
 	set   func(*Workspace, []string)
 }{
 	{"ROKSBNKCTL_TESTING_JUMPHOST_ALLOWED_CIDRS", "resources.testing_jumphost_allowed_cidrs",
-		func(ws *Workspace, v []string) { ws.Resources.TestingJumphostAllowedCIDRs = v }},
+		func(ws *Workspace, v []string) { resourcesCfg(ws).TestingJumphostAllowedCIDRs = v }},
 	{"ROKSBNKCTL_TESTING_CLIENT_VPC_INBOUND_CIDRS", "resources.testing_client_vpc_inbound_cidrs",
-		func(ws *Workspace, v []string) { ws.Resources.TestingClientVPCInboundCIDRs = v }},
+		func(ws *Workspace, v []string) { resourcesCfg(ws).TestingClientVPCInboundCIDRs = v }},
 	{"ROKSBNKCTL_CLUSTER_HTTP_ALLOWED_CIDRS", "resources.cluster_http_allowed_cidrs",
-		func(ws *Workspace, v []string) { ws.Resources.ClusterHTTPAllowedCIDRs = v }},
+		func(ws *Workspace, v []string) { resourcesCfg(ws).ClusterHTTPAllowedCIDRs = v }},
 	{"ROKSBNKCTL_CLUSTER_VPC_DEFAULT_SG_INBOUND_CIDRS", "resources.cluster_vpc_default_sg_inbound_cidrs",
-		func(ws *Workspace, v []string) { ws.Resources.ClusterVPCDefaultSGInboundCIDRs = v }},
+		func(ws *Workspace, v []string) { resourcesCfg(ws).ClusterVPCDefaultSGInboundCIDRs = v }},
 }
 
 // vlanPerVLANOverrides are the per-VLAN TMM prefix-length overrides — uniform

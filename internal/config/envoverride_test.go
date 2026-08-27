@@ -424,3 +424,56 @@ func TestOverrideFromEnv_ReachabilityRejectsGarbage(t *testing.T) {
 		t.Errorf("a negative timeout must leave the default, got %s", got)
 	}
 }
+
+// #234 review. Setting ONE resource toggle must not turn the others off.
+//
+// resourcesCfg used to create &ResourcesCfg{} when the block was absent, leaving
+// every toggle it did not set at false — but five of them default to TRUE. So
+// `ROKSBNKCTL_BNK_CREATE=true`, which reads as "turn BNK on", silently disabled
+// the transit gateway, the registry COS bucket and cert-manager: a deploy that
+// comes up missing three prerequisites, with nothing saying so.
+//
+// The bug predated #234 (ROKSBNKCTL_CLIENT_VPC_CREATE alone did it), but #234
+// widened it from three variables to thirteen and introduced a shared helper, so
+// this is where it gets fixed and pinned.
+func TestOneResourceToggleDoesNotDisableTheOthers(t *testing.T) {
+	defaults := DefaultResources()
+
+	for _, tc := range []struct {
+		env, name string
+	}{
+		{"ROKSBNKCTL_BNK_CREATE", "a #234 addition"},
+		{"ROKSBNKCTL_CLIENT_VPC_CREATE", "a pre-existing override"},
+		{"ROKSBNKCTL_TRANSIT_GATEWAY_CREATE", "a #234 addition"},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			ws := &Workspace{} // no resources block at all
+			OverrideFromMap(ws, map[string]string{tc.env: "true"})
+			if ws.Resources == nil {
+				t.Fatal("no resources block was created")
+			}
+			// Every toggle the override did NOT name must keep its default.
+			for _, chk := range []struct {
+				field string
+				got   bool
+				want  bool
+			}{
+				{"transit_gateway", ws.Resources.TransitGateway.Create, defaults.TransitGateway.Create},
+				{"registry_cos", ws.Resources.RegistryCOS.Create, defaults.RegistryCOS.Create},
+				{"cert_manager", ws.Resources.CertManager.Create, defaults.CertManager.Create},
+				{"cluster_vpc", ws.Resources.ClusterVPC.Create, defaults.ClusterVPC.Create},
+			} {
+				// Skip the one this override actually names.
+				if strings.Contains(strings.ToLower(tc.env), strings.ReplaceAll(chk.field, "_", "")) {
+					continue
+				}
+				if chk.got != chk.want {
+					t.Errorf("%s (%s) left resources.%s.create=%v, want the default %v.\n"+
+						"Setting one toggle must not silently turn another off — that is a deploy "+
+						"missing a prerequisite with nothing saying so.",
+						tc.env, tc.name, chk.field, chk.got, chk.want)
+				}
+			}
+		})
+	}
+}
