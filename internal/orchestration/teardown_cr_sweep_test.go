@@ -828,3 +828,33 @@ func TestAnObjectWaitingOnAFinalizerDoesNotStartTheGiveUpClock(t *testing.T) {
 		t.Errorf("the give-up fired while a finalizer was running:\n%s", buf.String())
 	}
 }
+
+// A kind the API server cannot list is NOT a drained kind. A transient etcd
+// error, an RBAC change mid-teardown, an apiserver restart -- any of them makes
+// the list fail while the objects are still there, and reporting "drained" then
+// tells terraform to go ahead and delete a namespace whose contents are unknown.
+//
+// countIn has always separated this from a deleted CRD, and
+// TestAFailingListIsNotCountedAsDrained pins it -- but only by calling countIn
+// directly. Nothing asserted it through the drain, which is the only path a
+// teardown actually takes.
+func TestAnUnlistableKindIsNotReportedAsDrained(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("etcdserver: request timed out")
+	})
+
+	var buf bytes.Buffer
+	deleted, remaining := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf)
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d; nothing could even be listed", deleted)
+	}
+	if remaining == 0 {
+		t.Error("the drain reported everything drained for a kind it could not list.\n" +
+			"A failing list is not an empty list: the objects may well still be there, and " +
+			"reporting 0 remaining tells the destroy to proceed against unknown contents.")
+	}
+}

@@ -227,13 +227,13 @@ func drainPhase(
 		p := deleteAllIn(ctx, dc, phase, ns, w, logged)
 		deleted += p.accepted
 
-		if p.present == 0 {
+		if p.present == 0 && p.unknown == 0 {
 			return deleted, 0
 		}
 
 		// Nothing accepted, nothing already finalizing, and refusals: no part of
 		// the cluster is making progress on this.
-		if p.accepted == 0 && p.marked == 0 && p.refused > 0 {
+		if p.accepted == 0 && p.marked == 0 && p.refused > 0 && p.unknown == 0 {
 			if refusingSince.IsZero() {
 				refusingSince = time.Now()
 			}
@@ -244,7 +244,7 @@ func drainPhase(
 						"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
 						ns, refusalGrace, time.Until(deadline).Round(time.Second))
 				}
-				return deleted, p.present
+				return deleted, p.present + p.unknown
 			}
 			if !warned && w != nil {
 				warned = true
@@ -297,6 +297,7 @@ type deletePass struct {
 	present  int // objects seen this pass
 	refused  int // delete calls that came back with a real error
 	marked   int // objects already carrying a deletionTimestamp
+	unknown  int // kinds whose contents could not be established this pass
 }
 
 // deleteAllIn issues a delete for every object of every resource in one
@@ -313,8 +314,20 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
-		if err != nil || list == nil {
-			// A kind whose CRD is already gone lists as an error. Normal.
+		if err != nil {
+			// A kind whose CRD is already gone lists as an error, and that IS
+			// drained. Any other list failure — an etcd timeout, an apiserver
+			// restart, an RBAC change mid-teardown — is not: the objects may
+			// well still be there. Treating the two the same would report a
+			// namespace drained whose contents nobody could see, which is the
+			// one answer the destroy must not be given.
+			if !typeIsGone(err) {
+				p.unknown++
+			}
+			continue
+		}
+		if list == nil {
+			p.unknown++
 			continue
 		}
 		p.present += len(list.Items)
