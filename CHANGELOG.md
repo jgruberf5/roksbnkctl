@@ -54,6 +54,33 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   variable; `test.*` are already flags on the `test` subcommands; and seven
   map- or list-of-struct fields need an indexed scheme rather than one name,
   which `bnk.advanced` and `bnk.network.zones` already have.
+### Fixed
+
+- **`bnk down` no longer waits 8 minutes on a webhook that cannot answer**
+  (#235) — a regression introduced by #217's own ordering.
+
+  ```text
+  could not delete f5-big-tcp-settings/sys-default-tcp: failed calling webhook
+  "f5validate.f5net.com": no endpoints available for service "f5-validation-svc"
+  ⚠ 7 BNK custom resource(s) in f5-bnk did not finalize within 4m0s.
+  ⚠ 12 BNK custom resource(s) in f5-utils did not finalize within 4m0s.
+  ```
+
+  `f5-validation-svc` selects `app=f5-cne-controller`, so F5's validating webhook
+  is served **by the install being torn down**, and its `failurePolicy: Fail`
+  turns "backend gone" into "the API server refuses every `DELETE` of a
+  `k8s.f5.com` object". #217 ran the CR drain *before* the webhook sweep, on the
+  reasoning that the deletes are validated by that webhook — which is backwards:
+  removing the `ValidatingWebhookConfiguration` means there is nothing to call.
+  The drain therefore timed out twice, left the finalizers in place, and produced
+  the very namespace stall #217 existed to prevent.
+
+  The two sweeps are swapped, on both the local and containerised paths. Teardown
+  should now complete in one `terraform destroy` with no repair pass.
+
+  The test #217 added pinned the wrong order, so the suite was protecting the
+  defect — the same pattern #228 found. It is inverted, with the reason attached,
+  and mutation-tested in both directions.
 
 ## v1.57.0 — 2026-08-26
 

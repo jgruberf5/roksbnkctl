@@ -699,11 +699,12 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 		// resolveClusterIdentity falls back to cluster-outputs.json, which is
 		// what a second-phase workspace has.
 		if dcctx, derr := config.New(in.Workspace); derr == nil {
-			// Same reasoning for the CR drain (#217): the destroy ordering that
-			// orphans the CNEInstance is in the terraform graph, which is
-			// identical whichever process runs it.
-			sweepBNKCustomResources(ctx, dcctx, nil, in.errOut())
+			// Webhook first, then the drain — see the ordering note on the local
+			// path below (#235). Same reasoning for the drain itself (#217): the
+			// destroy ordering that orphans the CNEInstance is in the terraform
+			// graph, which is identical whichever process runs it.
 			sweepTeardownWebhooks(ctx, dcctx, nil, in.errOut())
+			sweepBNKCustomResources(ctx, dcctx, nil, in.errOut())
 		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "destroy")
 	}
@@ -734,20 +735,31 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	if err != nil {
 		return err
 	}
-	// Drain BNK's custom resources while FLO is still alive to finalize them
-	// (#217). terraform deletes the CNEInstance without waiting and removes FLO
-	// three seconds later, so the finalizers outlive their controller and the
-	// namespace delete then blocks until the provider's timeout.
-	//
-	// BEFORE the webhook sweep, not after: these deletes go through
-	// f5validate-f5-bnk, and #208's sweep is what removes it. Reversing the two
-	// would take away the validating webhook and then ask the API server to
-	// call it.
-	sweepBNKCustomResources(ctx, cctx, tfws, w)
-
 	// Remove the admission webhook served from the BNK namespace before the
 	// destroy reaches it, or the namespace hangs in Terminating forever (#208).
+	//
+	// AND BEFORE THE DRAIN (#235). #217 put the drain first, arguing that "these
+	// deletes go through f5validate-f5-bnk, and #208's sweep is what removes it".
+	// That is backwards. Removing the ValidatingWebhookConfiguration means the
+	// API server has NOTHING to call -- that is the point of removing it.
+	//
+	// The webhook is served BY the install being torn down: f5-validation-svc
+	// selects app=f5-cne-controller, and its failurePolicy is Fail. So the moment
+	// the controller is unavailable, the API server refuses every DELETE of a
+	// k8s.f5.com / k8s.f5net.com object:
+	//
+	//	failed calling webhook "f5validate.f5net.com": no endpoints available
+	//	for service "f5-validation-svc"
+	//
+	// which timed the drain out twice (4m per namespace), left the finalizers in
+	// place, and produced the very namespace stall #217 existed to prevent.
 	sweepTeardownWebhooks(ctx, cctx, tfws, w)
+
+	// Then drain BNK's custom resources while FLO is still alive to finalize
+	// them (#217). terraform deletes the CNEInstance without waiting and removes
+	// FLO three seconds later, so the finalizers outlive their controller and the
+	// namespace delete then blocks until the provider's timeout.
+	sweepBNKCustomResources(ctx, cctx, tfws, w)
 
 	// Auto-layer the trial phase's applied-tfvars replay as a low-precedence
 	// var-file so bare `down -w <ws>` (no --var-file) destroys cleanly.

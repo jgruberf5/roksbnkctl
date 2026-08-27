@@ -329,33 +329,47 @@ func TestRunTrialDownDrainsCustomResourcesOnEveryBackend(t *testing.T) {
 	}
 }
 
-// The deletes go through f5validate-f5-bnk, and #208's sweep is what removes it.
-// Reversing the two takes away the validating webhook and then asks the API
-// server to call it.
+// THE WEBHOOK SWEEP MUST COME FIRST (#235).
 //
-// PAIRWISE, not first-occurrence. RunTrialDown calls both sweeps twice — once on
-// the containerised path and once on the local one — so comparing the first of
-// each only ever inspects the containerised branch, and a swap in the local path
-// survives. That is not hypothetical: the first version of this test passed
-// against exactly that mutation.
-func TestTheCRDrainRunsBeforeTheWebhookSweep(t *testing.T) {
+// #217 pinned the opposite order here, and the test made the defect durable.
+// Its reasoning was that "the CR deletes are validated by f5validate-f5-bnk, so
+// removing it first means the API server calls a webhook whose service is gone".
+// That is backwards: removing the ValidatingWebhookConfiguration means the API
+// server has NOTHING to call.
+//
+// The webhook is served BY the install being torn down -- f5-validation-svc
+// selects app=f5-cne-controller -- with failurePolicy: Fail. Leaving it in place
+// while the controller goes away makes the API server REFUSE every delete:
+//
+//	failed calling webhook "f5validate.f5net.com": no endpoints available
+//	for service "f5-validation-svc"
+//
+// which timed the drain out at 4m per namespace, left the finalizers in place,
+// and produced the exact namespace stall #217 existed to prevent.
+//
+// PAIRWISE, for the reason the original was: RunTrialDown calls both sweeps
+// twice, so comparing the first of each only ever inspects the containerised
+// branch and a swap in the local path survives.
+func TestTheWebhookSweepRunsBeforeTheCRDrain(t *testing.T) {
 	calls := callsInFunc(t, "lifecycle.go", "RunTrialDown")
-	drains := indicesOf(calls, "sweepBNKCustomResources")
 	webhooks := indicesOf(calls, "sweepTeardownWebhooks")
+	drains := indicesOf(calls, "sweepBNKCustomResources")
 
-	if len(drains) == 0 || len(webhooks) == 0 {
-		t.Fatalf("expected both sweeps in RunTrialDown; drains=%v webhooks=%v", drains, webhooks)
+	if len(webhooks) == 0 || len(drains) == 0 {
+		t.Fatalf("expected both sweeps in RunTrialDown; webhooks=%v drains=%v", webhooks, drains)
 	}
-	if len(drains) != len(webhooks) {
-		t.Fatalf("the sweeps are not paired: %d drain(s) at %v, %d webhook sweep(s) at %v.\n"+
+	if len(webhooks) != len(drains) {
+		t.Fatalf("the sweeps are not paired: %d webhook sweep(s) at %v, %d drain(s) at %v.\n"+
 			"Every destroy path needs both, so an unpaired call means one path is missing one.",
-			len(drains), drains, len(webhooks), webhooks)
+			len(webhooks), webhooks, len(drains), drains)
 	}
-	for i := range drains {
-		if drains[i] > webhooks[i] {
-			t.Errorf("on path %d the webhook sweep (call %d) runs before the CR drain (call %d).\n"+
-				"The CR deletes are validated by f5validate-f5-bnk; removing it first means the "+
-				"API server calls a webhook whose service is gone.", i+1, webhooks[i], drains[i])
+	for i := range webhooks {
+		if webhooks[i] > drains[i] {
+			t.Errorf("on path %d the CR drain (call %d) runs before the webhook sweep (call %d).\n"+
+				"f5validate-f5-bnk is served by the CNE controller with failurePolicy: Fail, so "+
+				"leaving it in place makes the API server refuse every delete once that controller "+
+				"is gone — the drain then times out and the namespace stalls (#235).",
+				i+1, drains[i], webhooks[i])
 		}
 	}
 }
