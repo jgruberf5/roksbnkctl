@@ -79,7 +79,7 @@ func TestTheCNEInstanceIsDeletedOnlyAfterItsLeavesAreGone(t *testing.T) {
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM, gvrIPAMRange}
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(
-		context.Background(), dc, gvrs, "f5-bnk", 10*time.Second, time.Millisecond, &buf)
+		context.Background(), dc, gvrs, "f5-bnk", 10*time.Second, time.Millisecond, time.Second, &buf)
 
 	if deleted != 3 {
 		t.Errorf("deleted = %d, want 3 (order: %v)", deleted, order)
@@ -119,7 +119,7 @@ func TestTheCNEInstanceSurvivesWhenTheLeavesNeverFinalize(t *testing.T) {
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM}
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
-		context.Background(), dc, gvrs, "f5-bnk", 30*time.Millisecond, time.Millisecond, &buf)
+		context.Background(), dc, gvrs, "f5-bnk", 30*time.Millisecond, time.Millisecond, time.Second, &buf)
 
 	if remaining != 1 {
 		t.Errorf("remaining = %d, want 1 (the IPAM that never finalized)", remaining)
@@ -163,7 +163,7 @@ func TestTheDrainWaitsForFinalizersRatherThanForTheDeleteCall(t *testing.T) {
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		"f5-bnk", 5*time.Second, time.Millisecond, &buf)
+		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf)
 
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0 — the object did eventually drain", remaining)
@@ -186,7 +186,7 @@ func TestAnEmptyNamespaceDrainsSilently(t *testing.T) {
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM},
-		"f5-bnk", time.Second, time.Millisecond, &buf)
+		"f5-bnk", time.Second, time.Millisecond, time.Second, &buf)
 	if deleted != 0 || remaining != 0 {
 		t.Errorf("deleted=%d remaining=%d, want 0/0", deleted, remaining)
 	}
@@ -205,7 +205,7 @@ func TestTheDrainDoesNotTouchOtherNamespaces(t *testing.T) {
 	)
 	var buf bytes.Buffer
 	drainBNKCustomResources(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrCNEInstance}, "f5-bnk", time.Second, time.Millisecond, &buf)
+		[]schema.GroupVersionResource{gvrCNEInstance}, "f5-bnk", time.Second, time.Millisecond, time.Second, &buf)
 
 	left, err := dc.Resource(gvrCNEInstance).Namespace("someone-else").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestTheDrainStopsOnContextCancellation(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		_, remaining := drainBNKCustomResources(ctx, dc,
-			[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Hour, time.Second, nil)
+			[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Hour, time.Second, time.Second, nil)
 		done <- remaining
 	}()
 	select {
@@ -549,11 +549,15 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 		t.Errorf("present=%d unknown=%d; a deleted CRD has nothing left to wait for", present, unknown)
 	}
 
+	// Through the live path rather than a helper: awaitGone was retired when the
+	// drain started re-issuing deletes (#241), and a test that keeps a retired
+	// helper alive is testing code no teardown runs.
 	start := time.Now()
-	remaining := awaitGone(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Now().Add(2*time.Second), 50*time.Millisecond)
-	if remaining != 0 {
-		t.Errorf("remaining = %d for an absent CRD", remaining)
+	deleted, remaining := drainPhase(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		time.Now().Add(2*time.Second), 50*time.Millisecond, time.Second, nil)
+	if deleted != 0 || remaining != 0 {
+		t.Errorf("deleted=%d remaining=%d for an absent CRD", deleted, remaining)
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("waited %s for a CRD that no longer exists", time.Since(start))
@@ -583,7 +587,7 @@ func TestADrainWhereEveryDeleteIsRefusedDoesNotWait(t *testing.T) {
 	start := time.Now()
 	deleted, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
-		"f5-bnk", 30*time.Second, 50*time.Millisecond, &buf)
+		"f5-bnk", 30*time.Second, 50*time.Millisecond, 200*time.Millisecond, &buf)
 	elapsed := time.Since(start)
 
 	if deleted != 0 {
@@ -630,12 +634,254 @@ func TestASlowFinalizerIsStillWaitedFor(t *testing.T) {
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		"f5-bnk", 5*time.Second, time.Millisecond, &buf)
+		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf)
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0 — the delete was accepted and the object did drain", remaining)
 	}
 	if strings.Contains(buf.String(), "every delete was refused") {
 		t.Error("the fail-fast fired on a delete that WAS accepted — that is ordinary " +
 			"finalizer progress and must still be waited for")
+	}
+}
+
+// THE #241 CASE. The drain used to issue each delete exactly once and then poll
+// only for the objects to disappear, so a delete refused on that single pass was
+// never attempted again — the drain sat for its whole budget waiting on objects
+// it had asked to remove once, at the one moment the API server was refusing.
+//
+// That moment is not hypothetical: FLO re-creates the validating webhook about
+// ten seconds into the drain and its endpoint is not ready for another
+// twenty-four, so refusals last roughly half a minute and then stop.
+//
+// The property is that the drain SURVIVES a refusal that clears, which only
+// re-issuing the deletes can satisfy.
+func TestARefusalThatClearsIsRetriedRatherThanWaitedOut(t *testing.T) {
+	dc := newFake(
+		cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"),
+		cr(gvrIPAMRange, "IPAMRange", "f5-bnk", "range-1"),
+	)
+
+	var mu sync.Mutex
+	refusing := true
+	// Refuse everything for the first few passes, exactly as a re-created
+	// failurePolicy: Fail webhook with no ready endpoint does, then stop.
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if refusing {
+			return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+				`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+		}
+		return false, nil, nil // fall through to the tracker: the delete lands
+	})
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		mu.Lock()
+		refusing = false
+		mu.Unlock()
+	}()
+
+	var buf bytes.Buffer
+	deleted, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
+		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf)
+
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0.\n"+
+			"The refusal cleared after 150ms and the objects were deletable, but the drain "+
+			"never asked again — that is #241: each delete is issued once and the wait only "+
+			"polls for objects to disappear.\noutput:\n%s", remaining, buf.String())
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2 — both objects should have been removed once the refusal lifted", deleted)
+	}
+}
+
+// The retry must not fire deletes at objects the API server has already accepted.
+// Re-deleting a finalizing object is at best noise in the audit log and at worst
+// a second deletionTimestamp attempt every poll for four minutes.
+func TestTheRetryDoesNotReDeleteObjectsAlreadyBeingFinalized(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+
+	var mu sync.Mutex
+	deletes := 0
+	dc.PrependReactor("delete", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		deletes++
+		mu.Unlock()
+		// Accept, but leave the object in place with a deletionTimestamp — a
+		// finalizer holding on, which is the normal case the drain waits for.
+		obj := cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1")
+		now := metav1.Now()
+		obj.SetDeletionTimestamp(&now)
+		obj.SetFinalizers([]string{"f5.com/cne"})
+		_ = dc.Tracker().Update(gvrIPAM, obj, "f5-bnk")
+		return true, nil, nil
+	})
+
+	var buf bytes.Buffer
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, 5*time.Second, &buf)
+
+	mu.Lock()
+	n := deletes
+	mu.Unlock()
+
+	if n != 1 {
+		t.Errorf("issued %d deletes for one object; want 1.\n"+
+			"deleteAllIn must skip objects that already carry a deletionTimestamp, or every "+
+			"poll re-deletes everything that is merely waiting on a finalizer.", n)
+	}
+}
+
+// A refusal that never clears must still not consume the whole budget — #235's
+// point, and it survives the retry. What changed is that it now takes evidence
+// over time rather than a single pass.
+func TestAPermanentRefusalStopsAfterTheGraceNotTheBudget(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+			`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+	})
+
+	var buf bytes.Buffer
+	start := time.Now()
+	_, remaining := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		30*time.Second, 20*time.Millisecond, 300*time.Millisecond, &buf)
+	elapsed := time.Since(start)
+
+	if remaining != 1 {
+		t.Errorf("remaining = %d, want 1", remaining)
+	}
+	if elapsed < 300*time.Millisecond {
+		t.Errorf("gave up after %s, before the %s grace elapsed — that is the #235 behaviour "+
+			"that made #241 unrecoverable: a refusal is not proven permanent by one pass", elapsed, 300*time.Millisecond)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("waited %s of a 30s budget on a refusal that never clears", elapsed)
+	}
+	if !strings.Contains(buf.String(), "every delete was refused") {
+		t.Errorf("the operator is not told why it stopped early:\n%s", buf.String())
+	}
+}
+
+// A finalizing object is PROGRESS, not a refusal, and the difference has to
+// survive the retry loop.
+//
+// Once the drain re-issues deletes every poll, the second and later passes
+// necessarily accept nothing: everything they would delete already carries a
+// deletionTimestamp. If "nothing accepted" alone started the give-up clock, every
+// ordinary teardown would abandon its own objects one grace period after asking
+// for them — turning the fail-fast from a safety net into the bug.
+//
+// So the give-up condition needs all three: nothing accepted, NOTHING MARKED,
+// and refusals. This pins the middle one, which no other test reaches.
+func TestAnObjectWaitingOnAFinalizerDoesNotStartTheGiveUpClock(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+
+	var mu sync.Mutex
+	finalizedAt := time.Now().Add(400 * time.Millisecond)
+
+	dc.PrependReactor("delete", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		obj := cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1")
+		now := metav1.Now()
+		obj.SetDeletionTimestamp(&now)
+		obj.SetFinalizers([]string{"f5.com/cne"})
+		mu.Lock()
+		defer mu.Unlock()
+		_ = dc.Tracker().Update(gvrIPAM, obj, "f5-bnk")
+		return true, nil, nil
+	})
+	// The finalizer eventually lets go, well after the grace would have expired.
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		l := &unstructured.UnstructuredList{}
+		l.SetGroupVersionKind(gvrIPAM.GroupVersion().WithKind("IPAMList"))
+		if time.Now().Before(finalizedAt) {
+			obj := cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1")
+			now := metav1.Now()
+			obj.SetDeletionTimestamp(&now)
+			obj.SetFinalizers([]string{"f5.com/cne"})
+			l.Items = []unstructured.Unstructured{*obj}
+		}
+		return true, l, nil
+	})
+
+	var buf bytes.Buffer
+	// Grace is much SHORTER than how long the finalizer takes. Correct code waits
+	// anyway, because a marked object is progress; code that keys only on
+	// "nothing accepted" gives up at 100ms.
+	_, remaining := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		5*time.Second, 20*time.Millisecond, 100*time.Millisecond, &buf)
+
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0.\n"+
+			"The object was accepted on the first pass and was merely waiting on a finalizer. "+
+			"Later passes accept nothing because there is nothing left to accept — that is "+
+			"normal, not a refusal, and must not start the give-up clock.\noutput:\n%s",
+			remaining, buf.String())
+	}
+	if strings.Contains(buf.String(), "every delete was refused") {
+		t.Errorf("the give-up fired while a finalizer was running:\n%s", buf.String())
+	}
+}
+
+// A kind the API server cannot list is NOT a drained kind. A transient etcd
+// error, an RBAC change mid-teardown, an apiserver restart -- any of them makes
+// the list fail while the objects are still there, and reporting "drained" then
+// tells terraform to go ahead and delete a namespace whose contents are unknown.
+//
+// countIn has always separated this from a deleted CRD, and
+// TestAFailingListIsNotCountedAsDrained pins it -- but only by calling countIn
+// directly. Nothing asserted it through the drain, which is the only path a
+// teardown actually takes.
+func TestAnUnlistableKindIsNotReportedAsDrained(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("etcdserver: request timed out")
+	})
+
+	var buf bytes.Buffer
+	deleted, remaining := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf)
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d; nothing could even be listed", deleted)
+	}
+	if remaining == 0 {
+		t.Error("the drain reported everything drained for a kind it could not list.\n" +
+			"A failing list is not an empty list: the objects may well still be there, and " +
+			"reporting 0 remaining tells the destroy to proceed against unknown contents.")
+	}
+}
+
+// The give-up is evaluated before the deadline is, so on the final iteration the
+// remaining budget is already negative. Offering to skip "-2s" of budget is a
+// number that cannot be true, and a log that prints impossible numbers stops
+// being read -- which matters here, because this message is the only thing
+// telling an operator why the teardown stopped early.
+func TestTheGiveUpMessageNeverReportsANegativeBudget(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+			`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+	})
+
+	var buf bytes.Buffer
+	// The poll has to be LARGE relative to the budget, which is the real shape:
+	// production polls every 3s against a 4m budget, so the loop can overshoot the
+	// deadline by up to a full poll. A short poll here would overshoot by
+	// milliseconds, which .Round(time.Second) renders as "0s" -- the test would
+	// pass with or without the clamp and prove nothing.
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		100*time.Millisecond, time.Second, 50*time.Millisecond, &buf)
+
+	if strings.Contains(buf.String(), "the -") {
+		t.Errorf("the give-up message reports a negative remaining budget:\n%s", buf.String())
 	}
 }
