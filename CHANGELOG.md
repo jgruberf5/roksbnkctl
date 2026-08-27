@@ -6,6 +6,55 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **49 config.yaml fields gained a `ROKSBNKCTL_*` override** (#234), taking the
+  surface from 109 to 158 of 187. Which fields had one was arbitrary rather than
+  principled — they were added on demand. `resources.*.create` is the clearest
+  case: eight toggles of identical shape and purpose, five settable from the
+  environment and three not, so a pipeline that wanted
+  `resources.transit_gateway.create=false` had to write a config file while the
+  toggle beside it worked from a variable. It is now eight of eight.
+
+  This bit during real work: mirroring BNK 2.4-EA into Artifactory needed
+  `registry.source_service_account_b64`, which had no override, so it had to be
+  hand-written into the workspace — in a flow whose whole point is being drivable
+  from the environment.
+
+  It stayed invisible because `internal/cli/env.example` is generated *from* the
+  overrides: a gap cannot appear in a list derived from the thing that is missing.
+  The generated cheatsheet is the first artefact that shows every field beside its
+  override and leaves a dash where there is none.
+
+  The additions are rows in three new tables (`boolOverrides`, `intOverrides`,
+  `stringListOverrides`, plus `ptrBoolOverrides` where nil and false differ)
+  rather than 49 bespoke blocks. An unparseable value is **ignored with a
+  warning** rather than stored as a zero: a toggle silently set to the opposite of
+  what a pipeline meant is harder to diagnose than one that was never set.
+
+  **Also fixes a pre-existing defect this widened.** When the `resources:` block
+  was absent, an override created an empty one — leaving every toggle it did not
+  set at `false`, while five of them default to `true`. So
+  `ROKSBNKCTL_BNK_CREATE=true`, which reads as "turn BNK on", silently disabled
+  the transit gateway, the registry COS bucket and cert-manager: a deploy that
+  comes up missing three prerequisites with nothing saying so. Nine hand-written
+  blocks had the empty-struct form and exactly one had the correct
+  `DefaultResources()`; they now all route through one helper.
+
+  Chapter 07a's override table was introduced as "a fixed field map" while
+  listing 79 of them — a hand-written copy of a generated surface, already stale
+  before this change and more so after. It now says plainly that it is a
+  selection chosen for the encodings that need explaining, and points at
+  `roksbnkctl config env` and the cheatsheet for the complete list. No count is
+  quoted, because a number in prose is the next thing to drift.
+
+  **Not** added, with the reason recorded: `state.*` is bootstrap config read
+  before a workspace exists — and `access_key_source` / `secret_key_source`
+  deliberately *name* an env var, so an override would be a variable naming a
+  variable; `test.*` are already flags on the `test` subcommands; and seven
+  map- or list-of-struct fields need an indexed scheme rather than one name,
+  which `bnk.advanced` and `bnk.network.zones` already have.
+
 ## v1.57.0 — 2026-08-26
 
 **Every `config.yaml` field on one generated page, and five settings that
