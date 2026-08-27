@@ -8,6 +8,39 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Removed
 
+- **Four more settings that configured nothing** (#228). The audit #227 prompted,
+  now a repeatable one: `make audit-env` pulls each consumer — the controller
+  image, the chart — and reports any environment variable or helm key roksbnkctl
+  emits that does not appear in it.
+
+  | Emitted | Consumer | |
+  |---|---|---|
+  | `VPC_NAME` | f5ingress (both lines) | dead — `CLOUD_VPC` beside it is real |
+  | `IBM_TRUSTED_PROFILE_ID` | f5ingress (both lines) | dead — `CLOUD_TRUSTED_PROFILE` is real |
+  | `versionValidator.image.repository` ×2 | `f5-spk-crds-common` / `-service-proxy` | dead — those charts declare three keys and this is not one |
+
+  The first two are the same "emit it under two names, one must be right" habit
+  that produced the GTM pair. The code even named the pattern —
+  *"CLOUD_VPC sits beside VPC_NAME: the real names are F5's contract"* — while
+  getting the conclusion backwards.
+
+  **Air-gap note:** the `versionValidator` override means the CRD charts' images
+  were never redirected to a mirror *by that setting*. Removing it does not change
+  that; it stops the configuration claiming otherwise.
+
+  The audit isolates its FAR credential from both docker *and* helm, and removes
+  it on every exit path — an earlier version isolated docker only, so a run
+  silently added `repo.f5.com` to the operator's persistent helm credentials.
+
+  The audit reports a **control** per section and refuses to report findings when
+  a control fails, so a broken extraction shows up as "not reporting it" rather
+  than as a clean bill of health. That caught a false positive during this work:
+  `fullnameOverride` was checked against the wrong chart and looked dead, when it
+  is real in `f5-ipam-controller`. Checking a name against the wrong consumer is
+  how an audit deletes working configuration, so helm keys are now scoped to the
+  chart that owns them and nested sub-chart values are reported as *unaudited*
+  rather than silently assumed.
+
 - **`bnk.gtm.*` is gone — it configured nothing** (#227). The block carried the
   GTM / BIG-IP DNS `url`, `username` and `password_b64`, rendered them as
   `cneinstance_gtm_*` tfvars, and terraform emitted them onto the CNE controller

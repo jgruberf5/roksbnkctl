@@ -193,21 +193,16 @@ locals {
       pullPolicy = "Always"
     }
 
-    "f5-spk-crds-common" = {
-      versionValidator = {
-        image = {
-          repository = local.image_repository
-        }
-      }
-    }
-
-    "f5-spk-crds-service-proxy" = {
-      versionValidator = {
-        image = {
-          repository = local.image_repository
-        }
-      }
-    }
+    # The f5-spk-crds-* charts carried a versionValidator.image.repository
+    # override until #228. Those charts declare exactly three keys --
+    # global.certmgr, global.imagePullSecrets and conversion.namespace -- and
+    # "versionValidator" appears nowhere in any of them, so the override set
+    # nothing. Helm drops unknown keys silently, which is why it never surfaced.
+    #
+    # NOTE for air-gap: this means the CRD charts' images were never redirected
+    # to the mirror BY THIS SETTING. Removing it does not change that; it stops
+    # the config claiming otherwise. Whether those charts need redirecting at all
+    # is a separate question -- they are CRD-only charts.
 
     "f5-ipam-operator" = {
       image = {
