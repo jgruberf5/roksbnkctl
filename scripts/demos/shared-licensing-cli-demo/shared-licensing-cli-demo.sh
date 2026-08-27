@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# shared-licensing-cli-demo.sh  (roksbnkctl v1.56.0)
+# shared-licensing-cli-demo.sh  (roksbnkctl v1.57.0)
 #
 # A SHARED LICENSING CLUSTER. One cluster runs the F5 License Proxy (FLP) and holds
 # the only egress to F5. A second, air-gapped cluster installs BIG-IP Next for
