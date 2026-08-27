@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -556,5 +557,85 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 	}
 	if time.Since(start) > time.Second {
 		t.Errorf("waited %s for a CRD that no longer exists", time.Since(start))
+	}
+}
+
+// #235 review. The ordering fix removes the CAUSE of the 8-minute stall; this
+// removes the ability to burn the budget at all.
+//
+// sweepTeardownWebhooks is best-effort by design — it returns quietly on an
+// unreachable cluster, credentials that no longer resolve, or a webhook it does
+// not match. Any of those and the drain meets a live failurePolicy: Fail webhook
+// whose backend is already gone, and the API server refuses EVERY delete.
+// Polling the full budget then waits on a condition nothing will change.
+func TestADrainWhereEveryDeleteIsRefusedDoesNotWait(t *testing.T) {
+	dc := newFake(
+		cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"),
+		cr(gvrIPAMRange, "IPAMRange", "f5-bnk", "range-1"),
+	)
+	// What a failurePolicy: Fail webhook with no endpoints actually returns.
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+			`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+	})
+
+	var buf bytes.Buffer
+	start := time.Now()
+	deleted, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
+		"f5-bnk", 30*time.Second, 50*time.Millisecond, &buf)
+	elapsed := time.Since(start)
+
+	if deleted != 0 {
+		t.Errorf("deleted = %d, want 0 — every delete was refused", deleted)
+	}
+	if remaining != 2 {
+		t.Errorf("remaining = %d, want 2 — both objects are still there", remaining)
+	}
+	// The point of the change: it must not spend the budget discovering this.
+	if elapsed > 5*time.Second {
+		t.Errorf("waited %s against a webhook refusing every delete.\n"+
+			"Zero accepted with objects present cannot resolve by waiting — that is the "+
+			"4m-per-namespace stall in #235, reachable whenever the webhook sweep does not "+
+			"do its job.", elapsed)
+	}
+	if !strings.Contains(buf.String(), "every delete was refused") {
+		t.Errorf("the operator is not told why it stopped early:\n%s", buf.String())
+	}
+}
+
+// The fail-fast must not fire when deletes ARE being accepted but finalizers are
+// still holding the objects — that is normal progress and must still be waited
+// for, which is the whole reason the drain exists.
+func TestASlowFinalizerIsStillWaitedFor(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	var mu sync.Mutex
+	lists := 0
+	dc.PrependReactor("delete", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // accepted, but the object lingers
+	})
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		lists++
+		gone := lists > 3
+		mu.Unlock()
+		l := &unstructured.UnstructuredList{}
+		l.SetGroupVersionKind(gvrIPAM.GroupVersion().WithKind("IPAMList"))
+		if !gone {
+			l.Items = []unstructured.Unstructured{*cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1")}
+		}
+		return true, l, nil
+	})
+
+	var buf bytes.Buffer
+	_, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
+		"f5-bnk", 5*time.Second, time.Millisecond, &buf)
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0 — the delete was accepted and the object did drain", remaining)
+	}
+	if strings.Contains(buf.String(), "every delete was refused") {
+		t.Error("the fail-fast fired on a delete that WAS accepted — that is ordinary " +
+			"finalizer progress and must still be waited for")
 	}
 }

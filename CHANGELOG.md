@@ -78,6 +78,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   The two sweeps are swapped, on both the local and containerised paths. Teardown
   should now complete in one `terraform destroy` with no repair pass.
 
+  The drain also stops early now when **every** delete is refused. The webhook
+  sweep is best-effort — it returns quietly on an unreachable cluster or a
+  webhook it does not match — and the ordering fix alone removed the cause
+  without removing the ability to burn the budget. Zero deletes accepted with
+  objects still present is not slow progress, it is none, and waiting four
+  minutes per namespace to discover that helps nobody.
+
   The test #217 added pinned the wrong order, so the suite was protecting the
   defect — the same pattern #228 found. It is inverted, with the reason attached,
   and mutation-tested in both directions.

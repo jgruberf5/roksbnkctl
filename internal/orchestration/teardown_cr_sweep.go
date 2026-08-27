@@ -155,7 +155,33 @@ func drainBNKCustomResources(
 		if len(phase) == 0 {
 			continue
 		}
-		deleted += deleteAllIn(ctx, dc, phase, ns, w)
+		accepted, present := deleteAllIn(ctx, dc, phase, ns, w)
+		deleted += accepted
+
+		// ZERO ACCEPTED WITH OBJECTS STILL THERE CANNOT RESOLVE BY WAITING.
+		//
+		// The sweep that removes F5's validating webhook runs before this and is
+		// best-effort: it returns quietly on an unreachable cluster, credentials
+		// that no longer resolve, or a webhook it does not match. Any of those
+		// and the drain meets a live failurePolicy: Fail webhook whose backend is
+		// the controller being torn down, so the API server refuses EVERY delete
+		// -- and polling for the full budget then waits on a condition nothing
+		// will change. That is the 4m+4m in #235, and the ordering fix alone
+		// removes the cause without removing the ability to burn the budget.
+		//
+		// Deleting nothing while objects remain is not slow progress, it is no
+		// progress. Say so and let the destroy get on with it; the repair path
+		// handles what is left.
+		if accepted == 0 && present > 0 {
+			if w != nil {
+				fmt.Fprintf(w, "  ⚠ %s: every delete was refused, so waiting cannot help — skipping the %s wait.\n"+
+					"    The reason is above, one line per object. A validating webhook whose backend is\n"+
+					"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
+					ns, timeout)
+			}
+			return deleted, present
+		}
+
 		remaining = awaitGone(ctx, dc, phase, ns, deadline, poll)
 		if remaining > 0 {
 			// The leaf phase did not drain, so the CNEInstance is deliberately
@@ -181,19 +207,21 @@ func splitCNEInstance(gvrs []schema.GroupVersionResource) (leaves, roots []schem
 }
 
 // deleteAllIn issues a delete for every object of every resource in one
-// namespace and returns how many deletes were accepted.
+// namespace, returning how many deletes were ACCEPTED and how many objects were
+// PRESENT. The caller needs both: accepted==0 with present>0 is a refusal, which
+// no amount of waiting resolves.
 //
 // DeleteCollection is not used: it is not implemented by every apiserver for
 // every custom resource, and a single unsupported verb would silently skip a
 // whole kind. Listing and deleting by name is slower and always works.
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer) int {
-	n := 0
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer) (accepted, present int) {
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
 		if err != nil || list == nil {
 			// A kind whose CRD is already gone lists as an error. Normal.
 			continue
 		}
+		present += len(list.Items)
 		for i := range list.Items {
 			item := list.Items[i]
 			if item.GetDeletionTimestamp() != nil {
@@ -203,7 +231,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 			}
 			err := dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
 			if err == nil {
-				n++
+				accepted++
 				continue
 			}
 			if w != nil && !apierrors.IsNotFound(err) {
@@ -211,7 +239,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 			}
 		}
 	}
-	return n
+	return accepted, present
 }
 
 // awaitGone polls until no object of the given resources remains in the
