@@ -102,7 +102,19 @@ def render(md: str) -> str:
             t = [f'<table style="{S["table"]}"><thead><tr>']
             t += [f'<th style="{S["th"]}">{inline(c)}</th>' for c in header]
             t.append("</tr></thead><tbody>")
+            width = len(header)
             for r in rows:
+                # Rows are squared to the header width. A short row renders
+                # misaligned; a LONG one has its extra cells dropped by the
+                # browser, so content disappears with no error at all -- the
+                # invisible-and-wrong failure this whole converter exists to
+                # avoid. Truncation is reported rather than done quietly.
+                if len(r) > width:
+                    print(f"  ! row truncated to {width} cells (had {len(r)}): {r[:2]}...",
+                          file=sys.stderr)
+                    r = r[:width]
+                elif len(r) < width:
+                    r = r + [""] * (width - len(r))
                 t.append("<tr>" + "".join(f'<td style="{S["td"]}">{inline(c)}</td>' for c in r) + "</tr>")
             t.append("</tbody></table>")
             out.append("".join(t))
