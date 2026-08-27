@@ -188,7 +188,13 @@ var probeCandidatesOnce = sync.OnceValue(func() []probePair {
 
 // union returns every key present in either map.
 func union(a, b map[string]string) map[string]struct{} {
-	out := make(map[string]struct{}, len(a)+len(b))
+	// Sized from ONE map, not len(a)+len(b). The sum is what CodeQL flags as
+	// go/allocation-size-overflow, and while two marshalled config maps cannot
+	// get within astronomical distance of overflowing an int, the capacity here
+	// is a hint that saves at most a couple of map growths. Carrying a standing
+	// high-severity security alert to keep it is a bad trade, and an alert that
+	// is "fine, ignore it" is how the next real one gets ignored too.
+	out := make(map[string]struct{}, len(a))
 	for k := range a {
 		out[k] = struct{}{}
 	}
