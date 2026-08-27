@@ -97,22 +97,28 @@ func OverridePaths() map[string]string {
 // heuristic about which value looks distinctive, and it holds for every type
 // instead of only the ones with unusual sentinels.
 func probePath(name string, base map[string]string) string {
-	for _, pair := range probeCandidates {
+	for _, pair := range probeCandidates() {
 		a := marshalWithOverride(name, pair.a)
 		b := marshalWithOverride(name, pair.b)
 
+		// The UNION of both probes' paths, not just a's. A field that is
+		// omitempty marshals to nothing at its zero value, so a bool probed
+		// true/false appears in a and vanishes from b -- and one probed the other
+		// way round appears only in b. Iterating a alone would miss the second
+		// shape entirely and report the override as writing nothing.
 		var changed, differing []string
-		for path, av := range a {
-			if base[path] == av && base[path] == b[path] {
+		for path := range union(a, b) {
+			av, bv := a[path], b[path]
+			if base[path] == av && base[path] == bv {
 				continue
 			}
-			if base[path] != av {
+			if base[path] != av || base[path] != bv {
 				changed = append(changed, path)
 			}
 			// The discriminator: this path did not just appear, it MOVED with the
 			// probe. A block materialised as a side effect looks the same both
 			// times and is filtered out here.
-			if av != b[path] {
+			if av != bv {
 				differing = append(differing, path)
 			}
 		}
@@ -159,16 +165,43 @@ func marshalWithOverride(name, value string) map[string]string {
 // value in run b, which reads as "did not move" and loses the path.
 type probePair struct{ a, b string }
 
-var probeCandidates = []probePair{
-	{"__probe__", "__probeb__"},         // strings
-	{"true", "false"},                   // booleans
-	{"97", "98"},                        // integers
-	{"cHJvYmU=", "cHJvYmVi"},            // base64 fields, which reject an undecodable probe
-	{"10.97.0.0/16", "10.98.0.0/16"},    // CIDRs validated on the way in
-	{"24", "25"},                        // LEGAL prefix lengths; 97 is not, and is rejected
-	{probeCertB64(), probeCertAltB64()}, // REAL certificates -- DISTINCT, because the path is identified by what moves between them
-	{"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
-		"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZWIKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo="}, // base64 of a PEM, for fields that validate the decoded bytes
+func probeCandidates() []probePair { return probeCandidatesOnce() }
+
+// Built ONCE, ON DEMAND. As a package-level var this ran two ECDSA keygens at
+// init, on every invocation of the binary -- `bnk up`, `--version`, everything --
+// for a table only OverridePaths reads, which only `config env`/`config yaml` and
+// the refgen tools reach. One keygen was already there; making the pair distinct
+// would have doubled it.
+var probeCandidatesOnce = sync.OnceValue(func() []probePair {
+	return []probePair{
+		{"__probe__", "__probeb__"},         // strings
+		{"true", "false"},                   // booleans
+		{"97", "98"},                        // integers
+		{"cHJvYmU=", "cHJvYmVi"},            // base64 fields, which reject an undecodable probe
+		{"10.97.0.0/16", "10.98.0.0/16"},    // CIDRs validated on the way in
+		{"24", "25"},                        // LEGAL prefix lengths; 97 is not, and is rejected
+		{probeCertB64(), probeCertAltB64()}, // REAL certificates -- DISTINCT, because the path is identified by what moves between them
+		{"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
+			"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZWIKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo="}, // base64 of a PEM, for fields that validate the decoded bytes
+	}
+})
+
+// union returns every key present in either map.
+func union(a, b map[string]string) map[string]struct{} {
+	// Sized from ONE map, not len(a)+len(b). The sum is what CodeQL flags as
+	// go/allocation-size-overflow, and while two marshalled config maps cannot
+	// get within astronomical distance of overflowing an int, the capacity here
+	// is a hint that saves at most a couple of map growths. Carrying a standing
+	// high-severity security alert to keep it is a bad trade, and an alert that
+	// is "fine, ignore it" is how the next real one gets ignored too.
+	out := make(map[string]struct{}, len(a))
+	for k := range a {
+		out[k] = struct{}{}
+	}
+	for k := range b {
+		out[k] = struct{}{}
+	}
+	return out
 }
 
 // A probe is only as good as the validators it satisfies. Two of these exist
