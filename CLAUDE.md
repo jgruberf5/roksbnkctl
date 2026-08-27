@@ -44,6 +44,13 @@ A review must:
 5. **Say what it did not cover.** An untested path named is worth more than a
    clean-looking review that quietly skipped it.
 
+### Check it, do not remember it
+
+`./scripts/pr-review-audit.sh` lists open PRs with no review comment and branches
+with no PR. Run it before saying a batch of work is done. The rule above was
+written in a session that then opened a PR without a review and left a branch with
+no PR at all — intent is not a mechanism.
+
 ### Do not let the blast radius grow
 
 When a review touches a guard from an earlier cycle, change the **premise** that
