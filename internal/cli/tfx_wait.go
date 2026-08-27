@@ -90,6 +90,11 @@ func runTFXWaitCmd(cmd *cobra.Command, _ []string) error {
 // poll fallback). Kept internal to the dispatcher.
 var errTFXWaitTimeout = errors.New("tfx wait: watch deadline exceeded")
 
+// errTFXWaitStalled marks a verdict that the object CANNOT reach the wanted state,
+// as opposed to not having reached it yet. A sentinel rather than a string match,
+// so the caller can tell it from a timeout without parsing prose (#271).
+var errTFXWaitStalled = errors.New("tfx wait: stalled")
+
 // dnsFailFastAttempts is how many consecutive resolution failures to tolerate before
 // declaring the host unreachable. A few, because real DNS does blip; not many,
 // because a name that is wrong is wrong forever and the alternative is burning the
@@ -122,6 +127,13 @@ func runTFXWait(ctx context.Context, ri dynamic.ResourceInterface, name string, 
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, errTFXWaitStalled):
+		// TERMINAL, so it must not fall through to the poll fallback below. The
+		// watch did its job -- it established that the state cannot change -- and
+		// re-running the same wait on the poll path would spend another stall
+		// window reaching the same verdict, while logging "watch unavailable",
+		// which is the opposite of what happened.
+		return err
 	case errors.Is(err, errTFXWaitTimeout):
 		if d, ok := vanishedTunedDiagnosis(flagWaitGVR); ok {
 			return fmt.Errorf("%s never appeared: %s", name, d)
@@ -154,7 +166,7 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 	// This is the mode the licence wait actually runs in: `tfx wait` defaults to
 	// --mode watch, and terraform does not override it. A stall check added only
 	// to the poll loop would have passed its tests and never fired in production.
-	stall := newStallWatchdog(wctx, cancel, flagWaitGVR, logw)
+	stall := newStallWatchdog(cancel, flagWaitGVR)
 	defer stall.stop()
 
 	sel := fields.OneTermEqualSelector("metadata.name", name).String()
@@ -195,7 +207,7 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 		case ferr != nil:
 			return ferr // real watch error → caller falls back to poll
 		case stall.fired():
-			return fmt.Errorf("%s is stuck: %s", name, stall.why())
+			return fmt.Errorf("%w: %s is stuck: %s", errTFXWaitStalled, name, stall.why())
 		case wctx.Err() != nil:
 			return errTFXWaitTimeout
 		}
@@ -646,18 +658,17 @@ type stallWatchdog struct {
 	tripped  bool
 	timer    *time.Timer
 	cancel   context.CancelFunc
-	logw     io.Writer
 	interval time.Duration
 }
 
-func newStallWatchdog(ctx context.Context, cancel context.CancelFunc, gvr string, logw io.Writer) *stallWatchdog {
+func newStallWatchdog(cancel context.CancelFunc, gvr string) *stallWatchdog {
 	// Checked at a fraction of the stall window so the report lands promptly after
 	// it is due, rather than up to a full window late.
 	iv := licenseRegistrationStall / 4
 	if iv <= 0 {
 		iv = time.Second
 	}
-	s := &stallWatchdog{gvr: gvr, cancel: cancel, logw: logw, interval: iv}
+	s := &stallWatchdog{gvr: gvr, cancel: cancel, interval: iv}
 	s.timer = time.AfterFunc(iv, s.tick)
 	return s
 }

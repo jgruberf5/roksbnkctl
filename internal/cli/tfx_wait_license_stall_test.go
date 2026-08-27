@@ -315,3 +315,48 @@ func TestTheWatchdogClockRestartsWhenTheLicenceStateChanges(t *testing.T) {
 			werr, buf.String())
 	}
 }
+
+// A stall verdict must be TERMINAL — it must not fall back to the poll path.
+//
+// runTFXWait falls back to poll on any watch error it does not recognise, which
+// is right for "the watch could not be established" and wrong here: the watch did
+// its job and established that the state cannot change. Falling back would spend
+// another stall window reaching the same verdict while logging "watch
+// unavailable", which is the opposite of what happened.
+//
+// Asserted through runTFXWait — the entry point the command actually calls —
+// because the fallback lives there, not in runTFXWaitWatch. Testing one layer
+// down would miss it entirely.
+func TestAStallVerdictDoesNotFallBackToPolling(t *testing.T) {
+	restore := licenseStallForTest(40 * time.Millisecond)
+	defer restore()
+	restoreGVR := flagWaitGVR
+	flagWaitGVR = "k8s.f5net.com/v1/licenses"
+	defer func() { flagWaitGVR = restoreGVR }()
+
+	dc := fakeDynFor(cneObject("", "Registering"))
+	ri := dc.Resource(cneGVR).Namespace("f5-bnk")
+	m, err := parseWaitFor("jsonpath=status.state=Active")
+	if err != nil {
+		t.Fatalf("parseWaitFor: %v", err)
+	}
+
+	var buf strings.Builder
+	start := time.Now()
+	werr := runTFXWait(context.Background(), ri, "bnk", m,
+		10*time.Second, 5*time.Millisecond, "watch", &buf)
+	elapsed := time.Since(start)
+
+	if werr == nil || !strings.Contains(werr.Error(), "is stuck") {
+		t.Fatalf("expected a stall verdict, got %v", werr)
+	}
+	if strings.Contains(buf.String(), "falling back to poll") {
+		t.Errorf("the stall verdict triggered the poll fallback:\n%s\n"+
+			"That re-runs the whole wait and reports the stall as though the watch could not "+
+			"be established.", buf.String())
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("took %s — a terminal verdict should return at once, not after a second "+
+			"pass on the poll path", elapsed)
+	}
+}
