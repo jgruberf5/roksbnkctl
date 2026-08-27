@@ -638,11 +638,11 @@ resource "null_resource" "cluster_jumphost_hosts" {
       # (the perf matrix's client → server path) stays on the private VPC/TGW
       # network instead of hairpinning out through the public floating IPs.
       [for zone, inst in ibm_is_instance.cluster_jumphost :
-        "printf '${inst.primary_network_interface[0].primary_ipv4_address}  cluster-${zone}-internal\\n' | sudo tee -a /etc/hosts"
+        "printf '${inst.primary_network_interface[0].primary_ip[0].address}  cluster-${zone}-internal\\n' | sudo tee -a /etc/hosts"
       ],
       var.testing_create_tgw_jumphost ? [
         "printf '${ibm_is_floating_ip.tgw_jumphost_fip[0].address}  tgw-jumphost\\n' | sudo tee -a /etc/hosts",
-        "printf '${ibm_is_instance.tgw_jumphost[0].primary_network_interface[0].primary_ipv4_address}  tgw-jumphost-internal\\n' | sudo tee -a /etc/hosts",
+        "printf '${ibm_is_instance.tgw_jumphost[0].primary_network_interface[0].primary_ip[0].address}  tgw-jumphost-internal\\n' | sudo tee -a /etc/hosts",
       ] : [],
       ["printf '# END terraform-jumphosts\\n' | sudo tee -a /etc/hosts"]
     )
@@ -671,14 +671,14 @@ resource "null_resource" "tgw_jumphost_hosts" {
         "sudo sed -i '/# BEGIN terraform-jumphosts/,/# END terraform-jumphosts/d' /etc/hosts",
         "printf '# BEGIN terraform-jumphosts\\n' | sudo tee -a /etc/hosts",
         "printf '${ibm_is_floating_ip.tgw_jumphost_fip[0].address}  tgw-jumphost\\n' | sudo tee -a /etc/hosts",
-        "printf '${ibm_is_instance.tgw_jumphost[0].primary_network_interface[0].primary_ipv4_address}  tgw-jumphost-internal\\n' | sudo tee -a /etc/hosts",
+        "printf '${ibm_is_instance.tgw_jumphost[0].primary_network_interface[0].primary_ip[0].address}  tgw-jumphost-internal\\n' | sudo tee -a /etc/hosts",
       ],
       [for zone, fip in ibm_is_floating_ip.cluster_jumphost_fip :
         "printf '${fip.address}  cluster-${zone}\\n' | sudo tee -a /etc/hosts"
       ],
       # Private primary IPs under a -internal name (private VPC/TGW path).
       [for zone, inst in ibm_is_instance.cluster_jumphost :
-        "printf '${inst.primary_network_interface[0].primary_ipv4_address}  cluster-${zone}-internal\\n' | sudo tee -a /etc/hosts"
+        "printf '${inst.primary_network_interface[0].primary_ip[0].address}  cluster-${zone}-internal\\n' | sudo tee -a /etc/hosts"
       ],
       ["printf '# END terraform-jumphosts\\n' | sudo tee -a /etc/hosts"]
     )
