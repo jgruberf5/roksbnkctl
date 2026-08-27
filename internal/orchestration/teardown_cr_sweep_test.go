@@ -353,7 +353,7 @@ func TestRunTrialDownDrainsCustomResourcesOnEveryBackend(t *testing.T) {
 // branch and a swap in the local path survives.
 func TestTheWebhookSweepRunsBeforeTheCRDrain(t *testing.T) {
 	calls := callsInFunc(t, "lifecycle.go", "RunTrialDown")
-	webhooks := indicesOf(calls, "sweepTeardownWebhooks")
+	webhooks := indicesOf(calls, "startTeardownWebhookSweep")
 	drains := indicesOf(calls, "sweepBNKCustomResources")
 
 	if len(webhooks) == 0 || len(drains) == 0 {
@@ -563,7 +563,7 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 // #235 review. The ordering fix removes the CAUSE of the 8-minute stall; this
 // removes the ability to burn the budget at all.
 //
-// sweepTeardownWebhooks is best-effort by design — it returns quietly on an
+// the webhook sweep is best-effort by design — it returns quietly on an
 // unreachable cluster, credentials that no longer resolve, or a webhook it does
 // not match. Any of those and the drain meets a live failurePolicy: Fail webhook
 // whose backend is already gone, and the API server refuses EVERY delete.

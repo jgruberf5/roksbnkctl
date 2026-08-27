@@ -54,7 +54,7 @@ func TestRunTrialDownSweepsWebhooksOnEveryBackend(t *testing.T) {
 	firstSweep, firstDocker := -1, -1
 	for i, c := range calls {
 		switch c {
-		case "sweepTeardownWebhooks":
+		case "startTeardownWebhookSweep":
 			sweeps++
 			if firstSweep < 0 {
 				firstSweep = i
@@ -69,7 +69,7 @@ func TestRunTrialDownSweepsWebhooksOnEveryBackend(t *testing.T) {
 
 	// One for the local backend, one for the containerised path.
 	if sweeps < 2 {
-		t.Errorf("RunTrialDown calls sweepTeardownWebhooks %d time(s); want 2 — the "+
+		t.Errorf("RunTrialDown calls startTeardownWebhookSweep %d time(s); want 2 — the "+
 			"local and docker/ssh backends both destroy the namespace, and a backend "+
 			"without the sweep hangs in Terminating with no sign of why", sweeps)
 	}
@@ -77,7 +77,7 @@ func TestRunTrialDownSweepsWebhooksOnEveryBackend(t *testing.T) {
 	// On the containerised path the sweep must come first, or terraform starts
 	// destroying before the webhook is gone and the deadlock is back.
 	if dockers > 0 && firstSweep > firstDocker {
-		t.Error("the docker/ssh dispatch happens before sweepTeardownWebhooks; the " +
+		t.Error("the docker/ssh dispatch happens before startTeardownWebhookSweep; the " +
 			"namespace destroy would begin with the webhook still installed")
 	}
 }
