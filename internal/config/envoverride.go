@@ -128,6 +128,57 @@ import (
 //	ROKSBNKCTL_FLP_EXTERNAL_URL     → bnk.flp.external.url        (license via a proxy in ANOTHER cluster)
 //	ROKSBNKCTL_FLP_ROOT_CA_B64      → bnk.flp.external.root_ca_b64 (verbatim; already base64)
 //
+//	── #234: every remaining settable field now has one ──
+//	ROKSBNKCTL_API_KEY_SOURCE                    → ibmcloud.api_key_source
+//	ROKSBNKCTL_BNKFORGE_INSECURE                 → bnkforge.insecure
+//	ROKSBNKCTL_BNKFORGE_PROJECT                  → bnkforge.project
+//	ROKSBNKCTL_BNKFORGE_REGISTER                 → bnkforge.register
+//	ROKSBNKCTL_BNKFORGE_URL                      → bnkforge.url
+//	ROKSBNKCTL_BNKFORGE_USERNAME                 → bnkforge.username
+//	ROKSBNKCTL_BNK_CREATE                        → resources.bnk.create
+//	ROKSBNKCTL_BNK_EXISTING                      → resources.bnk.existing
+//	ROKSBNKCTL_CERT_MANAGER_EXISTING             → resources.cert_manager.existing
+//	ROKSBNKCTL_CERT_MANAGER_NAMESPACE            → bnk.cert_manager.namespace
+//	ROKSBNKCTL_CERT_MANAGER_VERSION              → bnk.cert_manager.version
+//	ROKSBNKCTL_CLIENT_REGION                     → resources.client_region
+//	ROKSBNKCTL_CLUSTER_JUMPHOSTS_EXISTING        → resources.cluster_jumphosts.existing
+//	ROKSBNKCTL_CLUSTER_VPC_CREATE                → resources.cluster_vpc.create
+//	ROKSBNKCTL_COPIED_SSH_KEY_FILES              → resources.copied_ssh_key_files
+//	ROKSBNKCTL_FAR_REPO_URL                      → bnk.far_repo_url
+//	ROKSBNKCTL_FLP_CHART_VERSION                 → bnk.flp.chart_version
+//	ROKSBNKCTL_FLP_NODE_PORT_ACCESS              → bnk.flp.node_port_access
+//	ROKSBNKCTL_FLP_NODE_PORT_SOURCE_CIDRS        → bnk.flp.node_port_source_cidrs
+//	ROKSBNKCTL_FLP_STORAGE_CLASS                 → bnk.flp.storage_class
+//	ROKSBNKCTL_FLP_VSI_ALLOWED_CIDRS             → bnk.flp.vsi.allowed_cidrs
+//	ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_HOST        → bnk.flp.vsi.forward_proxy.host
+//	ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_PORT        → bnk.flp.vsi.forward_proxy.port
+//	ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_PROTOCOL    → bnk.flp.vsi.forward_proxy.protocol
+//	ROKSBNKCTL_GATEWAY_APP_NAMESPACE             → gateway.app_namespace
+//	ROKSBNKCTL_GATEWAY_BACKEND_PORT              → gateway.backend_port
+//	ROKSBNKCTL_GATEWAY_BACKEND_SERVICE           → gateway.backend_service
+//	ROKSBNKCTL_GATEWAY_CLIENT_SUBNET_LOCAL       → gateway.client_subnet_local
+//	ROKSBNKCTL_GATEWAY_CLIENT_SUBNET_REMOTE      → gateway.client_subnet_remote
+//	ROKSBNKCTL_GATEWAY_EGRESS_MODE               → gateway.egress_mode
+//	ROKSBNKCTL_GATEWAY_VXLAN_PORT                → gateway.vxlan_port
+//	ROKSBNKCTL_GSLB_DATACENTER_NAME              → bnk.gslb_datacenter_name
+//	ROKSBNKCTL_HUGEPAGES_NODE_ROLE               → bnk.hugepages.node_role
+//	ROKSBNKCTL_HUGEPAGES_PROFILE_NAME            → bnk.hugepages.profile_name
+//	ROKSBNKCTL_ICR_HOST                          → registry.icr_host
+//	ROKSBNKCTL_ICR_NAMESPACE                     → registry.icr_namespace
+//	ROKSBNKCTL_MIN_WORKER_MEMORY_GB              → cluster.min_worker_memory_gb
+//	ROKSBNKCTL_MIN_WORKER_VCPU_COUNT             → cluster.min_worker_vcpu_count
+//	ROKSBNKCTL_REGISTRY_COS_EXISTING             → resources.registry_cos.existing
+//	ROKSBNKCTL_REGISTRY_INCLUDE_DEPS             → registry.include_deps
+//	ROKSBNKCTL_REGISTRY_NAMESPACE                → registry.namespace
+//	ROKSBNKCTL_SOURCE_SERVICE_ACCOUNT_B64        → registry.source_service_account_b64
+//	ROKSBNKCTL_TCP_SETTINGS_NAME                 → bnk.tcp_settings_name
+//	ROKSBNKCTL_TESTING_JUMPHOST_PROFILE          → resources.testing_jumphost_profile
+//	ROKSBNKCTL_TESTING_MIN_MEMORY_GB             → resources.testing_min_memory_gb
+//	ROKSBNKCTL_TESTING_MIN_VCPU_COUNT            → resources.testing_min_vcpu_count
+//	ROKSBNKCTL_TGW_JUMPHOST_EXISTING             → resources.tgw_jumphost.existing
+//	ROKSBNKCTL_TMM_K8S_ROUTES                    → bnk.network.tmm_k8s_routes
+//	ROKSBNKCTL_TRANSIT_GATEWAY_CREATE            → resources.transit_gateway.create
+//
 // The last two are the cross-job handoff: the CI job that owns the proxy emits
 // them with `flp output flp_external_endpoint` / `flp_root_ca`, and the job that
 // installs BNK consumes them as ordinary pipeline variables — no config file has
@@ -527,6 +578,61 @@ func OverrideFromEnv(ws *Workspace) []string {
 		}
 	}
 
+	// #234 tables. Each ignores an unparseable value rather than storing a zero:
+	// a toggle silently set to the opposite of what a pipeline meant, or a port
+	// set to 0, is harder to diagnose than one that was never set at all.
+	for _, o := range boolOverrides {
+		v := envValue(o.env)
+		if v == "" {
+			continue
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "! %s ignored: %q is not a boolean (true/false/1/0)\n", o.env, v)
+			continue
+		}
+		o.set(ws, b)
+		applied = append(applied, o.field+" ("+o.env+")")
+	}
+	for _, o := range ptrBoolOverrides {
+		v := envValue(o.env)
+		if v == "" {
+			continue
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "! %s ignored: %q is not a boolean (true/false/1/0)\n", o.env, v)
+			continue
+		}
+		o.set(ws, &b)
+		applied = append(applied, o.field+" ("+o.env+")")
+	}
+	for _, o := range intOverrides {
+		v := envValue(o.env)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 0 {
+			fmt.Fprintf(os.Stderr, "! %s ignored: %q is not a non-negative integer\n", o.env, v)
+			continue
+		}
+		o.set(ws, n)
+		applied = append(applied, o.field+" ("+o.env+")")
+	}
+	for _, o := range stringListOverrides {
+		v := envValue(o.env)
+		if v == "" {
+			continue
+		}
+		list := splitCommaList(v)
+		if len(list) == 0 {
+			continue
+		}
+		o.set(ws, list)
+		applied = append(applied, o.field+" ("+o.env+")")
+	}
+
 	// Security-group source CIDRs (sgCIDROverrides). Comma-separated like the
 	// overrides above.
 	// Each leaves the terraform module's own default standing when unset — the
@@ -884,8 +990,186 @@ var stringOverrides = []stringOverride{
 	// BNK receives them as ordinary pipeline variables. The CA is already
 	// base64 (that is how `flp output` emits it), so it is stored verbatim —
 	// unlike the raw-secret vars, which get encoded on the way in.
+	// ── #234: string fields that had no override ─────────────────────────────
+	{"ROKSBNKCTL_CERT_MANAGER_NAMESPACE", "bnk.cert_manager.namespace", func(ws *Workspace, v string) { certManagerCfg(ws).Namespace = v }},
+	{"ROKSBNKCTL_CERT_MANAGER_VERSION", "bnk.cert_manager.version", func(ws *Workspace, v string) { certManagerCfg(ws).Version = v }},
+	{"ROKSBNKCTL_FAR_REPO_URL", "bnk.far_repo_url", func(ws *Workspace, v string) { ws.BNK.FARRepoURL = v }},
+	{"ROKSBNKCTL_FLP_CHART_VERSION", "bnk.flp.chart_version", func(ws *Workspace, v string) { flpCfg(ws).ChartVersion = v }},
+	{"ROKSBNKCTL_FLP_STORAGE_CLASS", "bnk.flp.storage_class", func(ws *Workspace, v string) { flpCfg(ws).StorageClass = v }},
+	{"ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_HOST", "bnk.flp.vsi.forward_proxy.host", func(ws *Workspace, v string) { flpForwardProxy(ws).Host = v }},
+	{"ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_PROTOCOL", "bnk.flp.vsi.forward_proxy.protocol", func(ws *Workspace, v string) { flpForwardProxy(ws).Protocol = v }},
+	{"ROKSBNKCTL_GSLB_DATACENTER_NAME", "bnk.gslb_datacenter_name", func(ws *Workspace, v string) { ws.BNK.GSLBDatacenterName = v }},
+	{"ROKSBNKCTL_HUGEPAGES_NODE_ROLE", "bnk.hugepages.node_role", func(ws *Workspace, v string) { hugepagesCfg(ws).NodeRole = v }},
+	{"ROKSBNKCTL_HUGEPAGES_PROFILE_NAME", "bnk.hugepages.profile_name", func(ws *Workspace, v string) { hugepagesCfg(ws).ProfileName = v }},
+	{"ROKSBNKCTL_TMM_K8S_ROUTES", "bnk.network.tmm_k8s_routes", func(ws *Workspace, v string) { networkCfg(ws).TMMK8SRoutes = v }},
+	{"ROKSBNKCTL_TCP_SETTINGS_NAME", "bnk.tcp_settings_name", func(ws *Workspace, v string) { ws.BNK.TCPSettingsName = v }},
+	{"ROKSBNKCTL_BNKFORGE_URL", "bnkforge.url", func(ws *Workspace, v string) { bnkForgeCfg(ws).URL = v }},
+	{"ROKSBNKCTL_BNKFORGE_USERNAME", "bnkforge.username", func(ws *Workspace, v string) { bnkForgeCfg(ws).Username = v }},
+	{"ROKSBNKCTL_BNKFORGE_PROJECT", "bnkforge.project", func(ws *Workspace, v string) { bnkForgeCfg(ws).Project = v }},
+	{"ROKSBNKCTL_GATEWAY_APP_NAMESPACE", "gateway.app_namespace", func(ws *Workspace, v string) { ws.Gateway.AppNamespace = v }},
+	{"ROKSBNKCTL_GATEWAY_BACKEND_SERVICE", "gateway.backend_service", func(ws *Workspace, v string) { ws.Gateway.BackendService = v }},
+	{"ROKSBNKCTL_GATEWAY_EGRESS_MODE", "gateway.egress_mode", func(ws *Workspace, v string) { ws.Gateway.EgressMode = v }},
+	{"ROKSBNKCTL_API_KEY_SOURCE", "ibmcloud.api_key_source", func(ws *Workspace, v string) { ws.IBMCloud.APIKeySource = v }},
+	{"ROKSBNKCTL_ICR_HOST", "registry.icr_host", func(ws *Workspace, v string) { registryCfg(ws).ICRHost = v }},
+	{"ROKSBNKCTL_ICR_NAMESPACE", "registry.icr_namespace", func(ws *Workspace, v string) { registryCfg(ws).ICRNamespace = v }},
+	{"ROKSBNKCTL_REGISTRY_NAMESPACE", "registry.namespace", func(ws *Workspace, v string) { registryCfg(ws).Namespace = v }},
+	// The FAR service account the registry verbs authenticate with. Its absence
+	// is what forced a hand-edited config.yaml when mirroring 2.4-EA into
+	// Artifactory -- in a flow whose whole point is being drivable from the
+	// environment (#234).
+	{"ROKSBNKCTL_SOURCE_SERVICE_ACCOUNT_B64", "registry.source_service_account_b64", func(ws *Workspace, v string) { registryCfg(ws).SourceServiceAccountB64 = v }},
+	{"ROKSBNKCTL_BNK_EXISTING", "resources.bnk.existing", func(ws *Workspace, v string) { resourcesCfg(ws).BNK.Existing = v }},
+	{"ROKSBNKCTL_CERT_MANAGER_EXISTING", "resources.cert_manager.existing", func(ws *Workspace, v string) { resourcesCfg(ws).CertManager.Existing = v }},
+	{"ROKSBNKCTL_CLUSTER_JUMPHOSTS_EXISTING", "resources.cluster_jumphosts.existing", func(ws *Workspace, v string) { resourcesCfg(ws).ClusterJumphosts.Existing = v }},
+	{"ROKSBNKCTL_REGISTRY_COS_EXISTING", "resources.registry_cos.existing", func(ws *Workspace, v string) { resourcesCfg(ws).RegistryCOS.Existing = v }},
+	{"ROKSBNKCTL_TGW_JUMPHOST_EXISTING", "resources.tgw_jumphost.existing", func(ws *Workspace, v string) { resourcesCfg(ws).TGWJumphost.Existing = v }},
+	{"ROKSBNKCTL_CLIENT_REGION", "resources.client_region", func(ws *Workspace, v string) { resourcesCfg(ws).ClientRegion = v }},
+	{"ROKSBNKCTL_TESTING_JUMPHOST_PROFILE", "resources.testing_jumphost_profile", func(ws *Workspace, v string) { resourcesCfg(ws).TestingJumphostProfile = v }},
 	{"ROKSBNKCTL_FLP_EXTERNAL_URL", "bnk.flp.external.url", func(ws *Workspace, v string) { flpExternal(ws).URL = v }},
 	{"ROKSBNKCTL_FLP_ROOT_CA_B64", "bnk.flp.external.root_ca_b64", func(ws *Workspace, v string) { flpExternal(ws).RootCAB64 = v }},
+}
+
+// certManagerCfg, hugepagesCfg and networkCfg lazily create their blocks, the
+// same shape as registryCfg and flpCfg above. Each replaces a nil check that the
+// hand-written overrides repeated inline.
+func certManagerCfg(ws *Workspace) *BNKCertManagerCfg {
+	if ws.BNK.CertManager == nil {
+		ws.BNK.CertManager = &BNKCertManagerCfg{}
+	}
+	return ws.BNK.CertManager
+}
+
+func hugepagesCfg(ws *Workspace) *HugepagesCfg {
+	if ws.BNK.Hugepages == nil {
+		ws.BNK.Hugepages = &HugepagesCfg{}
+	}
+	return ws.BNK.Hugepages
+}
+
+func networkCfg(ws *Workspace) *BNKNetworkCfg {
+	if ws.BNK.Network == nil {
+		ws.BNK.Network = &BNKNetworkCfg{}
+	}
+	return ws.BNK.Network
+}
+
+// resourcesCfg lazily creates the resources block so the tables above can write
+// into it. The hand-written bool overrides each carried their own three-line
+// nil check; this is the same thing once.
+func resourcesCfg(ws *Workspace) *ResourcesCfg {
+	if ws.Resources == nil {
+		ws.Resources = &ResourcesCfg{}
+	}
+	return ws.Resources
+}
+
+// flpForwardProxy returns bnk.flp.vsi.forward_proxy, creating the intermediate
+// blocks.
+func flpForwardProxy(ws *Workspace) *BNKFLPForwardProxyCfg {
+	v := flpVSI(ws)
+	if v.ForwardProxy == nil {
+		v.ForwardProxy = &BNKFLPForwardProxyCfg{}
+	}
+	return v.ForwardProxy
+}
+
+// ── #234: the overrides that were missing ────────────────────────────────────
+//
+// 78 of 187 config.yaml fields had no ROKSBNKCTL_* variable, and WHICH ones was
+// arbitrary rather than principled: the overrides were added on demand, so
+// resources.cert_manager.create was settable from the environment and
+// resources.transit_gateway.create, an identical toggle beside it, was not.
+//
+// It stayed invisible because internal/cli/env.example is generated FROM the
+// overrides — a gap cannot appear in a list derived from the thing that is
+// missing. The generated cheatsheet is the first artefact that shows every field
+// next to its override and leaves a dash where there is none.
+//
+// These three tables exist so the additions are rows rather than 49 bespoke
+// blocks. Bespoke is for a variable that does something beyond its shape:
+// base64-encodes, validates, or writes more than one field.
+
+// boolOverrides parse with strconv.ParseBool, matching every hand-written bool
+// override that predates them. An unparseable value is IGNORED rather than
+// treated as false: "flase" meaning false is how a toggle silently does the
+// opposite of what the pipeline intended.
+var boolOverrides = []struct {
+	env   string
+	field string
+	set   func(*Workspace, bool)
+}{
+	{"ROKSBNKCTL_BNK_CREATE", "resources.bnk.create",
+		func(ws *Workspace, b bool) { resourcesCfg(ws).BNK.Create = b }},
+	{"ROKSBNKCTL_CLUSTER_VPC_CREATE", "resources.cluster_vpc.create",
+		func(ws *Workspace, b bool) { resourcesCfg(ws).ClusterVPC.Create = b }},
+	{"ROKSBNKCTL_TRANSIT_GATEWAY_CREATE", "resources.transit_gateway.create",
+		func(ws *Workspace, b bool) { resourcesCfg(ws).TransitGateway.Create = b }},
+	{"ROKSBNKCTL_FLP_NODE_PORT_ACCESS", "bnk.flp.node_port_access",
+		func(ws *Workspace, b bool) { flpCfg(ws).NodePortAccess = b }},
+	{"ROKSBNKCTL_BNKFORGE_REGISTER", "bnkforge.register",
+		func(ws *Workspace, b bool) { bnkForgeCfg(ws).Register = b }},
+	{"ROKSBNKCTL_BNKFORGE_INSECURE", "bnkforge.insecure",
+		func(ws *Workspace, b bool) { bnkForgeCfg(ws).Insecure = b }},
+}
+
+// ptrBoolOverrides set a *bool, where nil means UNSET and is not the same as
+// false -- registry.include_deps nil takes the built-in default, false
+// explicitly excludes. A plain bool table cannot express the difference, which
+// is why this is separate rather than a third case inside boolOverrides.
+var ptrBoolOverrides = []struct {
+	env   string
+	field string
+	set   func(*Workspace, *bool)
+}{
+	{"ROKSBNKCTL_REGISTRY_INCLUDE_DEPS", "registry.include_deps",
+		func(ws *Workspace, b *bool) { registryCfg(ws).IncludeDeps = b }},
+}
+
+// intOverrides parse with strconv.Atoi and IGNORE a non-numeric or negative
+// value rather than storing a zero, for the same reason: a port silently set to
+// 0 is harder to diagnose than one that was never set.
+var intOverrides = []struct {
+	env   string
+	field string
+	set   func(*Workspace, int)
+}{
+	{"ROKSBNKCTL_MIN_WORKER_MEMORY_GB", "cluster.min_worker_memory_gb",
+		func(ws *Workspace, n int) { ws.Cluster.MinWorkerMemoryGB = n }},
+	{"ROKSBNKCTL_MIN_WORKER_VCPU_COUNT", "cluster.min_worker_vcpu_count",
+		func(ws *Workspace, n int) { ws.Cluster.MinWorkerVCPUCount = n }},
+	{"ROKSBNKCTL_TESTING_MIN_MEMORY_GB", "resources.testing_min_memory_gb",
+		func(ws *Workspace, n int) { resourcesCfg(ws).TestingMinMemoryGB = n }},
+	{"ROKSBNKCTL_TESTING_MIN_VCPU_COUNT", "resources.testing_min_vcpu_count",
+		func(ws *Workspace, n int) { resourcesCfg(ws).TestingMinVCPUCount = n }},
+	{"ROKSBNKCTL_GATEWAY_BACKEND_PORT", "gateway.backend_port",
+		func(ws *Workspace, n int) { ws.Gateway.BackendPort = n }},
+	{"ROKSBNKCTL_GATEWAY_VXLAN_PORT", "gateway.vxlan_port",
+		func(ws *Workspace, n int) { ws.Gateway.VXLANPort = n }},
+	{"ROKSBNKCTL_FLP_VSI_FORWARD_PROXY_PORT", "bnk.flp.vsi.forward_proxy.port",
+		func(ws *Workspace, n int) { flpForwardProxy(ws).Port = n }},
+}
+
+// stringListOverrides split on commas, trimming each element and dropping
+// empties, so "a, b," yields two entries rather than three with one blank.
+//
+// Distinct from sgCIDROverrides, which is the same shape but named for the
+// security-group CIDR lists it carries; keeping them apart means neither table's
+// name lies about what is in it.
+var stringListOverrides = []struct {
+	env   string
+	field string
+	set   func(*Workspace, []string)
+}{
+	{"ROKSBNKCTL_FLP_NODE_PORT_SOURCE_CIDRS", "bnk.flp.node_port_source_cidrs",
+		func(ws *Workspace, v []string) { flpCfg(ws).NodePortSourceCIDRs = v }},
+	{"ROKSBNKCTL_COPIED_SSH_KEY_FILES", "resources.copied_ssh_key_files",
+		func(ws *Workspace, v []string) { resourcesCfg(ws).CopiedSSHKeyFiles = v }},
+	{"ROKSBNKCTL_GATEWAY_CLIENT_SUBNET_LOCAL", "gateway.client_subnet_local",
+		func(ws *Workspace, v []string) { ws.Gateway.ClientSubnetLocal = v }},
+	{"ROKSBNKCTL_GATEWAY_CLIENT_SUBNET_REMOTE", "gateway.client_subnet_remote",
+		func(ws *Workspace, v []string) { ws.Gateway.ClientSubnetRemote = v }},
+	{"ROKSBNKCTL_FLP_VSI_ALLOWED_CIDRS", "bnk.flp.vsi.allowed_cidrs",
+		func(ws *Workspace, v []string) { flpVSI(ws).AllowedCIDRs = v }},
 }
 
 // sgCIDROverrides are the security-group source-CIDR lists — uniform except
@@ -1015,6 +1299,18 @@ func SupportedOverrideNames() []string {
 		out = append(out, o.env)
 	}
 	for _, o := range sgCIDROverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range boolOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range ptrBoolOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range intOverrides {
+		out = append(out, o.env)
+	}
+	for _, o := range stringListOverrides {
 		out = append(out, o.env)
 	}
 	for _, o := range vlanPerVLANOverrides {
