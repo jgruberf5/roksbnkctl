@@ -130,7 +130,7 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	// utilsNS may equal floNS — the single-namespace topology is a supported
 	// deployment, so the list is de-duplicated rather than assumed distinct.
 	for _, ns := range dedupeNonEmpty(floNS, utilsNS) {
-		deleted, remaining := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, bnkCRRefusalGrace, w, neutralise)
+		deleted, remaining, stuck := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, bnkCRRefusalGrace, w, neutralise)
 		switch {
 		case deleted == 0 && remaining == 0:
 			// Nothing there. Silent: a namespace with no BNK CRs is the normal
@@ -139,9 +139,9 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 		case remaining == 0:
 			fmt.Fprintf(w, "  Drained %d BNK custom resource(s) from %s while FLO could still finalize them.\n", deleted, ns)
 		default:
-			fmt.Fprintf(w, "  ⚠ %d BNK custom resource(s) in %s did not finalize within %s.\n"+
+			fmt.Fprintf(w, "  ⚠ %d BNK custom resource(s) in %s did not finalize within %s: %s\n"+
 				"    The destroy continues; a namespace left Terminating is repaired afterwards.\n",
-				remaining, ns, bnkCRDrainTimeout)
+				remaining, ns, bnkCRDrainTimeout, strings.Join(stuck, ", "))
 		}
 	}
 }
@@ -169,7 +169,7 @@ func drainBNKCustomResources(
 	timeout, poll, refusalGrace time.Duration,
 	w io.Writer,
 	neutralise neutraliseFunc,
-) (deleted, remaining int) {
+) (deleted, remaining int, stuck []string) {
 	// ONE deadline for both phases, not one each. The budget is a total: it
 	// exists to stay under the kubernetes provider's own namespace-delete
 	// timeout, so spending it twice would defeat the purpose. A leaf phase that
@@ -183,17 +183,18 @@ func drainBNKCustomResources(
 		if len(phase) == 0 {
 			continue
 		}
-		d, left := drainPhase(ctx, dc, phase, gvrs, ns, deadline, poll, refusalGrace, w, neutralise)
+		d, left, names := drainPhase(ctx, dc, phase, gvrs, ns, deadline, poll, refusalGrace, w, neutralise)
 		deleted += d
 		if left > 0 {
+			stuck = names
 			// The leaf phase did not drain, so the CNEInstance is deliberately
 			// NOT deleted: removing it now would orphan exactly the objects
 			// still waiting, which is the bug being fixed. Leave them for the
 			// repair path.
-			return deleted, left
+			return deleted, left, stuck
 		}
 	}
-	return deleted, 0
+	return deleted, 0, nil
 }
 
 // drainPhase deletes one phase's objects and waits for them to go, RE-ISSUING
@@ -226,7 +227,7 @@ func drainPhase(
 	poll, refusalGrace time.Duration,
 	w io.Writer,
 	neutralise neutraliseFunc,
-) (deleted, remaining int) {
+) (deleted, remaining int, stuck []string) {
 	var refusingSince time.Time
 	warned := false
 	// Owned here, not package-level: a global would carry names between
@@ -241,7 +242,7 @@ func drainPhase(
 		deleted += p.accepted
 
 		if p.present == 0 && p.unknown == 0 {
-			return deleted, 0
+			return deleted, 0, nil
 		}
 
 		// Nothing accepted, nothing already finalizing, and refusals: no part of
@@ -265,7 +266,8 @@ func drainPhase(
 						"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
 						ns, refusalGrace, skipped.Round(time.Second))
 				}
-				return deleted, p.present + p.unknown
+				_, _, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+				return deleted, p.present + p.unknown, names
 			}
 			if !warned && w != nil {
 				warned = true
@@ -278,14 +280,14 @@ func drainPhase(
 		}
 
 		if !time.Now().Before(deadline) {
-			present, unknown := countIn(ctx, dc, phase, allGVRs, ns, denied)
-			return deleted, present + unknown
+			present, unknown, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+			return deleted, present + unknown, names
 		}
 
 		select {
 		case <-ctx.Done():
-			present, unknown := countIn(ctx, dc, phase, allGVRs, ns, denied)
-			return deleted, present + unknown
+			present, unknown, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+			return deleted, present + unknown, names
 		case <-time.After(poll):
 		}
 	}
@@ -536,6 +538,19 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 // there is nothing left to wait for; anything else is genuinely unknown and is
 // reported as such rather than as drained.
 func countIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, skip map[string]bool) (present, unknown int) {
+	p, u, _ := countAndNameIn(ctx, dc, gvrs, allGVRs, ns, skip)
+	return p, u
+}
+
+// countAndNameIn is countIn plus the NAMES of what is left.
+//
+// "1 BNK custom resource(s) did not finalize" is not actionable: it does not say
+// whether the survivor is the CNEInstance, whose finalizer legitimately tears down
+// the whole product and may simply need longer than the budget, or a leaf that is
+// genuinely stuck. Those need opposite responses, and the message that omitted the
+// name cost a diagnostic cycle -- I was reduced to inferring which object it was
+// from the shape of the teardown.
+func countAndNameIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, skip map[string]bool) (present, unknown int, names []string) {
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -566,9 +581,11 @@ func countIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.G
 				continue
 			}
 			present++
+			names = append(names, gvr.Resource+"/"+list.Items[i].GetName())
 		}
 	}
-	return present, unknown
+	sort.Strings(names)
+	return present, unknown, names
 }
 
 // typeIsGone reports whether an error means the RESOURCE TYPE no longer exists,

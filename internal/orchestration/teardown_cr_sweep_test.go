@@ -78,7 +78,7 @@ func TestTheCNEInstanceIsDeletedOnlyAfterItsLeavesAreGone(t *testing.T) {
 
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM, gvrIPAMRange}
 	var buf bytes.Buffer
-	deleted, remaining := drainBNKCustomResources(
+	deleted, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, gvrs, "f5-bnk", 10*time.Second, time.Millisecond, time.Second, &buf, nil)
 
 	if deleted != 3 {
@@ -118,7 +118,7 @@ func TestTheCNEInstanceSurvivesWhenTheLeavesNeverFinalize(t *testing.T) {
 
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM}
 	var buf bytes.Buffer
-	_, remaining := drainBNKCustomResources(
+	_, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, gvrs, "f5-bnk", 30*time.Millisecond, time.Millisecond, time.Second, &buf, nil)
 
 	if remaining != 1 {
@@ -161,7 +161,7 @@ func TestTheDrainWaitsForFinalizersRatherThanForTheDeleteCall(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	_, remaining := drainBNKCustomResources(
+	_, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
 		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf, nil)
 
@@ -184,7 +184,7 @@ func TestTheDrainWaitsForFinalizersRatherThanForTheDeleteCall(t *testing.T) {
 func TestAnEmptyNamespaceDrainsSilently(t *testing.T) {
 	dc := newFake()
 	var buf bytes.Buffer
-	deleted, remaining := drainBNKCustomResources(
+	deleted, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM},
 		"f5-bnk", time.Second, time.Millisecond, time.Second, &buf, nil)
 	if deleted != 0 || remaining != 0 {
@@ -228,7 +228,7 @@ func TestTheDrainStopsOnContextCancellation(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		_, remaining := drainBNKCustomResources(ctx, dc,
+		_, remaining, _ := drainBNKCustomResources(ctx, dc,
 			[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Hour, time.Second, time.Second, nil, nil)
 		done <- remaining
 	}()
@@ -553,7 +553,7 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 	// drain started re-issuing deletes (#241), and a test that keeps a retired
 	// helper alive is testing code no teardown runs.
 	start := time.Now()
-	deleted, remaining := drainPhase(context.Background(), dc,
+	deleted, remaining, _ := drainPhase(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, []schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
 		time.Now().Add(2*time.Second), 50*time.Millisecond, time.Second, nil, nil)
 	if deleted != 0 || remaining != 0 {
@@ -585,7 +585,7 @@ func TestADrainWhereEveryDeleteIsRefusedDoesNotWait(t *testing.T) {
 
 	var buf bytes.Buffer
 	start := time.Now()
-	deleted, remaining := drainBNKCustomResources(
+	deleted, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
 		"f5-bnk", 30*time.Second, 50*time.Millisecond, 200*time.Millisecond, &buf, nil)
 	elapsed := time.Since(start)
@@ -632,7 +632,7 @@ func TestASlowFinalizerIsStillWaitedFor(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	_, remaining := drainBNKCustomResources(
+	_, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
 		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf, nil)
 	if remaining != 0 {
@@ -683,7 +683,7 @@ func TestARefusalThatClearsIsRetriedRatherThanWaitedOut(t *testing.T) {
 	}()
 
 	var buf bytes.Buffer
-	deleted, remaining := drainBNKCustomResources(
+	deleted, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
 		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf, nil)
 
@@ -748,7 +748,7 @@ func TestAPermanentRefusalStopsAfterTheGraceNotTheBudget(t *testing.T) {
 
 	var buf bytes.Buffer
 	start := time.Now()
-	_, remaining := drainBNKCustomResources(context.Background(), dc,
+	_, remaining, _ := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
 		30*time.Second, 20*time.Millisecond, 300*time.Millisecond, &buf, nil)
 	elapsed := time.Since(start)
@@ -813,7 +813,7 @@ func TestAnObjectWaitingOnAFinalizerDoesNotStartTheGiveUpClock(t *testing.T) {
 	// Grace is much SHORTER than how long the finalizer takes. Correct code waits
 	// anyway, because a marked object is progress; code that keys only on
 	// "nothing accepted" gives up at 100ms.
-	_, remaining := drainBNKCustomResources(context.Background(), dc,
+	_, remaining, _ := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
 		5*time.Second, 20*time.Millisecond, 100*time.Millisecond, &buf, nil)
 
@@ -845,7 +845,7 @@ func TestAnUnlistableKindIsNotReportedAsDrained(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	deleted, remaining := drainBNKCustomResources(context.Background(), dc,
+	deleted, remaining, _ := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
 		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
 
@@ -937,7 +937,7 @@ func TestARefusalNeutralisesTheWebhookAndRetriesImmediately(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	deleted, remaining := drainBNKCustomResources(
+	deleted, remaining, _ := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
 		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf, neutralise)
 
@@ -1340,5 +1340,32 @@ func TestTheUnownedFLOComponentsAreStillSkipped(t *testing.T) {
 	root := schema.GroupVersionResource{Group: "k8s.f5.com", Version: "v1", Resource: "cneinstances"}
 	if floManagedComponent(root) {
 		t.Error("the CNEInstance was treated as a managed component; deleting it IS the uninstall")
+	}
+}
+
+// A count with no names is not actionable.
+//
+// "1 BNK custom resource(s) did not finalize" does not say whether the survivor is
+// the CNEInstance -- whose finalizer legitimately tears down the whole product and
+// may simply need longer than the budget -- or a leaf that is genuinely stuck.
+// Those need opposite responses, and the nameless message cost a diagnostic cycle:
+// I was reduced to inferring which object it was from the shape of the teardown.
+func TestTheDrainNamesWhatDidNotFinalize(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "stuck-one"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil // accepted, but the object lingers
+	})
+
+	var buf bytes.Buffer
+	_, remaining, stuck := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		200*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
+
+	if remaining != 1 {
+		t.Fatalf("remaining = %d, want 1", remaining)
+	}
+	if len(stuck) != 1 || stuck[0] != "ipams/stuck-one" {
+		t.Errorf("stuck = %v, want [ipams/stuck-one] — the operator needs to know WHICH object, "+
+			"because a lingering CNEInstance and a lingering leaf mean different things", stuck)
 	}
 }
