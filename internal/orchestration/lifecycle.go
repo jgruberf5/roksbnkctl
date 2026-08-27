@@ -703,7 +703,11 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 			// path below (#235). Same reasoning for the drain itself (#217): the
 			// destroy ordering that orphans the CNEInstance is in the terraform
 			// graph, which is identical whichever process runs it.
-			sweepTeardownWebhooks(ctx, dcctx, nil, in.errOut())
+			// The sweep RUNS FOR THE WHOLE DESTROY, not once before it (#241):
+			// FLO re-creates the webhook within seconds of the drain's first
+			// deletes. See startTeardownWebhookSweep.
+			stopSweep := startTeardownWebhookSweep(ctx, dcctx, nil, in.errOut())
+			defer stopSweep()
 			sweepBNKCustomResources(ctx, dcctx, nil, in.errOut())
 		}
 		return runTerraformLifecycleDocker(ctx, in, spec, "destroy")
@@ -753,7 +757,15 @@ func RunTrialDown(ctx context.Context, in *LifecycleInputs) error {
 	//
 	// which timed the drain out twice (4m per namespace), left the finalizers in
 	// place, and produced the very namespace stall #217 existed to prevent.
-	sweepTeardownWebhooks(ctx, cctx, tfws, w)
+	// AND IT RUNS FOR THE WHOLE TEARDOWN, not once (#241). FLO is deliberately
+	// still alive through the drain -- that is what finalizes the CRs -- so it
+	// re-creates the controller, and the controller re-creates this webhook,
+	// within about ten seconds of the drain's first deletes. A single sweep is
+	// undone before the drain has finished its first pass. The sweep therefore
+	// holds the webhook out of the way until the destroy is done; the first pass
+	// still happens synchronously here, before the drain sees the cluster.
+	stopSweep := startTeardownWebhookSweep(ctx, cctx, tfws, w)
+	defer stopSweep()
 
 	// Then drain BNK's custom resources while FLO is still alive to finalize
 	// them (#217). terraform deletes the CNEInstance without waiting and removes

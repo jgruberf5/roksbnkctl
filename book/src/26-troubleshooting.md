@@ -92,6 +92,77 @@ The check is narrow by construction: it fires only when this workspace's BNK sta
 
 **Fix**: run [`roksbnkctl cleanup`](./11-tearing-down.md#roksbnkctl-cleanup--recovering-from-a-failed-down). It sweeps the account for every resource named after the workspace prefix (`<prefix>-*`) — VPC instances/subnets/security-groups/floating-IPs/public-gateways/VPCs, the Transit Gateway, registry COS, the cluster, and the BNK trusted profile — and deletes them in dependency order. Preview first with `roksbnkctl cleanup --dry-run`; add `--all-regions` if resources landed in a region not recorded in `config.yaml`. (For one-off resource types not covered by the prefix sweep, `roksbnkctl ibmcloud is load-balancers | grep <cluster-name>` + `ibmcloud is load-balancer-delete <id>` still works as a manual fallback.)
 
+## Teardown
+
+### `bnk down` sits for four minutes, then the namespace hangs in `Terminating`
+
+```
+⚠ 7 BNK custom resource(s) in f5-bnk did not finalize within 4m0s.
+⚠ namespace "f5-bnk" was stuck Terminating; cleared F5 finalizers on 2 object(s).
+Error: context deadline exceeded
+```
+
+Fixed in v1.59.0. If you see this, you are on v1.58.0 or earlier.
+
+The teardown drains BNK's custom resources before destroying the namespace, so
+that the F5 Lifecycle Operator is still running to finalize them — a finalizer
+that outlives its controller blocks the namespace forever. Three things made that
+drain unable to finish:
+
+- **It deleted the components FLO manages.** `cnecontrollers`, `f5tmms`, `dssms`,
+  `afms`, `downloaders` and `cnemanifests` are declared by the `CNEInstance`, and
+  FLO recreates any of them within about five seconds for as long as the
+  `CNEInstance` exists. Deleting the `CNEInstance` *is* the uninstall; the
+  components go with it.
+- **Two product defaults cannot be drained at all.**
+  `f5-big-tcp-settings/sys-default-tcp` is refused by BNK's own admission webhook
+  (`Default TCP parameters CR cannot be deleted!`) and
+  `f5-big-dns-caches/security-fqdn-dns-resolver` is recreated on sight. Neither
+  carries a finalizer, so the namespace delete removes them; waiting for them
+  achieves nothing.
+- **`f5validate-<ns>` blocks its own removal.** It has `failurePolicy: Fail` and
+  is served from the namespace being destroyed, so once the controller stops
+  answering the API server refuses every `DELETE` of a `k8s.f5net.com` object.
+  Removing it does not hold — FLO restores it in under a second.
+
+If you are stuck on an older version, the manual escape is to delete the
+`CNEInstance` and let FLO remove the rest, rather than deleting the components
+individually:
+
+```bash
+kubectl -n f5-bnk delete cneinstance --all
+kubectl get validatingwebhookconfiguration | grep f5validate   # delete if the namespace will not terminate
+```
+
+### The teardown says a custom resource "did not finalize"
+
+The message names the object. Two cases, and they need opposite responses:
+
+- **`cneinstances/...`** — the `CNEInstance` finalizer tears down the whole
+  product, so this is legitimately slow work rather than a stall. Let it run.
+- **anything else** — check whether it is being recreated:
+  `kubectl -n f5-bnk get <kind> <name> -o jsonpath='{.metadata.uid}'` before and
+  after a delete. A **new UID** means a controller replaced it, and no amount of
+  waiting will remove it while its controller is running.
+
+### Cluster-scoped objects remain after a successful `bnk down`
+
+Expected. A BNK 2.4 install leaves 95 `CustomResourceDefinition`s, 10
+`APIService`s and a `ValidatingAdmissionPolicy` behind, none of which a namespace
+delete touches. They are shared with any other BNK install on the cluster, so
+removing them is a deliberate operator decision rather than a side effect of one
+workspace's teardown. Reinstalling over them works — verified across consecutive
+install/uninstall cycles at the same manifest version.
+
+`scripts/testing/cluster-residue-check.sh` reports what is left, and excludes
+cert-manager: it is shared infrastructure, and removing its CRDs would delete
+every `Certificate` and `Issuer` on the cluster including ones BNK never created.
+
+What must **not** remain is a `ValidatingWebhookConfiguration` served from the BNK
+namespace. It is named for one namespace and points at a Service that no longer
+exists, and because it matches by `namespaceSelector`, recreating a namespace of
+the same name re-arms a webhook whose backend will never answer.
+
 ## Workspaces
 
 ### Symptom: after `roksbnkctl ws delete <name>`, which workspace is current?

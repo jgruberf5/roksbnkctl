@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
@@ -56,6 +59,25 @@ const (
 	// full attempt rather than inheriting an already-spent budget.
 	bnkCRDrainTimeout = 4 * time.Minute
 	bnkCRDrainPoll    = 3 * time.Second
+
+	// bnkCRRefusalGrace is how long every-delete-refused must PERSIST before the
+	// drain gives up on it.
+	//
+	// #235 added the give-up with no grace at all, on the premise that a refusal
+	// is permanent: the webhook sweep is best-effort, so if it did not remove the
+	// webhook, nothing else will. #241 disproved the premise. FLO re-creates the
+	// webhook about ten seconds into the drain and its endpoint is not ready for
+	// another twenty-four, so there is a window in which every delete is refused
+	// and the condition clears on its own. Giving up at zero seconds inside that
+	// window is how the drain returns "nothing drained" while the cluster was
+	// seconds away from accepting everything.
+	//
+	// 45s is comfortably longer than the observed window (~34s) and comfortably
+	// shorter than the budget it protects: a genuinely permanent refusal still
+	// costs 45s instead of 4m, keeping most of what #235 was worth. With the
+	// webhook sweep now looping (#241), refusals clear within about 3s of the
+	// webhook reappearing, so in a healthy teardown this grace is never spent.
+	bnkCRRefusalGrace = 45 * time.Second
 )
 
 // cneInstanceResource is the plural resource name of the CNEInstance CR — the
@@ -93,6 +115,12 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	if err != nil {
 		return
 	}
+
+	// The drain's own way out of a refusal (#241). The background sweep runs on a
+	// 3s tick; FLO restores the webhook in under a second, so the two schedules
+	// almost never coincide. This lets a refused delete remove the webhook and
+	// retry itself, inside the window it just proved exists.
+	neutralise := webhookNeutraliser(kubeconfig, floNS)
 	gvrs := discoverBNKNamespacedGVRs(kubeconfig)
 	if len(gvrs) == 0 {
 		// No F5 CRDs resolved: either BNK is not installed or the CRDs are
@@ -103,7 +131,7 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	// utilsNS may equal floNS — the single-namespace topology is a supported
 	// deployment, so the list is de-duplicated rather than assumed distinct.
 	for _, ns := range dedupeNonEmpty(floNS, utilsNS) {
-		deleted, remaining := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, w)
+		deleted, remaining, stuck := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, bnkCRRefusalGrace, w, neutralise)
 		switch {
 		case deleted == 0 && remaining == 0:
 			// Nothing there. Silent: a namespace with no BNK CRs is the normal
@@ -112,9 +140,9 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 		case remaining == 0:
 			fmt.Fprintf(w, "  Drained %d BNK custom resource(s) from %s while FLO could still finalize them.\n", deleted, ns)
 		default:
-			fmt.Fprintf(w, "  ⚠ %d BNK custom resource(s) in %s did not finalize within %s.\n"+
+			fmt.Fprintf(w, "  ⚠ %d BNK custom resource(s) in %s did not finalize within %s: %s\n"+
 				"    The destroy continues; a namespace left Terminating is repaired afterwards.\n",
-				remaining, ns, bnkCRDrainTimeout)
+				remaining, ns, bnkCRDrainTimeout, strings.Join(stuck, ", "))
 		}
 	}
 }
@@ -139,9 +167,10 @@ func drainBNKCustomResources(
 	dc dynamic.Interface,
 	gvrs []schema.GroupVersionResource,
 	ns string,
-	timeout, poll time.Duration,
+	timeout, poll, refusalGrace time.Duration,
 	w io.Writer,
-) (deleted, remaining int) {
+	neutralise neutraliseFunc,
+) (deleted, remaining int, stuck []string) {
 	// ONE deadline for both phases, not one each. The budget is a total: it
 	// exists to stay under the kubernetes provider's own namespace-delete
 	// timeout, so spending it twice would defeat the purpose. A leaf phase that
@@ -155,43 +184,117 @@ func drainBNKCustomResources(
 		if len(phase) == 0 {
 			continue
 		}
-		accepted, present := deleteAllIn(ctx, dc, phase, ns, w)
-		deleted += accepted
-
-		// ZERO ACCEPTED WITH OBJECTS STILL THERE CANNOT RESOLVE BY WAITING.
-		//
-		// The sweep that removes F5's validating webhook runs before this and is
-		// best-effort: it returns quietly on an unreachable cluster, credentials
-		// that no longer resolve, or a webhook it does not match. Any of those
-		// and the drain meets a live failurePolicy: Fail webhook whose backend is
-		// the controller being torn down, so the API server refuses EVERY delete
-		// -- and polling for the full budget then waits on a condition nothing
-		// will change. That is the 4m+4m in #235, and the ordering fix alone
-		// removes the cause without removing the ability to burn the budget.
-		//
-		// Deleting nothing while objects remain is not slow progress, it is no
-		// progress. Say so and let the destroy get on with it; the repair path
-		// handles what is left.
-		if accepted == 0 && present > 0 {
-			if w != nil {
-				fmt.Fprintf(w, "  ⚠ %s: every delete was refused, so waiting cannot help — skipping the %s wait.\n"+
-					"    The reason is above, one line per object. A validating webhook whose backend is\n"+
-					"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
-					ns, timeout)
-			}
-			return deleted, present
-		}
-
-		remaining = awaitGone(ctx, dc, phase, ns, deadline, poll)
-		if remaining > 0 {
+		d, left, names := drainPhase(ctx, dc, phase, gvrs, ns, deadline, poll, refusalGrace, w, neutralise)
+		deleted += d
+		if left > 0 {
+			stuck = names
 			// The leaf phase did not drain, so the CNEInstance is deliberately
 			// NOT deleted: removing it now would orphan exactly the objects
 			// still waiting, which is the bug being fixed. Leave them for the
 			// repair path.
-			return deleted, remaining
+			return deleted, left, stuck
 		}
 	}
-	return deleted, 0
+	return deleted, 0, nil
+}
+
+// drainPhase deletes one phase's objects and waits for them to go, RE-ISSUING
+// the deletes on every poll.
+//
+// THE RETRY IS THE FIX (#241). The previous version called deleteAllIn exactly
+// once and then polled only for the objects to disappear. So a delete refused on
+// that single pass was never attempted again: the drain would sit for its whole
+// four-minute budget waiting for objects it had asked to delete once, at the one
+// moment the API server happened to be refusing. That is precisely the window
+// FLO opens when it re-creates the validating webhook ten seconds into the drain
+// — the deletes are refused for about half a minute and then would have
+// succeeded, but nothing asked again.
+//
+// Re-issuing is safe. deleteAllIn skips objects that already carry a
+// deletionTimestamp, so an object accepted on pass one is not deleted twice; the
+// retries only ever reach objects the API server has not accepted yet.
+//
+// GIVING UP IS STILL POSSIBLE, but on evidence rather than on one sample. The
+// condition is: objects present, NONE of them marked for deletion, and every
+// delete refused. That means no finalizer is running and nothing in the cluster
+// is working toward this — #235's insight, and still correct. What #235 got wrong
+// is that one such pass proves it, so it now has to hold for refusalGrace.
+func drainPhase(
+	ctx context.Context,
+	dc dynamic.Interface,
+	phase, allGVRs []schema.GroupVersionResource,
+	ns string,
+	deadline time.Time,
+	poll, refusalGrace time.Duration,
+	w io.Writer,
+	neutralise neutraliseFunc,
+) (deleted, remaining int, stuck []string) {
+	var refusingSince time.Time
+	warned := false
+	// Owned here, not package-level: a global would carry names between
+	// namespaces and between tests, and would need a mutex it does not have.
+	logged := map[string]bool{}
+	// Objects the product's own webhook forbids deleting. Recorded so the final
+	// count does not report them as having failed to finalize.
+	denied := map[string]bool{}
+	// The UID of each object whose delete the API server accepted, so a later pass
+	// can tell a re-created object from one that is merely still finalizing.
+	deletedUID := map[string]types.UID{}
+
+	for {
+		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, denied, deletedUID, neutralise)
+		deleted += p.accepted
+
+		if p.present == 0 && p.unknown == 0 {
+			return deleted, 0, nil
+		}
+
+		// Nothing accepted, nothing already finalizing, and refusals: no part of
+		// the cluster is making progress on this.
+		if p.accepted == 0 && p.marked == 0 && p.refused > 0 && p.unknown == 0 {
+			if refusingSince.IsZero() {
+				refusingSince = time.Now()
+			}
+			if time.Since(refusingSince) >= refusalGrace {
+				if w != nil {
+					// Clamped: the give-up is checked before the deadline is, so
+					// on the last iteration time.Until(deadline) is negative and
+					// the message would offer to skip "-2s" of budget. A number
+					// that cannot be true is how a log stops being read.
+					skipped := time.Until(deadline)
+					if skipped < 0 {
+						skipped = 0
+					}
+					fmt.Fprintf(w, "  ⚠ %s: every delete was refused for %s, so waiting cannot help — skipping the rest of the %s budget.\n"+
+						"    The reason is above, one line per object. A validating webhook whose backend is\n"+
+						"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
+						ns, refusalGrace, skipped.Round(time.Second))
+				}
+				_, _, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+				return deleted, p.present + p.unknown, names
+			}
+			if !warned && w != nil {
+				warned = true
+				fmt.Fprintf(w, "  every delete in %s is being refused; retrying for up to %s in case it is the webhook being re-created.\n", ns, refusalGrace)
+			}
+		} else {
+			// Any progress at all resets the clock: a refusal that alternates
+			// with acceptances is the controller cycling, not a dead end.
+			refusingSince = time.Time{}
+		}
+
+		if !time.Now().Before(deadline) {
+			present, unknown, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+			return deleted, present + unknown, names
+		}
+
+		select {
+		case <-ctx.Done():
+			present, unknown, names := countAndNameIn(ctx, dc, phase, allGVRs, ns, denied)
+			return deleted, present + unknown, names
+		case <-time.After(poll):
+		}
+	}
 }
 
 // splitCNEInstance separates the CNEInstance resource from everything else.
@@ -201,77 +304,256 @@ func splitCNEInstance(gvrs []schema.GroupVersionResource) (leaves, roots []schem
 			roots = append(roots, g)
 			continue
 		}
+		if floManagedComponent(g) {
+			// Neither deleted nor waited for. See floManagedComponent.
+			continue
+		}
 		leaves = append(leaves, g)
 	}
 	return leaves, roots
 }
 
+// floManagedComponent reports whether a resource is a component the F5 Lifecycle
+// Operator creates FROM the CNEInstance and will recreate for as long as the
+// CNEInstance exists.
+//
+// THE k8s.f5.com GROUP IS NOT A LIST OF THINGS TO DELETE. It holds the
+// CNEInstance and the components it declares:
+//
+//	cneinstances    <- the declaration. Deleting THIS is the uninstall.
+//	cnecontrollers  //	f5tmms           |
+//	dssms            |- components. FLO recreates each one, immediately, for as
+//	afms             |  long as the CNEInstance above still exists.
+//	downloaders      |
+//	cnemanifests    /
+//
+// Measured on a live 2.4.0-EA install: deleting f5-dssm by hand while the
+// CNEInstance was present had it back in under five seconds. So a drain that
+// deletes them cannot ever finish -- it deletes, FLO restores, it counts them
+// present again, and the phase times out with nothing achieved. That is the 4m
+// timeout on every teardown, and it was never the admission webhook: the webhook
+// guards k8s.f5net.com, and every one of these is k8s.f5.com.
+//
+// OWNERSHIP IS NOT ENOUGH TO DETECT THIS. Four of the six carry an
+// ownerReference to the CNEInstance and two -- dssms and cnemanifests -- do not,
+// even though FLO recreates them just the same. A skip keyed on ownerReferences
+// alone leaves those two fighting the operator forever, which is exactly what the
+// first version of this did.
+//
+// The 2.4 guide agrees and never asks for any of them: its order is use-case CRs,
+// GatewaySettings, Infra, License, VERIFY IPAM gone, then CNEInstance. #217's
+// leaves-first insight was right about the objects the guide NAMES; it was applied
+// to every F5 CR in the namespace, which swept in the ones FLO owns.
+func floManagedComponent(g schema.GroupVersionResource) bool {
+	return g.Group == "k8s.f5.com" && g.Resource != cneInstanceResource
+}
+
+// deletePass is what one pass over a phase actually observed. The counts are
+// separate because they mean different things to the caller: `accepted` and
+// `marked` are both progress, `refused` is the API server saying no, and only
+// "present, none marked, all refused" means nothing in the cluster is working
+// toward the delete.
+//
+// #235 collapsed this into (accepted, present) and inferred a refusal from
+// accepted==0. That is ambiguous — a phase where every object is already
+// finalizing also has accepted==0 — and once the drain retries (#241) it is the
+// NORMAL state of every pass after the first.
+type deletePass struct {
+	accepted int // delete calls the API server took this pass
+	present  int // objects seen this pass
+	refused  int // delete calls that came back with a real error
+	marked   int // objects already carrying a deletionTimestamp
+	unknown  int // kinds whose contents could not be established this pass
+	owned    int // objects left to their owner's garbage collection
+	remade   int // objects the controller re-created after we deleted them
+	denied   int // objects an admission webhook refuses to delete, by design
+}
+
 // deleteAllIn issues a delete for every object of every resource in one
-// namespace, returning how many deletes were ACCEPTED and how many objects were
-// PRESENT. The caller needs both: accepted==0 with present>0 is a refusal, which
-// no amount of waiting resolves.
+// namespace that is not already being deleted, and reports what happened.
+//
+// It is called once per poll, not once per drain, so it must be idempotent:
+// objects with a deletionTimestamp are skipped, which means a retry only ever
+// reaches objects the API server has not accepted yet.
 //
 // DeleteCollection is not used: it is not implemented by every apiserver for
 // every custom resource, and a single unsupported verb would silently skip a
 // whole kind. Listing and deleting by name is slower and always works.
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer) (accepted, present int) {
+// neutraliseFunc removes whatever is refusing a delete and reports whether it
+// actually did anything. nil means "nothing to try", which is the shape every
+// existing test uses.
+type neutraliseFunc func(ctx context.Context) bool
+
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged, denied map[string]bool, deletedUID map[string]types.UID, neutralise neutraliseFunc) deletePass {
+	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
-		if err != nil || list == nil {
-			// A kind whose CRD is already gone lists as an error. Normal.
+		if err != nil {
+			// A kind whose CRD is already gone lists as an error, and that IS
+			// drained. Any other list failure — an etcd timeout, an apiserver
+			// restart, an RBAC change mid-teardown — is not: the objects may
+			// well still be there. Treating the two the same would report a
+			// namespace drained whose contents nobody could see, which is the
+			// one answer the destroy must not be given.
+			if !typeIsGone(err) {
+				p.unknown++
+			}
 			continue
 		}
-		present += len(list.Items)
+		if list == nil {
+			p.unknown++
+			continue
+		}
 		for i := range list.Items {
 			item := list.Items[i]
+
+			// DO NOT DELETE WHAT AN OWNER WILL DELETE (#241).
+			//
+			// Four of BNK 2.4's seven namespaced CRs are owned by the CNEInstance:
+			//
+			//   CNEController  ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   F5Tmm          ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   Afm            ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//   Downloader     ownedBy CNEInstance/f5-bnk-f5-cne-controller
+			//
+			// Deleting a child while its owner still exists fights the operator.
+			// The CNEInstance IS the declaration that those objects should exist,
+			// so the controller reconciles them back or their uninstall finalizers
+			// sit waiting for a teardown nobody has asked for -- which is why they
+			// never finalized inside the 4m budget and had to have their
+			// finalizers cleared by the repair path on every teardown.
+			//
+			// The 2.4 guide never asks for them individually. Its order is
+			// use-case CRs, GatewaySettings, Infra, License, VERIFY IPAM gone,
+			// then CNEInstance -- and the children go with the CNEInstance, by
+			// ownership. #217's leaves-first insight was right about the objects
+			// the guide names; it was applied to every F5 CR in the namespace,
+			// which swept in the ones ownership already handles.
+			// NOT COUNTED AS PRESENT. present drives "has this phase drained yet",
+			// and an owned child is not this drain's to drain -- it goes when its
+			// owner goes. Counting it kept the leaf phase permanently non-empty,
+			// so the wait always timed out and the ROOT phase never ran, so the
+			// CNEInstance was never deleted and the children were never collected.
+			// The skip without this is worse than no skip at all.
+			if ownedByKindIn(item, allGVRs) {
+				p.owned++
+				continue
+			}
+
+			// AN OBJECT THE CONTROLLER PUTS BACK CANNOT BE DRAINED.
+			//
+			// Detected by UID, not by name: a re-created object is a NEW object,
+			// so its UID differs from the one whose delete we accepted. That is
+			// exact, needs no clock, and cannot be fooled by a slow finalizer --
+			// an object still finalizing keeps its UID.
+			//
+			// Measured on a live 2.4.0-EA install, the two that do this are
+			// product defaults the CNE controller owns:
+			//
+			//   F5BigDnsCache/security-fqdn-dns-resolver  back within 5s
+			//   F5BigTcpSetting/sys-default-tcp           delete refused outright
+			//
+			// Each kept the leaf phase non-empty for the whole 4m budget while the
+			// drain waited on something that was never going to change. They are
+			// deleted once -- the 2.4 guide's ordering requires the attempt -- and
+			// then left to the namespace delete.
+			key := gvr.Resource + "/" + item.GetName()
+			if prev, seen := deletedUID[key]; seen && prev != item.GetUID() {
+				p.remade++
+				if w != nil && !logged[key] {
+					logged[key] = true
+					fmt.Fprintf(w, "    %s was re-created by its controller after deletion; leaving it to the namespace delete\n", key)
+				}
+				continue
+			}
+
+			p.present++
+
 			if item.GetDeletionTimestamp() != nil {
-				// Already marked. Counting it as deleted here would be a lie,
-				// but it still has to be waited for, and awaitGone does that.
+				// Already marked: the API server took the delete on an earlier
+				// pass and a finalizer is holding it. Counting it as accepted
+				// again would inflate the total, but it IS progress, so it is
+				// counted separately rather than not at all.
+				p.marked++
 				continue
 			}
 			err := dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
+
+			// A REFUSAL IS THE SIGNAL TO ACT, not to wait (#241).
+			//
+			// The background sweep removes the webhook on its own schedule and
+			// this loop deletes on its own, and nothing makes those two moments
+			// coincide. Measured on a live 2.4 teardown: FLO restores the webhook
+			// 375-815ms after it is removed, while the sweep ticks every 3s -- so
+			// the webhook is present for ~85% of the teardown and 177 successful
+			// removals still produced ZERO accepted deletes over four minutes.
+			//
+			// Tuning the interval does not fix that. Polling faster than a 400ms
+			// reconcile means hammering the API server for the length of a destroy
+			// to lose slightly less often.
+			//
+			// Acting on the refusal turns the race into a sequence: the error IS
+			// the proof the webhook is back, so remove it and retry immediately,
+			// inside the window before FLO restores it again.
+			// RETRY REGARDLESS OF WHAT THE NEUTRALISER FOUND. Gating the retry on
+			// it having deleted something is backwards: "the webhook is already
+			// gone" is the BEST case for retrying, not a reason to skip it. And it
+			// happens routinely, because the background sweep is removing the same
+			// webhook on its own tick -- if the sweep wins by a few milliseconds,
+			// a delete already in flight still comes back refused, the neutraliser
+			// finds nothing left, and gating there would skip the retry at exactly
+			// the moment it would have succeeded. The refusal would then count
+			// toward the give-up on a cluster where every delete is now fine.
+			//
+			// Bounded: this is reached only for a genuine webhook refusal, so it is
+			// one extra delete per refused object per pass, not a general retry.
+			if err != nil && !apierrors.IsNotFound(err) && neutralise != nil && webhookRefusal(err) {
+				neutralise(ctx)
+				err = dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
+			}
+
 			if err == nil {
-				accepted++
+				p.accepted++
+				deletedUID[key] = item.GetUID()
 				continue
 			}
-			if w != nil && !apierrors.IsNotFound(err) {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			// A DELIBERATE DENIAL IS NOT A REFUSAL TO RETRY PAST.
+			//
+			//   admission webhook "f5validate.f5net.com" denied the request:
+			//   Default TCP parameters CR cannot be deleted!
+			//
+			// F5 ships default CRs its own webhook refuses to delete. No amount of
+			// retrying changes that, and removing the webhook to force it through
+			// would be deleting an object the product says must not be deleted.
+			// They go when the namespace goes. Counting them as present kept the
+			// phase from ever draining, which is the same dead end as the owned
+			// children.
+			if webhookDenial(err) {
+				p.denied++
+				p.present--
+				denied[gvr.Resource+"/"+item.GetName()] = true
+				if w != nil && !logged[gvr.Resource+"/"+item.GetName()] {
+					logged[gvr.Resource+"/"+item.GetName()] = true
+					fmt.Fprintf(w, "    %s/%s cannot be deleted (the product's own webhook forbids it); leaving it to the namespace delete\n",
+						gvr.Resource, item.GetName())
+				}
+				continue
+			}
+
+			p.refused++
+			// Logged on the FIRST pass only. The drain now retries every few
+			// seconds for up to four minutes, and one line per object per pass
+			// would bury the rest of the teardown output.
+			if w != nil && !logged[key] {
+				logged[key] = true
 				fmt.Fprintf(w, "    could not delete %s/%s: %v\n", gvr.Resource, item.GetName(), err)
 			}
 		}
 	}
-	return accepted, present
-}
-
-// awaitGone polls until no object of the given resources remains in the
-// namespace, or the deadline passes. Returns how many were still unaccounted
-// for — objects still present, plus kinds whose state could not be established.
-//
-// It counts rather than returning a bool so the caller can say how many did not
-// drain — "2 objects did not finalize" is actionable and "the wait timed out" is
-// not.
-func awaitGone(
-	ctx context.Context,
-	dc dynamic.Interface,
-	gvrs []schema.GroupVersionResource,
-	ns string,
-	deadline time.Time,
-	poll time.Duration,
-) int {
-	for {
-		present, unknown := countIn(ctx, dc, gvrs, ns)
-		left := present + unknown
-		if left == 0 {
-			return 0
-		}
-		if !time.Now().Before(deadline) {
-			return left
-		}
-		select {
-		case <-ctx.Done():
-			return left
-		case <-time.After(poll):
-		}
-	}
+	return p
 }
 
 // countIn totals the objects of the given resources present in one namespace,
@@ -287,7 +569,20 @@ func awaitGone(
 // two are told apart. NotFound and NoMatch mean the type itself is gone and
 // there is nothing left to wait for; anything else is genuinely unknown and is
 // reported as such rather than as drained.
-func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string) (present, unknown int) {
+func countIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, skip map[string]bool) (present, unknown int) {
+	p, u, _ := countAndNameIn(ctx, dc, gvrs, allGVRs, ns, skip)
+	return p, u
+}
+
+// countAndNameIn is countIn plus the NAMES of what is left.
+//
+// "1 BNK custom resource(s) did not finalize" is not actionable: it does not say
+// whether the survivor is the CNEInstance, whose finalizer legitimately tears down
+// the whole product and may simply need longer than the budget, or a leaf that is
+// genuinely stuck. Those need opposite responses, and the message that omitted the
+// name cost a diagnostic cycle -- I was reduced to inferring which object it was
+// from the shape of the teardown.
+func countAndNameIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, skip map[string]bool) (present, unknown int, names []string) {
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -300,9 +595,29 @@ func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersi
 		if list == nil {
 			continue
 		}
-		present += len(list.Items)
+		for i := range list.Items {
+			// The SAME exclusions deleteAllIn applies, or the two disagree and the
+			// operator gets told the wrong number.
+			//
+			// This counts what is REMAINING, which is what "N BNK custom
+			// resource(s) did not finalize" reports. An owned child is going with
+			// its owner and a CR the product forbids deleting goes with the
+			// namespace: neither is something that failed to finalize. Counting
+			// them said 7 when 4 were children this drain had deliberately left
+			// alone -- a number that overstates the problem is how a healthy
+			// teardown gets investigated as a broken one.
+			if ownedByKindIn(list.Items[i], allGVRs) {
+				continue
+			}
+			if skip[gvr.Resource+"/"+list.Items[i].GetName()] {
+				continue
+			}
+			present++
+			names = append(names, gvr.Resource+"/"+list.Items[i].GetName())
+		}
 	}
-	return present, unknown
+	sort.Strings(names)
+	return present, unknown, names
 }
 
 // typeIsGone reports whether an error means the RESOURCE TYPE no longer exists,
@@ -425,4 +740,73 @@ func dedupeNonEmpty(vals ...string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// webhookRefusal reports whether an error is the API server refusing a delete
+// because an admission webhook could not be called.
+//
+// Matched on the message rather than a typed error: the apiserver returns this as
+// a generic InternalError, so there is no code or reason to key on. The two
+// substrings together are specific enough that an unrelated internal error cannot
+// match -- and a false positive costs one extra webhook sweep, while a false
+// negative costs the four-minute stall this exists to prevent.
+func webhookRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "failed calling webhook") ||
+		(strings.Contains(msg, "webhook") && strings.Contains(msg, "no endpoints available"))
+}
+
+// ownedByKindIn reports whether item has an ownerReference to a KIND this drain is
+// also deleting, ANYWHERE in the run rather than in the current phase.
+//
+// That distinction is the whole thing: splitCNEInstance puts cneinstances in the
+// ROOT phase, so a leaf-phase check against its own phase's GVRs cannot see the
+// CNEInstance and every owned child is deleted exactly as before. The first
+// version of this did that and the test caught it. Such an object does not need deleting: removing the owner removes
+// it, and deleting it first fights the controller that owns it.
+//
+// Matched on Kind rather than on the exact owner object, because the drain works
+// through GVRs and a resource name ("cneinstances") is not a Kind ("CNEInstance").
+// Deriving the Kind from the resource would need a RESTMapper the drain does not
+// otherwise carry; comparing case-insensitively against the resource name with the
+// plural dropped is enough to tell CNEInstance from Afm, and a miss here is safe
+// in the conservative direction -- the object is deleted as before.
+func ownedByKindIn(item unstructured.Unstructured, gvrs []schema.GroupVersionResource) bool {
+	owners := item.GetOwnerReferences()
+	if len(owners) == 0 {
+		return false
+	}
+	for _, o := range owners {
+		k := strings.ToLower(o.Kind)
+		for _, gvr := range gvrs {
+			r := strings.ToLower(gvr.Resource)
+			if r == k+"s" || r == k+"es" || r == k {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// webhookDenial reports whether an admission webhook DELIBERATELY rejected the
+// request, as opposed to being uncallable.
+//
+// The two need opposite handling and the messages are easy to conflate:
+//
+//	failed calling webhook "..." : no endpoints available   -> transient, retry past it
+//	admission webhook "..." denied the request: ...         -> permanent, respect it
+//
+// The second is the product stating a rule. f5-big-tcp-settings/sys-default-tcp
+// answers "Default TCP parameters CR cannot be deleted!" every time, and removing
+// the webhook to force it through would be deleting an object BNK says must not be
+// deleted. It goes when the namespace goes.
+func webhookDenial(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "admission webhook") && strings.Contains(msg, "denied the request")
 }

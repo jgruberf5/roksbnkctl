@@ -10,7 +10,7 @@ locals {
   zone           = var.flp_vsi_zone != "" ? var.flp_vsi_zone : "${var.ibmcloud_cluster_region}-1"
   # The CWC/CNEInstance endpoint is ALWAYS the private VPC IP — the consuming
   # cluster reaches the proxy privately (same VPC or over a Transit Gateway).
-  reach_ip = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ipv4_address : ""
+  reach_ip = local.enabled ? ibm_is_instance.flp[0].primary_network_interface[0].primary_ip[0].address : ""
   # Optional operator floating IP — a MANAGEMENT path (remote `roksbnkctl flp
   # status` + the :80 web UI from another machine), NOT the CWC endpoint. Reserved
   # zone-only (no target) so its address is known before the instance and can be

@@ -67,47 +67,85 @@ func OverridePaths() map[string]string {
 		if _, done := out[name]; done {
 			continue
 		}
-		var changed, exact []string
-		for _, probe := range probeCandidates {
-			var ws Workspace
-			OverrideFromMap(&ws, map[string]string{name: probe})
-			changed, exact = nil, nil
-			for path, val := range marshalPaths(&ws) {
-				if base[path] == val {
-					continue
-				}
-				changed = append(changed, path)
-				// The path whose VALUE is the probe is the one the override
-				// actually writes. The others changed as a SIDE EFFECT: setting
-				// bnk.hugepages.count materialises the enclosing block, so
-				// bnk.hugepages.enabled appears too and the override looks like it
-				// writes two fields. Reporting both loses the setting, because a
-				// caller with two paths and one value cannot tell which to use.
-				if val == probe {
-					exact = append(exact, path)
-				}
-			}
-			if len(changed) > 0 {
-				break
-			}
-		}
-		if len(exact) == 1 {
-			out[name] = exact[0]
-			continue
-		}
-		sort.Strings(changed)
-		switch len(changed) {
-		case 0:
-			out[name] = "" // writes nothing a marshal can see
-		case 1:
-			out[name] = changed[0]
-		default:
-			// One variable that writes several keys (a block toggle). Record them
-			// all rather than picking one and being subtly wrong.
-			out[name] = strings.Join(changed, ",")
-		}
+		out[name] = probePath(name, base)
 	}
 	return out
+}
+
+// probePath determines the single dotted path an override writes, by applying it
+// TWICE with two different values and keeping the path that differs between the
+// two runs.
+//
+// WHY TWO PROBES. The first version applied one probe and looked for the path
+// whose VALUE equalled it, to tell the field being written from the block being
+// materialised around it. That works only while the probe value is distinctive,
+// and #234 removed that guarantee: routing the resources block through
+// DefaultResources() -- which was the correct fix for a real defect -- makes all
+// eight resources.*.create paths appear, and DefaultResources() sets four of them
+// to true, which is exactly the boolean probe. Five paths then "equal the probe",
+// the disambiguation gives up, and all eight are recorded comma-joined (#246).
+//
+// Downstream, every artefact derived from this map broke in a different
+// direction: `config env --from-yaml` DROPPED resources.*.create entirely, so a
+// round-trip turned "adopt the existing transit gateway" into "create one"; the
+// cheatsheet printed "no override exists"; env.example claimed one variable wrote
+// all eight toggles.
+//
+// A second probe removes the guesswork. Only the path the variable actually
+// writes changes when the probe VALUE changes -- every side-effect path is
+// materialised identically both times. That is a real discriminator rather than a
+// heuristic about which value looks distinctive, and it holds for every type
+// instead of only the ones with unusual sentinels.
+func probePath(name string, base map[string]string) string {
+	for _, pair := range probeCandidates() {
+		a := marshalWithOverride(name, pair.a)
+		b := marshalWithOverride(name, pair.b)
+
+		// The UNION of both probes' paths, not just a's. A field that is
+		// omitempty marshals to nothing at its zero value, so a bool probed
+		// true/false appears in a and vanishes from b -- and one probed the other
+		// way round appears only in b. Iterating a alone would miss the second
+		// shape entirely and report the override as writing nothing.
+		var changed, differing []string
+		for path := range union(a, b) {
+			av, bv := a[path], b[path]
+			if base[path] == av && base[path] == bv {
+				continue
+			}
+			if base[path] != av || base[path] != bv {
+				changed = append(changed, path)
+			}
+			// The discriminator: this path did not just appear, it MOVED with the
+			// probe. A block materialised as a side effect looks the same both
+			// times and is filtered out here.
+			if av != bv {
+				differing = append(differing, path)
+			}
+		}
+		if len(changed) == 0 {
+			continue // this probe shape was rejected by the field's parser
+		}
+		if len(differing) == 1 {
+			return differing[0]
+		}
+		sort.Strings(changed)
+		if len(changed) == 1 {
+			return changed[0]
+		}
+		// Genuinely writes several keys (a real block toggle). Recorded in full
+		// rather than picked from, because a caller with several paths and one
+		// value cannot tell which to use.
+		return strings.Join(changed, ",")
+	}
+	return "" // writes nothing a marshal can see
+}
+
+// marshalWithOverride applies one override to an empty workspace and flattens the
+// result.
+func marshalWithOverride(name, value string) map[string]string {
+	var ws Workspace
+	OverrideFromMap(&ws, map[string]string{name: value})
+	return marshalPaths(&ws)
 }
 
 // probeCandidates are tried in order until one moves the workspace.
@@ -120,15 +158,50 @@ func OverridePaths() map[string]string {
 //
 // Trying every shape removes the guess. Whichever the parser accepts is the one
 // that tells the truth about the field.
-var probeCandidates = []string{
-	"__probe__",    // strings
-	"true",         // booleans
-	"97",           // integers
-	"cHJvYmU=",     // base64 fields, which reject an undecodable probe
-	"10.97.0.0/16", // CIDRs validated on the way in
-	"24",           // a LEGAL prefix length; 97 is not, and is rejected
-	probeCertB64(), // a REAL certificate, for fields that parse the decoded PEM
-	"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==", // base64 of a PEM, for fields that validate the decoded bytes
+//
+// Each is a PAIR of DISTINCT values of the same shape, because the path is
+// identified by what moves between them. The two must both be valid for the
+// field: a pair whose second value is rejected would leave the field at the first
+// value in run b, which reads as "did not move" and loses the path.
+type probePair struct{ a, b string }
+
+func probeCandidates() []probePair { return probeCandidatesOnce() }
+
+// Built ONCE, ON DEMAND. As a package-level var this ran two ECDSA keygens at
+// init, on every invocation of the binary -- `bnk up`, `--version`, everything --
+// for a table only OverridePaths reads, which only `config env`/`config yaml` and
+// the refgen tools reach. One keygen was already there; making the pair distinct
+// would have doubled it.
+var probeCandidatesOnce = sync.OnceValue(func() []probePair {
+	return []probePair{
+		{"__probe__", "__probeb__"},         // strings
+		{"true", "false"},                   // booleans
+		{"97", "98"},                        // integers
+		{"cHJvYmU=", "cHJvYmVi"},            // base64 fields, which reject an undecodable probe
+		{"10.97.0.0/16", "10.98.0.0/16"},    // CIDRs validated on the way in
+		{"24", "25"},                        // LEGAL prefix lengths; 97 is not, and is rejected
+		{probeCertB64(), probeCertAltB64()}, // REAL certificates -- DISTINCT, because the path is identified by what moves between them
+		{"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==",
+			"LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJwcm9iZWIKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo="}, // base64 of a PEM, for fields that validate the decoded bytes
+	}
+})
+
+// union returns every key present in either map.
+func union(a, b map[string]string) map[string]struct{} {
+	// Sized from ONE map, not len(a)+len(b). The sum is what CodeQL flags as
+	// go/allocation-size-overflow, and while two marshalled config maps cannot
+	// get within astronomical distance of overflowing an int, the capacity here
+	// is a hint that saves at most a couple of map growths. Carrying a standing
+	// high-severity security alert to keep it is a bad trade, and an alert that
+	// is "fine, ignore it" is how the next real one gets ignored too.
+	out := make(map[string]struct{}, len(a))
+	for k := range a {
+		out[k] = struct{}{}
+	}
+	for k := range b {
+		out[k] = struct{}{}
+	}
+	return out
 }
 
 // A probe is only as good as the validators it satisfies. Two of these exist
@@ -229,14 +302,22 @@ func zoneFamilyPaths() map[string]string {
 //
 // Generated once, lazily, and only ever compared against; it authenticates
 // nothing.
-var probeCertOnce = sync.OnceValue(func() string {
+// TWO certificates, not one. The path an override writes is identified by what
+// MOVES between two probe values, so a pair whose halves are identical proves
+// nothing -- and probeCertOnce is memoised, so probeCertB64() twice is the same
+// string. The serial and CommonName differ so the encodings cannot collide.
+var probeCertOnce = sync.OnceValue(func() string { return makeProbeCert(1, "roksbnkctl-override-probe") })
+
+var probeCertAltOnce = sync.OnceValue(func() string { return makeProbeCert(2, "roksbnkctl-override-probe-b") })
+
+func makeProbeCert(serial int64, cn string) string {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return ""
 	}
 	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "roksbnkctl-override-probe"},
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: cn},
 		NotBefore:             time.Unix(0, 0),
 		NotAfter:              time.Unix(1<<31-1, 0),
 		IsCA:                  true,
@@ -249,6 +330,7 @@ var probeCertOnce = sync.OnceValue(func() string {
 	}
 	return base64.StdEncoding.EncodeToString(
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
-})
+}
 
-func probeCertB64() string { return probeCertOnce() }
+func probeCertB64() string    { return probeCertOnce() }
+func probeCertAltB64() string { return probeCertAltOnce() }
