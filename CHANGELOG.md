@@ -6,6 +6,53 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.59.1 — 2026-08-27
+
+**A licence stuck in registration now fails in five minutes instead of thirty.**
+
+### Fixed
+
+- **`tfx wait` calls a stalled licence registration stuck rather than waiting it
+  out** (#271). On BNK 2.4.0-EA the CWC obtains its licensing certificate, sets
+  `Device Registration In Progress`, and then never issues the registration. The
+  licence proxy's own request log is decisive — a successful install POSTs
+  `/license-proxy/v1/entitlements/telemetry` and reaches `Active` in about a
+  minute; the failed one shows `POST /v1/certificates` from two different CWC pods
+  and **no telemetry POST from either, ever**. F5 TEEM is never asked, and nothing
+  on the cluster is going to ask it.
+
+  The cost was **thirty** minutes, not fifteen: the licence wait spent its full 15,
+  then the CNEInstance wait spent another 15 because the TMMs were blocked on the
+  same licence, and the operator was finally told
+
+  ```
+  the status of pod readiness gate "ConfigurationDone" is not "True"
+  ```
+
+  which names neither the licence nor the CWC.
+
+  A licence whose state has been **unchanged** for five minutes is now reported as
+  stuck, with the recovery spelled out — clear the four state secrets, restart the
+  CWC Deployment, re-run. Five minutes is five times the observed happy path and a
+  twelfth of the wait it replaces.
+
+  The check runs on the **watch** path, which is the one `bnk up` actually uses:
+  `tfx wait` defaults to `--mode watch` and terraform does not override it. A watch
+  cannot notice "nothing happened" by itself — a state that never changes produces
+  no events — so a watchdog holds the last observed state and restarts its clock
+  on every change.
+
+  Deliberately narrow, on the same principle as the existing unschedulable-pod
+  diagnosis: only a licence, only in a registering state, only after the state has
+  been unchanged for the window. Any other resource may still be making progress a
+  GET cannot see, and ending those waits early would trade a slow success for a
+  fast wrong answer.
+
+  **The underlying defect is F5's** — the CWC's CM20 state machine cannot resume an
+  interrupted registration, and the stall has been observed to recur on a
+  brand-new CWC pod with no inherited state. This is detection only.
+
+
 ## v1.59.0 — 2026-08-27
 
 **`bnk down` finishes in about two minutes instead of about sixteen.** The
