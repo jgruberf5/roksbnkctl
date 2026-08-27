@@ -232,9 +232,12 @@ func drainPhase(
 	// Owned here, not package-level: a global would carry names between
 	// namespaces and between tests, and would need a mutex it does not have.
 	logged := map[string]bool{}
+	// Objects the product's own webhook forbids deleting. Recorded so the final
+	// count does not report them as having failed to finalize.
+	denied := map[string]bool{}
 
 	for {
-		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, neutralise)
+		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, denied, neutralise)
 		deleted += p.accepted
 
 		if p.present == 0 && p.unknown == 0 {
@@ -275,13 +278,13 @@ func drainPhase(
 		}
 
 		if !time.Now().Before(deadline) {
-			present, unknown := countIn(ctx, dc, phase, ns)
+			present, unknown := countIn(ctx, dc, phase, allGVRs, ns, denied)
 			return deleted, present + unknown
 		}
 
 		select {
 		case <-ctx.Done():
-			present, unknown := countIn(ctx, dc, phase, ns)
+			present, unknown := countIn(ctx, dc, phase, allGVRs, ns, denied)
 			return deleted, present + unknown
 		case <-time.After(poll):
 		}
@@ -335,7 +338,7 @@ type deletePass struct {
 // existing test uses.
 type neutraliseFunc func(ctx context.Context) bool
 
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged map[string]bool, neutralise neutraliseFunc) deletePass {
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged, denied map[string]bool, neutralise neutraliseFunc) deletePass {
 	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
@@ -457,6 +460,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			if webhookDenial(err) {
 				p.denied++
 				p.present--
+				denied[gvr.Resource+"/"+item.GetName()] = true
 				if w != nil && !logged[gvr.Resource+"/"+item.GetName()] {
 					logged[gvr.Resource+"/"+item.GetName()] = true
 					fmt.Fprintf(w, "    %s/%s cannot be deleted (the product's own webhook forbids it); leaving it to the namespace delete\n",
@@ -492,7 +496,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 // two are told apart. NotFound and NoMatch mean the type itself is gone and
 // there is nothing left to wait for; anything else is genuinely unknown and is
 // reported as such rather than as drained.
-func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string) (present, unknown int) {
+func countIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, skip map[string]bool) (present, unknown int) {
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -505,7 +509,25 @@ func countIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersi
 		if list == nil {
 			continue
 		}
-		present += len(list.Items)
+		for i := range list.Items {
+			// The SAME exclusions deleteAllIn applies, or the two disagree and the
+			// operator gets told the wrong number.
+			//
+			// This counts what is REMAINING, which is what "N BNK custom
+			// resource(s) did not finalize" reports. An owned child is going with
+			// its owner and a CR the product forbids deleting goes with the
+			// namespace: neither is something that failed to finalize. Counting
+			// them said 7 when 4 were children this drain had deliberately left
+			// alone -- a number that overstates the problem is how a healthy
+			// teardown gets investigated as a broken one.
+			if ownedByKindIn(list.Items[i], allGVRs) {
+				continue
+			}
+			if skip[gvr.Resource+"/"+list.Items[i].GetName()] {
+				continue
+			}
+			present++
+		}
 	}
 	return present, unknown
 }

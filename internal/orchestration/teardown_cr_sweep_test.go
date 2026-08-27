@@ -529,7 +529,7 @@ func TestAFailingListIsNotCountedAsDrained(t *testing.T) {
 		return true, nil, fmt.Errorf("etcdserver: request timed out")
 	})
 	present, unknown := countIn(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk")
+		[]schema.GroupVersionResource{gvrIPAM}, []schema.GroupVersionResource{gvrIPAM}, "f5-bnk", nil)
 	if unknown == 0 {
 		t.Errorf("a failing list produced present=%d unknown=%d; it must not read as drained", present, unknown)
 	}
@@ -544,7 +544,7 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 		return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "fic.f5.com", Resource: "ipams"}, "")
 	})
 	present, unknown := countIn(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk")
+		[]schema.GroupVersionResource{gvrIPAM}, []schema.GroupVersionResource{gvrIPAM}, "f5-bnk", nil)
 	if present != 0 || unknown != 0 {
 		t.Errorf("present=%d unknown=%d; a deleted CRD has nothing left to wait for", present, unknown)
 	}
@@ -1051,7 +1051,7 @@ func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T
 	neutralise := func(context.Context) bool { called++; return false }
 
 	gvrs := []schema.GroupVersionResource{gvrIPAM}
-	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", nil, map[string]bool{}, neutralise)
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, neutralise)
 
 	if called != 1 {
 		t.Fatalf("neutralise called %d time(s); want 1 — the refusal should have triggered it", called)
@@ -1177,7 +1177,7 @@ func TestAnOwnedChildDoesNotKeepThePhaseFromDraining(t *testing.T) {
 
 	gvrs := []schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}
 	p := deleteAllIn(context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		gvrs, "f5-bnk", nil, map[string]bool{}, nil)
+		gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, nil)
 
 	if p.owned != 1 {
 		t.Errorf("owned = %d, want 1", p.owned)
@@ -1207,7 +1207,7 @@ func TestADeliberateWebhookDenialDoesNotBlockTheDrain(t *testing.T) {
 
 	var buf bytes.Buffer
 	gvrs := []schema.GroupVersionResource{gvrIPAM}
-	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", &buf, map[string]bool{}, nil)
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", &buf, map[string]bool{}, map[string]bool{}, nil)
 
 	if p.denied != 1 {
 		t.Errorf("denied = %d, want 1", p.denied)
@@ -1237,5 +1237,40 @@ func TestWebhookDenialIsNotConfusedWithAnUncallableWebhook(t *testing.T) {
 	if webhookRefusal(denial) || !webhookRefusal(uncallable) {
 		t.Errorf("webhookRefusal: denial=%v uncallable=%v; want false/true",
 			webhookRefusal(denial), webhookRefusal(uncallable))
+	}
+}
+
+// The remaining count must apply the SAME exclusions the delete pass does.
+//
+// deleteAllIn stopped counting owned children and product-forbidden CRs as
+// present, but countIn -- which produces the number the operator is shown -- still
+// counted everything. So a teardown that had correctly left four children to their
+// owner reported "7 BNK custom resource(s) did not finalize", and a number that
+// overstates the problem is how a healthy teardown gets investigated as a broken
+// one.
+func TestTheRemainingCountExcludesWhatTheDrainDeliberatelyLeft(t *testing.T) {
+	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
+	child.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "k8s.f5.com/v1", Kind: "CNEInstance", Name: "root",
+	}})
+	dc := newFake(
+		child,
+		cr(gvrIPAM, "IPAM", "f5-bnk", "sys-default-tcp"),
+		cr(gvrIPAM, "IPAM", "f5-bnk", "genuinely-stuck"),
+	)
+
+	all := []schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}
+	phase := []schema.GroupVersionResource{gvrIPAM}
+	denied := map[string]bool{"ipams/sys-default-tcp": true}
+
+	present, unknown := countIn(context.Background(), dc, phase, all, "f5-bnk", denied)
+
+	if unknown != 0 {
+		t.Errorf("unknown = %d, want 0", unknown)
+	}
+	if present != 1 {
+		t.Errorf("present = %d, want 1 — only genuinely-stuck actually failed to drain.\n"+
+			"owned-child goes with its owner and sys-default-tcp goes with the namespace; "+
+			"neither is something that failed to finalize.", present)
 	}
 }
