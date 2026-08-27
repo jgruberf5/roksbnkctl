@@ -6,6 +6,14 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.58.0 — 2026-08-27
+
+**Every settable field now has an environment override, and `bnk down` stops
+waiting on a webhook that cannot answer.** The override surface went from 109 of
+187 fields to 158 — which ones had a variable had been decided on demand rather
+than by any rule. The teardown fix is a regression this project shipped in
+v1.55.1 and is the reason a `bnk down` took eight minutes longer than it should.
+
 ### Added
 
 - **49 config.yaml fields gained a `ROKSBNKCTL_*` override** (#234), taking the
