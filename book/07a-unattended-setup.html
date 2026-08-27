@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
+            window.path_to_searchindex_js = "searchindex-e48676bd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -339,10 +339,24 @@ file; it resolves from the environment, keychain, or config at run time as usual
 URL, a presigned IBM COS URL, or any reachable endpoint. There is no fetch
 authentication in this release; use a presigned or public URL.</p>
 <h2 id="--override-from-env"><a class="header" href="#--override-from-env"><code>--override-from-env</code></a></h2>
-<p><code>--override-from-env</code> overlays a <strong>fixed set</strong> of <code>config.yaml</code> fields from
-environment variables that are set and non-empty, after the file/interview has
-produced the config. <strong>The environment wins</strong> over the seeded value — it is the
-explicit late-binding step. This is a fixed field map, not arbitrary templating.</p>
+<p><code>--override-from-env</code> overlays <code>config.yaml</code> fields from environment variables
+that are set and non-empty, after the file/interview has produced the config.
+<strong>The environment wins</strong> over the seeded value — it is the explicit late-binding
+step. This is a fixed field map, not arbitrary templating.</p>
+<blockquote>
+<p><strong>This table is a selection, not the whole surface.</strong> The ones below are what
+most deployments set, chosen because their encoding or precedence needs
+explaining — a hand-written table of every override would be a second copy of
+the schema, and this book has been bitten by one of those before. The
+<strong>complete</strong> list is generated from the override machinery itself and cannot
+drift from it:</p>
+<pre><code class="language-console">$ roksbnkctl config env &gt; .env          # every variable, commented, with its field
+</code></pre>
+<p>or the <a href="https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html">config.yaml cheatsheet</a>,
+which shows every field beside the variable that sets it. Prefer either of those
+when you are looking for a specific field; use this table when you want to know
+<em>how</em> a value is interpreted.</p>
+</blockquote>
 <div class="table-wrapper">
 <table>
 <thead>

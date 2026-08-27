@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8b1a8fc5.js";
+            window.path_to_searchindex_js = "searchindex-e48676bd.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -1539,10 +1539,24 @@ file; it resolves from the environment, keychain, or config at run time as usual
 URL, a presigned IBM COS URL, or any reachable endpoint. There is no fetch
 authentication in this release; use a presigned or public URL.</p>
 <h2 id="--override-from-env"><a class="header" href="#--override-from-env"><code>--override-from-env</code></a></h2>
-<p><code>--override-from-env</code> overlays a <strong>fixed set</strong> of <code>config.yaml</code> fields from
-environment variables that are set and non-empty, after the file/interview has
-produced the config. <strong>The environment wins</strong> over the seeded value — it is the
-explicit late-binding step. This is a fixed field map, not arbitrary templating.</p>
+<p><code>--override-from-env</code> overlays <code>config.yaml</code> fields from environment variables
+that are set and non-empty, after the file/interview has produced the config.
+<strong>The environment wins</strong> over the seeded value — it is the explicit late-binding
+step. This is a fixed field map, not arbitrary templating.</p>
+<blockquote>
+<p><strong>This table is a selection, not the whole surface.</strong> The ones below are what
+most deployments set, chosen because their encoding or precedence needs
+explaining — a hand-written table of every override would be a second copy of
+the schema, and this book has been bitten by one of those before. The
+<strong>complete</strong> list is generated from the override machinery itself and cannot
+drift from it:</p>
+<pre><code class="language-console">$ roksbnkctl config env &gt; .env          # every variable, commented, with its field
+</code></pre>
+<p>or the <a href="https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html">config.yaml cheatsheet</a>,
+which shows every field beside the variable that sets it. Prefer either of those
+when you are looking for a specific field; use this table when you want to know
+<em>how</em> a value is interpreted.</p>
+</blockquote>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -4889,7 +4903,7 @@ cos:             # optional COS supply-chain config
   flp:
     storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
-<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults. The field spec is <a href="#bnkcfg">Chapter 28 §<code>BNKCfg</code></a>, with the sub-blocks broken out as <a href="#bnktrustedprofilecfg">§<code>BNKTrustedProfileCfg</code></a>, <a href="#bnkcertmanagercfg">§<code>BNKCertManagerCfg</code></a>, <a href="#bnkflpcfg">§<code>BNKFLPCfg</code></a> and <a href="#bnkpreflightcfg">§<code>BNKPreflightCfg</code></a>. Chapter 28’s <code>line</code> column matters here more than anywhere else in the config: a good part of <code>bnk:</code> is 2.4-only, and <code>manifest_version</code> is the only thing that selects the line.</p>
+<p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults. For a one-page view of every field with its dotted path and the <code>ROKSBNKCTL_*</code> variable that sets it, see the <a href="https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html">config.yaml cheatsheet</a> — generated from the same struct this chapter teaches, so the two cannot disagree. The field spec is <a href="#bnkcfg">Chapter 28 §<code>BNKCfg</code></a>, with the sub-blocks broken out as <a href="#bnktrustedprofilecfg">§<code>BNKTrustedProfileCfg</code></a>, <a href="#bnkcertmanagercfg">§<code>BNKCertManagerCfg</code></a>, <a href="#bnkflpcfg">§<code>BNKFLPCfg</code></a> and <a href="#bnkpreflightcfg">§<code>BNKPreflightCfg</code></a>. Chapter 28’s <code>line</code> column matters here more than anywhere else in the config: a good part of <code>bnk:</code> is 2.4-only, and <code>manifest_version</code> is the only thing that selects the line.</p>
 <p><strong><code>cneinstance_size</code> is passed through unvalidated, on purpose.</strong> The legal set of sizes is a property of the BNK manifest, not of this tool. Hardcoding a list would go stale the first time F5 adds one and would then refuse a size the product supports, so a size a given manifest does not define is rejected by the operator on the cluster, not here. <code>Tiny</code> is what the BNK 2.4 install guide uses, and on ROKS it is the only size that runs: everything above it requests hugepages (<code>Small</code> 4 GiB, <code>Medium</code> 8 GiB) that the platform has no supported way to allocate. Do not reach for <code>bnk.hugepages</code> — it is a no-op on ROKS and issue #203 explains why. Capacity comes from <code>bnk.tmm_replicas</code> and node size instead; see Appendix C.</p>
 <p><strong><code>gslb_datacenter_name</code> is the whole feature.</strong> It is what the CNEInstance calls itself in GSLB, and it is emitted whenever set. There was also a <code>gtm:</code> block carrying the BIG-IP DNS url, username and password; it was <strong>removed in #227</strong> because nothing read it — the f5ingress controller binary contains no occurrence of the environment variables it produced, on either BNK line. A <code>config.yaml</code> still carrying <code>bnk.gtm</code> needs no edit: an unrecognised key is ignored.</p>
 <p><strong><code>trusted_profile.service_account</code> is a matcher, not a pointer — and getting it wrong fails silently.</strong> The IBM Cloud Trusted Profile is the identity the CNE controller assumes to manage the VPC network attachments it creates for TMM, so it works without a stored API key. IBM’s trust relationship compares a pod’s service-account token against <code>crn</code> / <code>namespace</code> / <code>name</code> with <code>EQUALS</code>. Left empty, <code>roksbnkctl</code> derives the name FLO actually creates — <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code> — and the match holds. Write a different name and nothing can assume the profile, <strong>and nothing reports an error</strong>: the pod simply loses its IBM Cloud permissions, and it surfaces much later as an authorization failure at VPC-attachment time that names neither this setting nor the profile. The profile looks correct in the IBM Cloud console the whole time.</p>
