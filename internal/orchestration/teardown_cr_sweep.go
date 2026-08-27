@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -112,6 +113,12 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	if err != nil {
 		return
 	}
+
+	// The drain's own way out of a refusal (#241). The background sweep runs on a
+	// 3s tick; FLO restores the webhook in under a second, so the two schedules
+	// almost never coincide. This lets a refused delete remove the webhook and
+	// retry itself, inside the window it just proved exists.
+	neutralise := webhookNeutraliser(kubeconfig, floNS)
 	gvrs := discoverBNKNamespacedGVRs(kubeconfig)
 	if len(gvrs) == 0 {
 		// No F5 CRDs resolved: either BNK is not installed or the CRDs are
@@ -122,7 +129,7 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	// utilsNS may equal floNS — the single-namespace topology is a supported
 	// deployment, so the list is de-duplicated rather than assumed distinct.
 	for _, ns := range dedupeNonEmpty(floNS, utilsNS) {
-		deleted, remaining := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, bnkCRRefusalGrace, w)
+		deleted, remaining := drainBNKCustomResources(ctx, dc, gvrs, ns, bnkCRDrainTimeout, bnkCRDrainPoll, bnkCRRefusalGrace, w, neutralise)
 		switch {
 		case deleted == 0 && remaining == 0:
 			// Nothing there. Silent: a namespace with no BNK CRs is the normal
@@ -160,6 +167,7 @@ func drainBNKCustomResources(
 	ns string,
 	timeout, poll, refusalGrace time.Duration,
 	w io.Writer,
+	neutralise neutraliseFunc,
 ) (deleted, remaining int) {
 	// ONE deadline for both phases, not one each. The budget is a total: it
 	// exists to stay under the kubernetes provider's own namespace-delete
@@ -174,7 +182,7 @@ func drainBNKCustomResources(
 		if len(phase) == 0 {
 			continue
 		}
-		d, left := drainPhase(ctx, dc, phase, ns, deadline, poll, refusalGrace, w)
+		d, left := drainPhase(ctx, dc, phase, ns, deadline, poll, refusalGrace, w, neutralise)
 		deleted += d
 		if left > 0 {
 			// The leaf phase did not drain, so the CNEInstance is deliberately
@@ -216,6 +224,7 @@ func drainPhase(
 	deadline time.Time,
 	poll, refusalGrace time.Duration,
 	w io.Writer,
+	neutralise neutraliseFunc,
 ) (deleted, remaining int) {
 	var refusingSince time.Time
 	warned := false
@@ -224,7 +233,7 @@ func drainPhase(
 	logged := map[string]bool{}
 
 	for {
-		p := deleteAllIn(ctx, dc, phase, ns, w, logged)
+		p := deleteAllIn(ctx, dc, phase, ns, w, logged, neutralise)
 		deleted += p.accepted
 
 		if p.present == 0 && p.unknown == 0 {
@@ -318,7 +327,12 @@ type deletePass struct {
 // DeleteCollection is not used: it is not implemented by every apiserver for
 // every custom resource, and a single unsupported verb would silently skip a
 // whole kind. Listing and deleting by name is slower and always works.
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer, logged map[string]bool) deletePass {
+// neutraliseFunc removes whatever is refusing a delete and reports whether it
+// actually did anything. nil means "nothing to try", which is the shape every
+// existing test uses.
+type neutraliseFunc func(ctx context.Context) bool
+
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupVersionResource, ns string, w io.Writer, logged map[string]bool, neutralise neutraliseFunc) deletePass {
 	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
@@ -350,6 +364,29 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 				continue
 			}
 			err := dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
+
+			// A REFUSAL IS THE SIGNAL TO ACT, not to wait (#241).
+			//
+			// The background sweep removes the webhook on its own schedule and
+			// this loop deletes on its own, and nothing makes those two moments
+			// coincide. Measured on a live 2.4 teardown: FLO restores the webhook
+			// 375-815ms after it is removed, while the sweep ticks every 3s -- so
+			// the webhook is present for ~85% of the teardown and 177 successful
+			// removals still produced ZERO accepted deletes over four minutes.
+			//
+			// Tuning the interval does not fix that. Polling faster than a 400ms
+			// reconcile means hammering the API server for the length of a destroy
+			// to lose slightly less often.
+			//
+			// Acting on the refusal turns the race into a sequence: the error IS
+			// the proof the webhook is back, so remove it and retry immediately,
+			// inside the window before FLO restores it again.
+			if err != nil && !apierrors.IsNotFound(err) && neutralise != nil && webhookRefusal(err) {
+				if neutralise(ctx) {
+					err = dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
+				}
+			}
+
 			if err == nil {
 				p.accepted++
 				continue
@@ -522,4 +559,21 @@ func dedupeNonEmpty(vals ...string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// webhookRefusal reports whether an error is the API server refusing a delete
+// because an admission webhook could not be called.
+//
+// Matched on the message rather than a typed error: the apiserver returns this as
+// a generic InternalError, so there is no code or reason to key on. The two
+// substrings together are specific enough that an unrelated internal error cannot
+// match -- and a false positive costs one extra webhook sweep, while a false
+// negative costs the four-minute stall this exists to prevent.
+func webhookRefusal(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "failed calling webhook") ||
+		(strings.Contains(msg, "webhook") && strings.Contains(msg, "no endpoints available"))
 }

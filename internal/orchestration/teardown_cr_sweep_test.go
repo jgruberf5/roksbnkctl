@@ -79,7 +79,7 @@ func TestTheCNEInstanceIsDeletedOnlyAfterItsLeavesAreGone(t *testing.T) {
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM, gvrIPAMRange}
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(
-		context.Background(), dc, gvrs, "f5-bnk", 10*time.Second, time.Millisecond, time.Second, &buf)
+		context.Background(), dc, gvrs, "f5-bnk", 10*time.Second, time.Millisecond, time.Second, &buf, nil)
 
 	if deleted != 3 {
 		t.Errorf("deleted = %d, want 3 (order: %v)", deleted, order)
@@ -119,7 +119,7 @@ func TestTheCNEInstanceSurvivesWhenTheLeavesNeverFinalize(t *testing.T) {
 	gvrs := []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM}
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
-		context.Background(), dc, gvrs, "f5-bnk", 30*time.Millisecond, time.Millisecond, time.Second, &buf)
+		context.Background(), dc, gvrs, "f5-bnk", 30*time.Millisecond, time.Millisecond, time.Second, &buf, nil)
 
 	if remaining != 1 {
 		t.Errorf("remaining = %d, want 1 (the IPAM that never finalized)", remaining)
@@ -163,7 +163,7 @@ func TestTheDrainWaitsForFinalizersRatherThanForTheDeleteCall(t *testing.T) {
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf)
+		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf, nil)
 
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0 — the object did eventually drain", remaining)
@@ -186,7 +186,7 @@ func TestAnEmptyNamespaceDrainsSilently(t *testing.T) {
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrCNEInstance, gvrIPAM},
-		"f5-bnk", time.Second, time.Millisecond, time.Second, &buf)
+		"f5-bnk", time.Second, time.Millisecond, time.Second, &buf, nil)
 	if deleted != 0 || remaining != 0 {
 		t.Errorf("deleted=%d remaining=%d, want 0/0", deleted, remaining)
 	}
@@ -205,7 +205,7 @@ func TestTheDrainDoesNotTouchOtherNamespaces(t *testing.T) {
 	)
 	var buf bytes.Buffer
 	drainBNKCustomResources(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrCNEInstance}, "f5-bnk", time.Second, time.Millisecond, time.Second, &buf)
+		[]schema.GroupVersionResource{gvrCNEInstance}, "f5-bnk", time.Second, time.Millisecond, time.Second, &buf, nil)
 
 	left, err := dc.Resource(gvrCNEInstance).Namespace("someone-else").List(context.Background(), metav1.ListOptions{})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestTheDrainStopsOnContextCancellation(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		_, remaining := drainBNKCustomResources(ctx, dc,
-			[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Hour, time.Second, time.Second, nil)
+			[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", time.Hour, time.Second, time.Second, nil, nil)
 		done <- remaining
 	}()
 	select {
@@ -555,7 +555,7 @@ func TestADeletedCRDIsNotWaitedFor(t *testing.T) {
 	start := time.Now()
 	deleted, remaining := drainPhase(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		time.Now().Add(2*time.Second), 50*time.Millisecond, time.Second, nil)
+		time.Now().Add(2*time.Second), 50*time.Millisecond, time.Second, nil, nil)
 	if deleted != 0 || remaining != 0 {
 		t.Errorf("deleted=%d remaining=%d for an absent CRD", deleted, remaining)
 	}
@@ -587,7 +587,7 @@ func TestADrainWhereEveryDeleteIsRefusedDoesNotWait(t *testing.T) {
 	start := time.Now()
 	deleted, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
-		"f5-bnk", 30*time.Second, 50*time.Millisecond, 200*time.Millisecond, &buf)
+		"f5-bnk", 30*time.Second, 50*time.Millisecond, 200*time.Millisecond, &buf, nil)
 	elapsed := time.Since(start)
 
 	if deleted != 0 {
@@ -634,7 +634,7 @@ func TestASlowFinalizerIsStillWaitedFor(t *testing.T) {
 	var buf bytes.Buffer
 	_, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf)
+		"f5-bnk", 5*time.Second, time.Millisecond, time.Second, &buf, nil)
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0 — the delete was accepted and the object did drain", remaining)
 	}
@@ -685,7 +685,7 @@ func TestARefusalThatClearsIsRetriedRatherThanWaitedOut(t *testing.T) {
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(
 		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
-		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf)
+		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf, nil)
 
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0.\n"+
@@ -723,7 +723,7 @@ func TestTheRetryDoesNotReDeleteObjectsAlreadyBeingFinalized(t *testing.T) {
 	var buf bytes.Buffer
 	drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		300*time.Millisecond, 20*time.Millisecond, 5*time.Second, &buf)
+		300*time.Millisecond, 20*time.Millisecond, 5*time.Second, &buf, nil)
 
 	mu.Lock()
 	n := deletes
@@ -750,7 +750,7 @@ func TestAPermanentRefusalStopsAfterTheGraceNotTheBudget(t *testing.T) {
 	start := time.Now()
 	_, remaining := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		30*time.Second, 20*time.Millisecond, 300*time.Millisecond, &buf)
+		30*time.Second, 20*time.Millisecond, 300*time.Millisecond, &buf, nil)
 	elapsed := time.Since(start)
 
 	if remaining != 1 {
@@ -815,7 +815,7 @@ func TestAnObjectWaitingOnAFinalizerDoesNotStartTheGiveUpClock(t *testing.T) {
 	// "nothing accepted" gives up at 100ms.
 	_, remaining := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		5*time.Second, 20*time.Millisecond, 100*time.Millisecond, &buf)
+		5*time.Second, 20*time.Millisecond, 100*time.Millisecond, &buf, nil)
 
 	if remaining != 0 {
 		t.Errorf("remaining = %d, want 0.\n"+
@@ -847,7 +847,7 @@ func TestAnUnlistableKindIsNotReportedAsDrained(t *testing.T) {
 	var buf bytes.Buffer
 	deleted, remaining := drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf)
+		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
 
 	if deleted != 0 {
 		t.Errorf("deleted = %d; nothing could even be listed", deleted)
@@ -879,9 +879,135 @@ func TestTheGiveUpMessageNeverReportsANegativeBudget(t *testing.T) {
 	// pass with or without the clamp and prove nothing.
 	drainBNKCustomResources(context.Background(), dc,
 		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		100*time.Millisecond, time.Second, 50*time.Millisecond, &buf)
+		100*time.Millisecond, time.Second, 50*time.Millisecond, &buf, nil)
 
 	if strings.Contains(buf.String(), "the -") {
 		t.Errorf("the give-up message reports a negative remaining budget:\n%s", buf.String())
+	}
+}
+
+// THE LIVE FAILURE, reproduced (#241).
+//
+// #244 put the webhook sweep in a loop and #245 made the drain retry refused
+// deletes. On a real BNK 2.4 teardown both worked exactly as designed and the
+// drain STILL timed out with all seven CRs untouched -- deletionTimestamp=NO on
+// every one after four minutes.
+//
+// The measurement that explains it: FLO restores f5validate-<ns> 375-815ms after
+// it is removed, while the sweep ticks every 3s. So the webhook is present for
+// about 85% of the teardown, 177 successful removals produced ZERO accepted
+// deletes, and tuning the interval cannot fix it -- polling faster than a 400ms
+// reconcile means hammering the apiserver for the length of a destroy to lose
+// slightly less often.
+//
+// The two schedules are independent, and nothing makes them coincide. So the
+// refusal itself has to be the trigger: the error IS proof the webhook is back,
+// so remove it and retry that delete immediately.
+//
+// This models it faithfully: the webhook is ALWAYS back by the time any delete is
+// attempted, so a fix that relies on catching a gap cannot pass.
+func TestARefusalNeutralisesTheWebhookAndRetriesImmediately(t *testing.T) {
+	dc := newFake(
+		cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"),
+		cr(gvrIPAMRange, "IPAMRange", "f5-bnk", "range-1"),
+	)
+
+	var mu sync.Mutex
+	webhookPresent := true // FLO has always already put it back
+	neutralised := 0
+
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if webhookPresent {
+			return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+				`"f5validate.f5net.com": failed to call webhook: Post ` +
+				`"https://f5-validation-svc.f5-bnk.svc:3340/f5-validator?timeout=10s": ` +
+				`no endpoints available for service "f5-validation-svc"`)
+		}
+		return false, nil, nil // falls through to the tracker: the delete lands
+	})
+
+	neutralise := func(context.Context) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		neutralised++
+		webhookPresent = false // removed -- and the retry happens before FLO can restore it
+		return true
+	}
+
+	var buf bytes.Buffer
+	deleted, remaining := drainBNKCustomResources(
+		context.Background(), dc, []schema.GroupVersionResource{gvrIPAM, gvrIPAMRange},
+		"f5-bnk", 10*time.Second, 20*time.Millisecond, 5*time.Second, &buf, neutralise)
+
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0.\n"+
+			"Every delete met a live failurePolicy: Fail webhook, which is the state a real "+
+			"teardown is in ~85%% of the time. Waiting for the background sweep to happen to "+
+			"remove it at the right moment is the losing strategy this replaces.\noutput:\n%s",
+			remaining, buf.String())
+	}
+	if deleted != 2 {
+		t.Errorf("deleted = %d, want 2", deleted)
+	}
+	mu.Lock()
+	n := neutralised
+	mu.Unlock()
+	if n == 0 {
+		t.Error("the refusal never triggered a webhook removal — the drain waited instead of acting")
+	}
+}
+
+// The neutraliser must fire only on a webhook refusal. An RBAC denial or an etcd
+// timeout is not something removing a webhook fixes, and deleting cluster-scoped
+// admission config in response to an unrelated error is a blast radius nobody
+// asked for.
+func TestAnUnrelatedErrorDoesNotTriggerAWebhookRemoval(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`ipams.fic.f5.com "ipam-1" is forbidden: ` +
+			`User "system:serviceaccount:default:tf" cannot delete resource "ipams"`)
+	})
+
+	fired := 0
+	neutralise := func(context.Context) bool { fired++; return true }
+
+	var buf bytes.Buffer
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		300*time.Millisecond, 20*time.Millisecond, 100*time.Millisecond, &buf, neutralise)
+
+	if fired != 0 {
+		t.Errorf("an RBAC denial triggered %d webhook removal(s); want 0 — removing admission "+
+			"configuration cannot fix a permissions error, and doing it anyway is unasked-for "+
+			"blast radius on a live cluster", fired)
+	}
+}
+
+func TestWebhookRefusalRecognisesTheRealMessageAndNothingElse(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the real one, verbatim from a live teardown",
+			fmt.Errorf(`Internal error occurred: failed calling webhook "f5validate.f5net.com": ` +
+				`failed to call webhook: Post "https://f5-validation-svc.f5-bnk.svc:3340/f5-validator?timeout=10s": ` +
+				`no endpoints available for service "f5-validation-svc"`), true},
+		{"the #208 shape, service not found",
+			fmt.Errorf(`Internal error occurred: failed calling webhook "f5validate.f5net.com": ` +
+				`service "f5-validation-svc" not found`), true},
+		{"RBAC", fmt.Errorf(`ipams.fic.f5.com "x" is forbidden: User "y" cannot delete`), false},
+		{"etcd", fmt.Errorf("etcdserver: request timed out"), false},
+		{"a service with no endpoints, but no webhook involved",
+			fmt.Errorf(`no endpoints available for service "something-else"`), false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := webhookRefusal(tc.err); got != tc.want {
+				t.Errorf("webhookRefusal = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
