@@ -6,6 +6,101 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.59.0 — 2026-08-27
+
+**`bnk down` finishes in about two minutes instead of about sixteen.** The
+teardown was deleting the components the F5 Lifecycle Operator declares, which it
+recreates within five seconds — so the drain deleted, FLO restored, and the drain
+observed them present again until its four-minute budget expired, twice, having
+achieved nothing. The finalizers were then still in place, the namespace could not
+terminate, terraform hit its own deadline, and the finalizers had to be cleared by
+hand before a second destroy pass.
+
+Verified on a live ROKS 4.21 cluster with BNK 2.4.0-EA across six consecutive
+install/uninstall cycles, in both the two-namespace and single-namespace
+topologies.
+
+### Fixed
+
+- **The teardown no longer fights the operator** (#241). Measured, on the BNK
+  teardown phase:
+
+  | step | before | after |
+  |---|---|---|
+  | CR drain, `f5-bnk` | 4m00s timeout, **0 drained** | seconds |
+  | CR drain, `f5-utils` | 4m00s timeout, **0 drained** | seconds |
+  | `delete ns f5-bnk` | 4m51s → `context deadline exceeded` | 0m40s |
+  | clear finalizers by hand | required | not required |
+  | second destroy pass | required | not required |
+  | **total** | **~16 min** | **90–120 s** |
+
+  Four changes, in the order they turned out to matter:
+
+  **The drain deletes only what the 2.4 guide names** (#266). `k8s.f5.com` holds
+  the `CNEInstance` *and the six components it declares* — `cnecontrollers`,
+  `f5tmms`, `dssms`, `afms`, `downloaders`, `cnemanifests`. Deleting the
+  `CNEInstance` *is* the uninstall; the components go with it. On 2.4 the drain
+  now targets `gateway.k8s.f5.com`, `fic.f5.com` and the `CNEInstance` alone.
+  2.3 keeps the old breadth, because its use-case CRs *are* the `k8s.f5net.com`
+  family.
+
+  **Objects a controller re-creates are not waited for.** Detected by UID: a
+  re-created object is a new object with a new UID, while one still finalizing
+  keeps the UID whose delete was accepted. That distinction matters — a rule that
+  could not tell them apart would abandon slow finalizers, which is the behaviour
+  the drain exists to provide.
+
+  **Objects the product refuses to delete are left to the namespace.**
+  `f5-big-tcp-settings/sys-default-tcp` answers "Default TCP parameters CR cannot
+  be deleted!" every time; it carries no finalizer, so the namespace delete
+  removes it.
+
+  **The admission webhook is held out of the way for the whole teardown**, and a
+  refused delete clears it and retries immediately rather than waiting for a
+  timer. F5's `f5validate-<ns>` has `failurePolicy: Fail` and is served from the
+  namespace being destroyed, and FLO restores it in 375–815 ms. This is a real
+  refusal, seen in one teardown in six — worth handling, and **not** where the
+  sixteen minutes went.
+
+- **`config env --from-yaml` no longer drops `resources.*.create`** (#246). A
+  config.yaml → .env → config.yaml round-trip turned "adopt the existing transit
+  gateway" into "create one", because the override-path derivation recorded all
+  eight toggles against each variable rather than the one it writes. 8 of 171
+  overrides were mis-derived and 8 of 184 published cheatsheet rows were wrong.
+  The derivation now probes twice and keeps the path that *moves* between the two.
+
+- **`tf_source.*` gains environment overrides** (#248) — it had none, and
+  `tf_source.type` is the one **required** field, so `config yaml --from-env`
+  could not emit a complete config and a github-pinned workspace silently became
+  `embedded` through a round-trip.
+
+- **`primary_ipv4_address` and `installCRDs`** (#242, #243) — the only two
+  warnings a clean plan emitted, both deprecated and both due to stop working when
+  their aliases are dropped. A guard fails the build if either returns.
+
+- **Placeholders like `<name>` no longer vanish from the published book** (#239).
+
+### Added
+
+- `scripts/testing/cluster-residue-check.sh` — reports what an install leaves
+  outside its namespaces (#250). On 2.4.0-EA, excluding cert-manager: 95 CRDs, 10
+  APIServices, a `ValidatingAdmissionPolicy` and its binding. Those are shared and
+  deliberately retained; a `ValidatingWebhookConfiguration` is not, and its absence
+  after teardown is now asserted.
+- `scripts/testing/241-up-down-loop.sh` — repeated install/uninstall against a
+  real cluster, failing on the error signature every fix in this lineage produced.
+- `scripts/md-to-paste-html.py` — renders Markdown to self-contained HTML with
+  inline styles, for documents and email.
+- `scripts/pr-review-audit.sh`, `scripts/branch-hygiene.sh` and
+  `.githooks/pre-push`.
+
+### Documentation
+
+- Chapter 26 gains a **Teardown** section: the four-minute drain, the stalled
+  namespace, what the message means when it names an object, and which
+  cluster-scoped objects are expected to remain.
+
+
 ### Fixed
 
 - **Placeholders like `<name>` no longer vanish from the published book** (#239).
