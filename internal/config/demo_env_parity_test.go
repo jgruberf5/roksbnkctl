@@ -93,7 +93,6 @@ func TestDemoRoutesCredentialsToTheSecret(t *testing.T) {
 		"IBMCLOUD_API_KEY",
 		"ROKSBNKCTL_GENERIC_PASSWORD",
 		"ROKSBNKCTL_BIGIP_PASSWORD",
-		"ROKSBNKCTL_GTM_PASSWORD",
 	} {
 		if !regexp.MustCompile(`SECRET_KEYS=\([^)]*` + regexp.QuoteMeta(secret)).MatchString(script) {
 			t.Errorf("%s is credential-grade but is not in SECRET_KEYS — it would be written to the ConfigMap", secret)

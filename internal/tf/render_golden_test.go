@@ -81,9 +81,11 @@ func TestTheGoldenFixtureExercisesEverySection(t *testing.T) {
 	// One representative variable per renderBNK* section (plus the credential
 	// branch of the mirror section).
 	for section, marker := range map[string]string{
-		"renderBNKNamespaces":             "flo_namespace",
-		"renderBNKTrustedProfile":         "flo_trusted_profile_sa_name",
-		"renderBNKGTM":                    "gtm_url",
+		"renderBNKNamespaces":     "flo_namespace",
+		"renderBNKTrustedProfile": "flo_trusted_profile_sa_name",
+		// renderBNKGTM emitted the GTM connection until #227 removed it as inert;
+		// what remains is the datacenter name, which IS read by the controller.
+		"renderBNKGTM":                    "gslb_datacenter_name",
 		"renderBNKCertManager":            "cert_manager_namespace",
 		"renderBNKCOS":                    "ibmcloud_resources_cos_bucket",
 		"renderBNKDeployment":             "cneinstance_deployment_size",
@@ -141,7 +143,6 @@ func fullyPopulatedWorkspace(t *testing.T) *config.Workspace {
 		// is where that filtering is visible.
 		Roles: []string{"Viewer", " Editor ", ""},
 	}
-	ws.BNK.GTM = &config.BNKGTMCfg{URL: "https://gtm", Username: "u", PasswordB64: "cHc="}
 	ws.BNK.CertManager = &config.BNKCertManagerCfg{Namespace: "cm", Version: "v1.2.3"}
 	ws.BNK.CIS = &config.BNKCISCfg{BigIPURL: "https://1.2.3.4", BigIPUsername: "admin", BigIPPasswordB64: "cHc="}
 	ws.BNK.FLP = &config.BNKFLPCfg{

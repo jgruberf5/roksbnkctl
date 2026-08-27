@@ -6,38 +6,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// #51 — the connection half of GSLB. Absent means unchanged behaviour: the
-// datacenter name alone, as before.
-func TestGTMAbsentIsNil(t *testing.T) {
-	if (&Workspace{}).BNK.GTM != nil {
-		t.Error("an unset gtm block must stay nil")
-	}
-}
-
-func TestGTMFromEnv(t *testing.T) {
-	t.Setenv("ROKSBNKCTL_GTM_URL", "https://gtm.example.com")
-	t.Setenv("ROKSBNKCTL_GTM_USERNAME", "admin")
-	t.Setenv("ROKSBNKCTL_GTM_PASSWORD", "s3cr3t")
-	ws := &Workspace{}
-	OverrideFromEnv(ws)
-
-	g := ws.BNK.GTM
-	if g == nil {
-		t.Fatal("gtm block not created")
-	}
-	if g.URL != "https://gtm.example.com" || g.Username != "admin" {
-		t.Errorf("url=%q user=%q", g.URL, g.Username)
-	}
-	// The password arrives RAW and is stored base64 — same as the CIS BIG-IP
-	// credential and the IBM API key. Never the plaintext on disk.
-	if g.PasswordB64 == "s3cr3t" {
-		t.Error("password stored in plaintext")
-	}
-	if g.PasswordB64 != "czNjcjN0" {
-		t.Errorf("password_b64 = %q, want base64 of the raw value", g.PasswordB64)
-	}
-}
-
 // #67's remaining half: external and internal can now differ. nil means "use the
 // shared value", so an unset override changes nothing.
 func TestPerVLANPrefixLenAbsentIsNil(t *testing.T) {
@@ -101,10 +69,6 @@ bnk:
   trusted_profile:
     service_account: my-sa
     roles: [Viewer, Operator]
-  gtm:
-    url: https://gtm.example.com
-    username: admin
-    password_b64: cGFzcw==
   network:
     vlan_prefixlen: 24
     vlan_prefixlen_external: 23
@@ -122,9 +86,6 @@ cluster:
 	}
 	if ws.BNK.TrustedProfile == nil || len(ws.BNK.TrustedProfile.Roles) != 2 {
 		t.Errorf("trusted_profile.roles did not load")
-	}
-	if ws.BNK.GTM == nil || ws.BNK.GTM.URL == "" || ws.BNK.GTM.Username == "" || ws.BNK.GTM.PasswordB64 == "" {
-		t.Errorf("gtm.* did not load: %+v", ws.BNK.GTM)
 	}
 	n := ws.BNK.Network
 	if n == nil || n.VLANPrefixLenExternal == nil || *n.VLANPrefixLenExternal != 23 {

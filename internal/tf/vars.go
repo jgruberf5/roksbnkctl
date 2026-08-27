@@ -580,25 +580,14 @@ func renderBNKTrustedProfile(w io.Writer, ws *config.Workspace) {
 	}
 }
 
-// renderBNKGTM emits the GTM / BIG-IP DNS connection (#51) and the GSLB
-// datacenter name (emitted whenever set, even with no GTM URL).
+// renderBNKGTM emits the GSLB datacenter name.
+//
+// The GTM CONNECTION half (url / username / password) was removed in #227: it
+// rendered cneinstance_gtm_* tfvars that terraform turned into GSLB_GTM_* and
+// GTM_* environment variables on the CNE controller, and the f5ingress binary
+// reads NEITHER prefix on EITHER line. The datacenter name is a different
+// matter -- GSLB_DATACENTER_NAME is present in both controllers -- so it stays.
 func renderBNKGTM(w io.Writer, ws *config.Workspace) error {
-	// GTM / BIG-IP DNS connection (#51). Emitted only when a URL is set, so a
-	// workspace that does not use GSLB renders exactly what it did before.
-	if g := ws.BNK.GTM; g != nil && strings.TrimSpace(g.URL) != "" {
-		fmt.Fprintf(w, "cneinstance_gtm_url = %q\n", strings.TrimSpace(g.URL))
-		if g.Username != "" {
-			fmt.Fprintf(w, "cneinstance_gtm_username = %q\n", g.Username)
-		}
-		if g.PasswordB64 != "" {
-			raw, err := base64.StdEncoding.DecodeString(g.PasswordB64)
-			if err != nil {
-				return fmt.Errorf("bnk.gtm.password_b64 is not valid base64: %w", err)
-			}
-			fmt.Fprintf(w, "cneinstance_gtm_password = %q\n", string(raw))
-		}
-	}
-
 	if ws.BNK.GSLBDatacenterName != "" {
 		fmt.Fprintf(w, "cneinstance_gslb_datacenter_name = %q\n", ws.BNK.GSLBDatacenterName)
 	}

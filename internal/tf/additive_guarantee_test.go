@@ -38,9 +38,6 @@ func TestNoNewFieldRendersWhenUnset(t *testing.T) {
 		"cneinstance_vlan_prefixlen",
 		"cneinstance_vlan_prefixlen_external",
 		"cneinstance_vlan_prefixlen_internal",
-		"cneinstance_gtm_url",
-		"cneinstance_gtm_username",
-		"cneinstance_gtm_password",
 		"use_existing_cluster_subnets",
 	} {
 		if strings.Contains(out, forbidden) {
@@ -94,38 +91,6 @@ func TestBNKLineOmittedWhenTheManifestVersionIsUnparseable(t *testing.T) {
 	renderBNKLine(&buf, ws)
 	if strings.Contains(buf.String(), "bnk_line") {
 		t.Errorf("an unparseable manifest version must not render a guessed line, got %q", buf.String())
-	}
-}
-
-// An invalid base64 password must be a clear error, not a silent empty password
-// that makes GSLB fail to authenticate for reasons nobody can see.
-func TestGTMBadBase64IsAnError(t *testing.T) {
-	var buf bytes.Buffer
-	ws := &config.Workspace{BNK: config.BNKCfg{GTM: &config.BNKGTMCfg{
-		URL:         "https://gtm.example.com",
-		PasswordB64: "!!!not base64!!!",
-	}}}
-	err := renderBNKFields(&buf, ws, nil)
-	if err == nil {
-		t.Fatal("invalid base64 must be reported, not silently rendered as empty")
-	}
-	if !strings.Contains(err.Error(), "password_b64") {
-		t.Errorf("the error must name the field: %v", err)
-	}
-}
-
-// A GTM block with no URL is not a GTM configuration — it must render nothing
-// rather than half of one.
-func TestGTMWithoutURLRendersNothing(t *testing.T) {
-	var buf bytes.Buffer
-	ws := &config.Workspace{BNK: config.BNKCfg{GTM: &config.BNKGTMCfg{
-		Username: "admin", PasswordB64: "cGFzcw==",
-	}}}
-	if err := renderBNKFields(&buf, ws, nil); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(buf.String(), "cneinstance_gtm") {
-		t.Errorf("a URL-less gtm block rendered credentials:\n%s", buf.String())
 	}
 }
 

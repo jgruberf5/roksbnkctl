@@ -108,7 +108,7 @@ const minBase64Secret = 8
 // base64Variants returns the encoded forms of s that may appear in a stream.
 //
 // Secrets in this system routinely travel base64-encoded: ibmcloud.api_key_b64,
-// registry.generic_password_b64, bnk.cis.bigip_password_b64, bnk.gtm.password_b64,
+// registry.generic_password_b64, bnk.cis.bigip_password_b64,
 // bnkforge.ca_b64, and every Kubernetes Secret, whose values are base64 by
 // definition. A redactor that knows only the raw form passes all of those
 // through untouched.

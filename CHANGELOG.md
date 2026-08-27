@@ -6,6 +6,35 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Removed
+
+- **`bnk.gtm.*` is gone — it configured nothing** (#227). The block carried the
+  GTM / BIG-IP DNS `url`, `username` and `password_b64`, rendered them as
+  `cneinstance_gtm_*` tfvars, and terraform emitted them onto the CNE controller
+  as `GSLB_GTM_URL/USERNAME/PASSWORD` **and** a bare `GTM_URL/USERNAME/PASSWORD`
+  pair. The code's own note said `VERIFY against BNK 2.3 and drop the pair that
+  is not real`, and had shipped that way.
+
+  The answer is that **neither pair is real, on either line**. The f5ingress
+  controller binary contains **zero** occurrences of all six names in both
+  2.3 `v14.59.1-0.0.70` and 2.4 `v14.91.12-0.1.66`, while the controls behave
+  exactly as expected — `GSLB_DATACENTER_NAME` and `CLOUD_PROVIDER` present in
+  both, `USE_GATEWAY_SETTINGS` only on 2.4. F5's approved 2.4 reference
+  `cneController.env` carries no GTM connection variables either.
+
+  So the whole surface — config field, `ROKSBNKCTL_GTM_*` overrides, tfvars,
+  terraform variables, book entries, and the rendered environment — expressed
+  nothing, and it put a password into a pod environment twice to do it.
+
+  **`bnk.gslb_datacenter_name` is real and stays.** A workspace or blueprint
+  still carrying `bnk.gtm` needs no edit: an unrecognised key is ignored, and it
+  was expressing nothing before.
+
+  This is the fourth setting removed for being inert (#175, #186, #210), and the
+  first with a credential in it. #228 tracks the audit that found two more dead
+  environment variables and two dead helm values, plus the surfaces still
+  unchecked.
+
 ### Added
 
 - **A generated `config.yaml` cheatsheet**, published at

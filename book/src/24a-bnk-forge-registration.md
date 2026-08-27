@@ -62,7 +62,7 @@ cluster id + region   ───────▶  credential template (IBM Cloud A
 
   The password can also be stored as `bnkforge.password_b64`, base64-encoded,
   the same shape as every other machine credential this tool takes
-  (`ibmcloud.api_key_b64`, `bnk.cis.bigip_password_b64`, `bnk.gtm.password_b64`,
+  (`ibmcloud.api_key_b64`, `bnk.cis.bigip_password_b64`,
   `registry.generic_password_b64`). Precedence is `BNK_FORGE_PASSWORD`, then
   `--password`, then the field, then the prompt — so a stored value never
   prevents a runner overriding it.
