@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
@@ -236,9 +237,12 @@ func drainPhase(
 	// Objects the product's own webhook forbids deleting. Recorded so the final
 	// count does not report them as having failed to finalize.
 	denied := map[string]bool{}
+	// The UID of each object whose delete the API server accepted, so a later pass
+	// can tell a re-created object from one that is merely still finalizing.
+	deletedUID := map[string]types.UID{}
 
 	for {
-		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, denied, neutralise)
+		p := deleteAllIn(ctx, dc, phase, allGVRs, ns, w, logged, denied, deletedUID, neutralise)
 		deleted += p.accepted
 
 		if p.present == 0 && p.unknown == 0 {
@@ -361,6 +365,7 @@ type deletePass struct {
 	marked   int // objects already carrying a deletionTimestamp
 	unknown  int // kinds whose contents could not be established this pass
 	owned    int // objects left to their owner's garbage collection
+	remade   int // objects the controller re-created after we deleted them
 	denied   int // objects an admission webhook refuses to delete, by design
 }
 
@@ -379,7 +384,7 @@ type deletePass struct {
 // existing test uses.
 type neutraliseFunc func(ctx context.Context) bool
 
-func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged, denied map[string]bool, neutralise neutraliseFunc) deletePass {
+func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []schema.GroupVersionResource, ns string, w io.Writer, logged, denied map[string]bool, deletedUID map[string]types.UID, neutralise neutraliseFunc) deletePass {
 	var p deletePass
 	for _, gvr := range gvrs {
 		list, err := dc.Resource(gvr).Namespace(ns).List(ctx, metav1.ListOptions{})
@@ -435,6 +440,33 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 				continue
 			}
 
+			// AN OBJECT THE CONTROLLER PUTS BACK CANNOT BE DRAINED.
+			//
+			// Detected by UID, not by name: a re-created object is a NEW object,
+			// so its UID differs from the one whose delete we accepted. That is
+			// exact, needs no clock, and cannot be fooled by a slow finalizer --
+			// an object still finalizing keeps its UID.
+			//
+			// Measured on a live 2.4.0-EA install, the two that do this are
+			// product defaults the CNE controller owns:
+			//
+			//   F5BigDnsCache/security-fqdn-dns-resolver  back within 5s
+			//   F5BigTcpSetting/sys-default-tcp           delete refused outright
+			//
+			// Each kept the leaf phase non-empty for the whole 4m budget while the
+			// drain waited on something that was never going to change. They are
+			// deleted once -- the 2.4 guide's ordering requires the attempt -- and
+			// then left to the namespace delete.
+			key := gvr.Resource + "/" + item.GetName()
+			if prev, seen := deletedUID[key]; seen && prev != item.GetUID() {
+				p.remade++
+				if w != nil && !logged[key] {
+					logged[key] = true
+					fmt.Fprintf(w, "    %s was re-created by its controller after deletion; leaving it to the namespace delete\n", key)
+				}
+				continue
+			}
+
 			p.present++
 
 			if item.GetDeletionTimestamp() != nil {
@@ -482,6 +514,7 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 
 			if err == nil {
 				p.accepted++
+				deletedUID[key] = item.GetUID()
 				continue
 			}
 			if apierrors.IsNotFound(err) {
@@ -514,7 +547,6 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			// Logged on the FIRST pass only. The drain now retries every few
 			// seconds for up to four minutes, and one line per object per pass
 			// would bury the rest of the teardown output.
-			key := gvr.Resource + "/" + item.GetName()
 			if w != nil && !logged[key] {
 				logged[key] = true
 				fmt.Fprintf(w, "    could not delete %s/%s: %v\n", gvr.Resource, item.GetName(), err)

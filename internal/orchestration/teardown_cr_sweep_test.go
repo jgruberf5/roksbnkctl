@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -1051,7 +1052,7 @@ func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T
 	neutralise := func(context.Context) bool { called++; return false }
 
 	gvrs := []schema.GroupVersionResource{gvrIPAM}
-	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, neutralise)
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, map[string]types.UID{}, neutralise)
 
 	if called != 1 {
 		t.Fatalf("neutralise called %d time(s); want 1 — the refusal should have triggered it", called)
@@ -1177,7 +1178,7 @@ func TestAnOwnedChildDoesNotKeepThePhaseFromDraining(t *testing.T) {
 
 	gvrs := []schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}
 	p := deleteAllIn(context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, nil)
+		gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, map[string]types.UID{}, nil)
 
 	if p.owned != 1 {
 		t.Errorf("owned = %d, want 1", p.owned)
@@ -1207,7 +1208,7 @@ func TestADeliberateWebhookDenialDoesNotBlockTheDrain(t *testing.T) {
 
 	var buf bytes.Buffer
 	gvrs := []schema.GroupVersionResource{gvrIPAM}
-	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", &buf, map[string]bool{}, map[string]bool{}, nil)
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk", &buf, map[string]bool{}, map[string]bool{}, map[string]types.UID{}, nil)
 
 	if p.denied != 1 {
 		t.Errorf("denied = %d, want 1", p.denied)
@@ -1367,5 +1368,130 @@ func TestTheDrainNamesWhatDidNotFinalize(t *testing.T) {
 	if len(stuck) != 1 || stuck[0] != "ipams/stuck-one" {
 		t.Errorf("stuck = %v, want [ipams/stuck-one] — the operator needs to know WHICH object, "+
 			"because a lingering CNEInstance and a lingering leaf mean different things", stuck)
+	}
+}
+
+// An object the controller PUTS BACK cannot be drained, and must not hold the
+// phase open (#241).
+//
+// Measured on a live 2.4.0-EA install: deleting
+// F5BigDnsCache/security-fqdn-dns-resolver had it recreated within five seconds,
+// and F5BigTcpSetting/sys-default-tcp is refused outright. Both are product
+// defaults the CNE controller owns, both are in k8s.f5net.com so the FLO-component
+// group rule does not cover them, and each kept the leaf phase non-empty for the
+// entire 4m budget while the drain waited on something that was never going to
+// change.
+//
+// Detected by UID rather than by name or timestamp: a re-created object is a NEW
+// object with a new UID, while an object that is merely still finalizing keeps
+// the one whose delete we accepted. That distinction is the whole point -- a rule
+// that could not tell them apart would abandon slow finalizers, which is the
+// behaviour #217 exists to provide.
+func TestAnObjectTheControllerRecreatesDoesNotHoldThePhaseOpen(t *testing.T) {
+	original := cr(gvrIPAM, "IPAM", "f5-bnk", "security-default")
+	original.SetUID("uid-original")
+	dc := newFake(original)
+
+	var mu sync.Mutex
+	deleted := false
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		deleted = true
+		mu.Unlock()
+		return true, nil, nil
+	})
+	// After the delete lands, the controller puts a NEW object back under the same
+	// name — which is exactly what a fresh UID means.
+	dc.PrependReactor("list", "ipams", func(k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		gone := deleted
+		mu.Unlock()
+		obj := cr(gvrIPAM, "IPAM", "f5-bnk", "security-default")
+		if gone {
+			obj.SetUID("uid-recreated")
+		} else {
+			obj.SetUID("uid-original")
+		}
+		l := &unstructured.UnstructuredList{}
+		l.SetGroupVersionKind(gvrIPAM.GroupVersion().WithKind("IPAMList"))
+		l.Items = []unstructured.Unstructured{*obj}
+		return true, l, nil
+	})
+
+	var buf bytes.Buffer
+	_, remaining, _ := drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		2*time.Second, 20*time.Millisecond, time.Second, &buf, nil)
+
+	if remaining != 0 {
+		t.Errorf("remaining = %d, want 0.\n"+
+			"The controller re-created the object after the delete was accepted. Waiting for it "+
+			"to disappear can never succeed, and blocks the phase for the whole budget — which is "+
+			"the 4m timeout on every teardown.\noutput:\n%s", remaining, buf.String())
+	}
+	if !strings.Contains(buf.String(), "re-created by its controller") {
+		t.Errorf("the operator is not told why it was left behind:\n%s", buf.String())
+	}
+}
+
+// The counterpart, and the reason UID is the right key: an object that is merely
+// SLOW to finalize keeps its UID, and must still be waited for. A rule that could
+// not tell the two apart would abandon exactly the objects #217 exists to wait on.
+//
+// Asserted through deleteAllIn, where ONE CALL IS ONE PASS and the UID map can be
+// seeded directly. Driving it through the whole drain was the first attempt and it
+// did not pin the comparison -- a mutation that treated every re-seen object as
+// re-created still passed, because the phase reached zero either way and the test
+// could not tell "waited for it" from "gave up on it".
+func TestASlowFinalizerIsNotMistakenForARecreation(t *testing.T) {
+	obj := cr(gvrIPAM, "IPAM", "f5-bnk", "slow-one")
+	obj.SetUID("uid-stable")
+	obj.SetFinalizers([]string{"k8s.f5net.com/uninstall"})
+	now := metav1.Now()
+	obj.SetDeletionTimestamp(&now) // accepted on an earlier pass, still finalizing
+	dc := newFake(obj)
+
+	gvrs := []schema.GroupVersionResource{gvrIPAM}
+	// The SAME uid the earlier pass recorded: this is the object we deleted, not a
+	// replacement for it.
+	seen := map[string]types.UID{"ipams/slow-one": "uid-stable"}
+
+	var buf bytes.Buffer
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk",
+		&buf, map[string]bool{}, map[string]bool{}, seen, nil)
+
+	if p.remade != 0 {
+		t.Errorf("remade = %d, want 0 — the UID is unchanged, so this object is finalizing, "+
+			"not being re-created", p.remade)
+	}
+	if p.marked != 1 {
+		t.Errorf("marked = %d, want 1 — a finalizing object is progress and must still be "+
+			"waited for, which is the behaviour #217 exists to provide", p.marked)
+	}
+	if strings.Contains(buf.String(), "re-created by its controller") {
+		t.Errorf("a slow finalizer was reported as a re-creation:\n%s", buf.String())
+	}
+}
+
+// And the positive case at the same level: a DIFFERENT uid under the same name is
+// a replacement, and must not be waited for.
+func TestADifferentUIDUnderTheSameNameIsARecreation(t *testing.T) {
+	obj := cr(gvrIPAM, "IPAM", "f5-bnk", "security-default")
+	obj.SetUID("uid-new")
+	dc := newFake(obj)
+
+	gvrs := []schema.GroupVersionResource{gvrIPAM}
+	seen := map[string]types.UID{"ipams/security-default": "uid-old"}
+
+	var buf bytes.Buffer
+	p := deleteAllIn(context.Background(), dc, gvrs, gvrs, "f5-bnk",
+		&buf, map[string]bool{}, map[string]bool{}, seen, nil)
+
+	if p.remade != 1 {
+		t.Errorf("remade = %d, want 1 — a new UID under a name we already deleted is a "+
+			"replacement the controller made, and waiting for it can never succeed", p.remade)
+	}
+	if p.present != 0 {
+		t.Errorf("present = %d, want 0 — a re-created object must not hold the phase open", p.present)
 	}
 }
