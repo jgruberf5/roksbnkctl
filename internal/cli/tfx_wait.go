@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -89,6 +90,11 @@ func runTFXWaitCmd(cmd *cobra.Command, _ []string) error {
 // poll fallback). Kept internal to the dispatcher.
 var errTFXWaitTimeout = errors.New("tfx wait: watch deadline exceeded")
 
+// errTFXWaitStalled marks a verdict that the object CANNOT reach the wanted state,
+// as opposed to not having reached it yet. A sentinel rather than a string match,
+// so the caller can tell it from a timeout without parsing prose (#271).
+var errTFXWaitStalled = errors.New("tfx wait: stalled")
+
 // dnsFailFastAttempts is how many consecutive resolution failures to tolerate before
 // declaring the host unreachable. A few, because real DNS does blip; not many,
 // because a name that is wrong is wrong forever and the alternative is burning the
@@ -121,6 +127,13 @@ func runTFXWait(ctx context.Context, ri dynamic.ResourceInterface, name string, 
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, errTFXWaitStalled):
+		// TERMINAL, so it must not fall through to the poll fallback below. The
+		// watch did its job -- it established that the state cannot change -- and
+		// re-running the same wait on the poll path would spend another stall
+		// window reaching the same verdict, while logging "watch unavailable",
+		// which is the opposite of what happened.
+		return err
 	case errors.Is(err, errTFXWaitTimeout):
 		if d, ok := vanishedTunedDiagnosis(flagWaitGVR); ok {
 			return fmt.Errorf("%s never appeared: %s", name, d)
@@ -145,6 +158,17 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 	wctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// THE WATCH PATH NEEDS ITS OWN STALL DEADLINE (#271). A state that never
+	// changes produces no events, so a watch on a stuck licence sits silently for
+	// the full timeout -- it cannot notice "nothing happened" the way the poll
+	// loop can, because nothing happening is exactly what it is waiting through.
+	//
+	// This is the mode the licence wait actually runs in: `tfx wait` defaults to
+	// --mode watch, and terraform does not override it. A stall check added only
+	// to the poll loop would have passed its tests and never fired in production.
+	stall := newStallWatchdog(cancel, flagWaitGVR)
+	defer stall.stop()
+
 	sel := fields.OneTermEqualSelector("metadata.name", name).String()
 	rv := ""
 	for {
@@ -155,10 +179,12 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 			obj, err := ri.Get(wctx, name, metav1.GetOptions{})
 			switch {
 			case err == nil:
-				if matched, desc := m.matched(obj); matched {
+				matched, desc := m.matched(obj)
+				if matched {
 					fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 					return nil
 				}
+				stall.observed(desc)
 				rv = obj.GetResourceVersion()
 			case apierrors.IsNotFound(err):
 				fmt.Fprintf(logw, "tfx wait: %s not found yet -- watching for it\n", name)
@@ -173,13 +199,15 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 		if err != nil {
 			return err // watch couldn't establish → caller falls back to poll
 		}
-		done, ferr := tfxConsumeWatch(wctx, w, name, m, &rv, logw)
+		done, ferr := tfxConsumeWatch(wctx, w, name, m, &rv, logw, stall)
 		w.Stop()
 		switch {
 		case done:
 			return nil
 		case ferr != nil:
 			return ferr // real watch error → caller falls back to poll
+		case stall.fired():
+			return fmt.Errorf("%w: %s is stuck: %s", errTFXWaitStalled, name, stall.why())
 		case wctx.Err() != nil:
 			return errTFXWaitTimeout
 		}
@@ -192,7 +220,7 @@ func runTFXWaitWatch(ctx context.Context, ri dynamic.ResourceInterface, name str
 // the watch errors, or the channel closes / the context fires (done=false). It
 // advances *rv so a re-watch resumes where this one stopped; an Expired/Gone
 // watch error resets *rv to "" so the caller relists via GET.
-func tfxConsumeWatch(ctx context.Context, w watch.Interface, name string, m waitMatcher, rv *string, logw io.Writer) (bool, error) {
+func tfxConsumeWatch(ctx context.Context, w watch.Interface, name string, m waitMatcher, rv *string, logw io.Writer, stall *stallWatchdog) (bool, error) {
 	ch := w.ResultChan()
 	for {
 		select {
@@ -224,6 +252,7 @@ func tfxConsumeWatch(ctx context.Context, w watch.Interface, name string, m wait
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return true, nil
 			}
+			stall.observed(desc)
 			if why, terminal := terminalWaitDiagnosis(desc); terminal {
 				return false, fmt.Errorf("%s cannot become ready: %s", name, why)
 			}
@@ -241,6 +270,12 @@ func runTFXWaitPoll(ctx context.Context, ri dynamic.ResourceInterface, name stri
 
 	attempt := 0
 	unresolvable := 0
+	// When the observed state last CHANGED, so a state that is not merely
+	// unfinished but stuck can be told apart from one still making progress.
+	var (
+		lastDesc    string
+		lastChanged = time.Now()
+	)
 	for {
 		attempt++
 		obj, err := ri.Get(ctx, name, metav1.GetOptions{})
@@ -267,8 +302,14 @@ func runTFXWaitPoll(ctx context.Context, ri dynamic.ResourceInterface, name stri
 				fmt.Fprintf(logw, "tfx wait: %s satisfied [%s] (%s)\n", name, m, desc)
 				return nil
 			} else {
+				if desc != lastDesc {
+					lastDesc, lastChanged = desc, time.Now()
+				}
 				if why, terminal := terminalWaitDiagnosis(desc); terminal {
 					return fmt.Errorf("%s cannot become ready: %s", name, why)
+				}
+				if why, stuck := stalledWaitDiagnosis(flagWaitGVR, desc, time.Since(lastChanged)); stuck {
+					return fmt.Errorf("%s is stuck: %s", name, why)
 				}
 				fmt.Fprintf(logw, "tfx wait: %s not ready -- %s (want [%s], attempt %d)\n", name, desc, m, attempt)
 			}
@@ -523,4 +564,181 @@ func vanishedTunedDiagnosis(gvr string) (string, bool) {
 		"    bnk.cneinstance_size: Tiny    # or leave unset; Tiny is the 2.4 default\n" +
 		"    bnk.tmm_replicas: <n>         # one TMM per worker node\n\n" +
 		"  See Appendix C for the verified cluster shapes, and issue #203.", true
+}
+
+// licenseRegistrationStall is how long a BNK licence may sit in one unchanged
+// state before the wait calls it stuck rather than slow.
+//
+// A healthy registration finishes in about a minute: the CWC obtains its
+// certificate, POSTs /entitlements/telemetry, and the License goes Active. Five
+// minutes is therefore five times the observed happy path and still a twelfth of
+// the 15-minute wait it replaces.
+var licenseRegistrationStall = 5 * time.Minute
+
+// stalledWaitDiagnosis reports whether an object has sat in one state long enough
+// that waiting is no longer the right answer (#271).
+//
+// THE FAILURE THIS EXISTS FOR. On BNK 2.4.0-EA the CWC can enter "Device
+// Registration In Progress" and never leave it: after obtaining its certificate
+// it answers the SPK controllers ResponseCM20GetBackLater every 5s, logs
+// "SendReport is no longer supported for InitialRegistration and SwitchLicense",
+// and never issues the registration. The licence proxy's own request log shows a
+// POST /license-proxy/v1/certificates and then no /entitlements/telemetry POST
+// ever -- so F5 TEEM is never asked, and nothing on the cluster is going to ask
+// it. Observed to persist for 25+ minutes, and to survive a fresh CWC pod with no
+// inherited state.
+//
+// The fix is F5's; the CWC's CM20 state machine cannot resume an interrupted
+// registration. What this tool can do is stop pretending it might.
+//
+// The cost of not detecting it is 30 minutes, not 15: the licence wait burns its
+// full 15, then the CNEInstance wait burns another 15 because the TMMs are
+// blocked on the same licence, and the operator is told
+// "the status of pod readiness gate ConfigurationDone is not True" -- which names
+// neither the licence nor the CWC.
+//
+// DELIBERATELY NARROW, on the same principle as terminalWaitDiagnosis. It fires
+// only for a licence, only in a registering state, and only after the state has
+// been UNCHANGED for the stall window. A licence that is progressing through
+// states, or any other resource that is slow, is left alone: failing those early
+// would trade a slow success for a fast wrong answer.
+func stalledWaitDiagnosis(gvr, desc string, unchangedFor time.Duration) (string, bool) {
+	if !strings.Contains(gvr, "licenses") {
+		return "", false
+	}
+	if !licenseRegisteringRe.MatchString(desc) {
+		return "", false
+	}
+	if unchangedFor < licenseRegistrationStall {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"the licence has been %q for %s without changing, and BNK 2.4.0-EA cannot resume an\n"+
+			"  interrupted registration -- so the remaining wait, and the CNEInstance wait after it,\n"+
+			"  would both time out (30 minutes) and then report a TMM readiness gate rather than this.\n\n"+
+			"  A healthy registration reaches Active in about a minute. When it stalls, the CWC has\n"+
+			"  obtained its certificate but never POSTed /entitlements/telemetry, so F5 TEEM is never\n"+
+			"  asked and no amount of waiting produces an answer.\n\n"+
+			"  To retry the registration from scratch:\n\n"+
+			"    kubectl -n <utils-ns> delete secret licensestatus switchlicensestatus \\\n"+
+			"        certificatekeyflp certificatechainflp\n"+
+			"    kubectl -n <utils-ns> rollout restart deploy/f5-spk-cwc\n\n"+
+			"  then re-run `bnk up`. This is a BNK defect, not a configuration error: it has been\n"+
+			"  observed to recur on a brand-new CWC pod with no inherited state.",
+		strings.TrimSpace(desc), unchangedFor.Round(time.Second)), true
+}
+
+// licenseRegisteringRe matches the states a licence passes through before it is
+// Active. Matched on the state rather than the human message because the message
+// ("Device registration in progress") is F5's prose and may be reworded, while
+// the state value is what the CR's own consumers key on.
+var licenseRegisteringRe = regexp.MustCompile(`(?i)\b(registering|registration)\b`)
+
+// stallWatchdog cancels a watch whose observed state has not changed for long
+// enough that waiting is no longer the right answer (#271).
+//
+// WHY THE WATCH PATH NEEDS THIS AND THE POLL LOOP DOES NOT. The poll loop sees
+// the object on every interval, so it can measure "unchanged for N" directly. A
+// watch is event-driven: a state that never changes produces no events at all, so
+// the watch has nothing to measure and sits silently until its deadline. Not
+// noticing is precisely what it is built to do.
+//
+// So the watchdog holds the last observed description and a timer. Each time the
+// state changes, the timer restarts. If it ever expires, the watch context is
+// cancelled and the caller reports the stall instead of a timeout.
+//
+// nil-safe on every method, so the poll path and the tests can pass nil without
+// a branch at each call site.
+type stallWatchdog struct {
+	mu       sync.Mutex
+	since    time.Time
+	gvr      string
+	last     string
+	reason   string
+	tripped  bool
+	timer    *time.Timer
+	cancel   context.CancelFunc
+	interval time.Duration
+}
+
+func newStallWatchdog(cancel context.CancelFunc, gvr string) *stallWatchdog {
+	// Checked at a fraction of the stall window so the report lands promptly after
+	// it is due, rather than up to a full window late.
+	iv := licenseRegistrationStall / 4
+	if iv <= 0 {
+		iv = time.Second
+	}
+	s := &stallWatchdog{gvr: gvr, cancel: cancel, interval: iv}
+	s.timer = time.AfterFunc(iv, s.tick)
+	return s
+}
+
+// observed records the current state. A CHANGE restarts the clock; the same state
+// again does not, which is the whole distinction between slow and stuck.
+func (s *stallWatchdog) observed(desc string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if desc != s.last {
+		s.last = desc
+		s.since = time.Now()
+	}
+}
+
+func (s *stallWatchdog) tick() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	desc, since := s.last, s.since
+	s.mu.Unlock()
+
+	if desc != "" && !since.IsZero() {
+		if why, stuck := stalledWaitDiagnosis(s.gvr, desc, time.Since(since)); stuck {
+			s.mu.Lock()
+			s.tripped, s.reason = true, why
+			s.mu.Unlock()
+			// Cancelling ends the watch; the caller reads fired() and reports the
+			// stall rather than a plain timeout.
+			s.cancel()
+			return
+		}
+	}
+	s.mu.Lock()
+	if s.timer != nil {
+		s.timer.Reset(s.interval)
+	}
+	s.mu.Unlock()
+}
+
+func (s *stallWatchdog) fired() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tripped
+}
+
+func (s *stallWatchdog) why() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reason
+}
+
+func (s *stallWatchdog) stop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
 }
