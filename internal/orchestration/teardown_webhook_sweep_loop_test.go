@@ -212,3 +212,35 @@ func TestAPersistentSweepErrorIsReportedOnce(t *testing.T) {
 		t.Errorf("the sweep reported the same error %d times; want 1.\n%s", n, buf.String())
 	}
 }
+
+// The removal line is reported once, with the COUNT carried by the summary.
+//
+// The first version of this sweep left the per-removal line uncollapsed, arguing
+// that a repeated removal is the #241 signature and so worth saying every time.
+// A live teardown disproved it: FLO re-created the webhook 26 times and climbing,
+// filling the log with 26 identical lines while the stop() summary was already
+// going to report the number. The signal was in the count, not the repetition.
+func TestARepeatedlyRecreatedWebhookIsReportedOnceWithACount(t *testing.T) {
+	cs := fake.NewSimpleClientset(webhookFor("f5validate-f5-bnk", "f5-bnk"))
+
+	var buf bytes.Buffer
+	stop := runTeardownWebhookSweep(context.Background(), cs, "f5-bnk", 5*time.Millisecond, &buf)
+
+	// Keep putting it back, the way FLO does for the length of a teardown.
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		_, _ = cs.AdmissionregistrationV1().ValidatingWebhookConfigurations().
+			Create(context.Background(), webhookFor("f5validate-f5-bnk", "f5-bnk"), metav1.CreateOptions{})
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop()
+
+	out := buf.String()
+	if n := strings.Count(out, "Removed 1 admission webhook"); n != 1 {
+		t.Errorf("the removal line appears %d times; want 1 — the count belongs in the summary, "+
+			"not in one line per tick:\n%s", n, out)
+	}
+	if !strings.Contains(out, "re-created") {
+		t.Errorf("the summary must still report that it kept coming back:\n%s", out)
+	}
+}

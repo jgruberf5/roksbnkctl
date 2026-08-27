@@ -116,12 +116,20 @@ func runTeardownWebhookSweep(
 	interval time.Duration,
 	w io.Writer,
 ) func() {
-	// Errors are reported ONCE, not once per tick. At 3s intervals across a
-	// destroy that can run ten minutes, an unreachable API server would otherwise
-	// print the same warning two hundred times and bury the rest of the teardown.
-	var errLogged bool
+	// Both the error AND the removal are reported ONCE, not once per tick.
+	//
+	// The error case was obvious: at 3s intervals across a ten-minute destroy an
+	// unreachable API server would print the same warning two hundred times.
+	//
+	// The removal case was NOT obvious, and the first version of this deliberately
+	// left it uncollapsed on the reasoning that a repeated removal IS the #241
+	// signature and therefore worth saying every time. A live teardown settled it:
+	// FLO re-created the webhook 26 times and climbing, so the log filled with 26
+	// identical lines while the summary at stop() was already going to report the
+	// count. The signal was never in the repetition, it was in the number.
+	var errLogged, removalLogged bool
 
-	total := sweepOnce(ctx, cs, floNS, w, &errLogged)
+	total := sweepOnce(ctx, cs, floNS, w, &errLogged, &removalLogged)
 
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -135,7 +143,7 @@ func runTeardownWebhookSweep(
 			case <-sctx.Done():
 				return
 			case <-tick.C:
-				total += sweepOnce(sctx, cs, floNS, w, &errLogged)
+				total += sweepOnce(sctx, cs, floNS, w, &errLogged, &removalLogged)
 			}
 		}
 	}()
@@ -156,8 +164,9 @@ func runTeardownWebhookSweep(
 // sweepOnce removes any validating webhook served from floNS, returning how many
 // it removed. Errors are never returned: the loop must keep running through a
 // transient API error, because the condition it is holding open lasts as long as
-// the teardown does. errLogged makes the report once rather than once per tick.
-func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.Writer, errLogged *bool) int {
+// the teardown does. errLogged and removalLogged make each report once rather
+// than once per tick; the running total is reported by the stop func.
+func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.Writer, errLogged, removalLogged *bool) int {
 	deleted, err := k8s.DeleteOrphanedAdmissionWebhooks(ctx, cs, floNS, nil)
 	if err != nil {
 		if ctx.Err() == nil && w != nil && !*errLogged {
@@ -167,7 +176,8 @@ func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.
 		}
 		return len(deleted)
 	}
-	if len(deleted) > 0 && w != nil {
+	if len(deleted) > 0 && w != nil && !*removalLogged {
+		*removalLogged = true
 		fmt.Fprintf(w, "  Removed %d admission webhook(s) served from %s so its deletion can complete.\n", len(deleted), floNS)
 	}
 	return len(deleted)
