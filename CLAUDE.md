@@ -47,9 +47,27 @@ A review must:
 ### Check it, do not remember it
 
 `./scripts/pr-review-audit.sh` lists open PRs with no review comment and branches
-with no PR. Run it before saying a batch of work is done. The rule above was
-written in a session that then opened a PR without a review and left a branch with
-no PR at all — intent is not a mechanism.
+with no PR.
+
+The rule above was written in a session that then broke it **three times**, every
+time the same way: push the work, report progress, never open the PR. Writing the
+rule did not help. Writing the script did not help either, because a check that is
+not run is not a control.
+
+So it runs automatically:
+
+```
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-push` refuses a second push of a branch that still has no PR, and
+warns when an open PR has no `## Review` comment. First pushes are allowed — a
+branch cannot have a PR before it exists — and `--no-verify` bypasses it for
+genuine work in progress.
+
+**Announcing an intention is not doing it.** "I'll open the PR next" and "I'll run
+the live test" both read as progress and are not. Do the thing in the same turn,
+or say plainly that it has not been done yet.
 
 ### Do not let the blast radius grow
 

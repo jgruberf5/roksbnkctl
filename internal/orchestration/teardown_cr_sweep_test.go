@@ -454,7 +454,7 @@ func TestSelectionNeverReachesOutsideTheF5APIGroups(t *testing.T) {
 		apiList("velero.io/v1", listable("backups")),
 		apiList("apps/v1", listable("deployments")),
 		apiList("k8s.f5net.com/v1", listable("f5spkvlans")),
-	})
+	}, "2.3")
 	for _, g := range got {
 		switch g.Group {
 		case "k8s.f5.com", "k8s.f5net.com":
@@ -475,7 +475,7 @@ func TestEveryDeclaredBNKGroupIsSelected(t *testing.T) {
 	for _, g := range BNKCRDGroups {
 		lists = append(lists, apiList(g+"/v1", listable("things")))
 	}
-	got := selectBNKResources(lists)
+	got := selectBNKResources(lists, "2.3")
 	if len(got) != len(BNKCRDGroups) {
 		t.Fatalf("selected %d of %d declared groups: %v", len(got), len(BNKCRDGroups), got)
 	}
@@ -500,7 +500,7 @@ func TestSelectionSkipsResourcesItCannotListOrDelete(t *testing.T) {
 			metav1.APIResource{Name: "collectiononlys", Verbs: []string{"list", "deletecollection"}},
 			listable("cneinstances"),
 		),
-	})
+	}, "2.3")
 	if len(got) != 1 || got[0].Resource != "cneinstances" {
 		t.Errorf("selected %v, want only cneinstances — the others lack list or delete", got)
 	}
@@ -513,7 +513,7 @@ func TestSelectionSurvivesMalformedDiscoveryOutput(t *testing.T) {
 		nil,
 		{GroupVersion: "!!not a group version!!", APIResources: []metav1.APIResource{listable("x")}},
 		apiList("k8s.f5.com/v1", listable("cneinstances")),
-	})
+	}, "2.3")
 	if len(got) != 1 || got[0].Resource != "cneinstances" {
 		t.Errorf("got %v, want the one well-formed F5 resource", got)
 	}
@@ -1069,128 +1069,6 @@ func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T
 	}
 }
 
-// THE REMAINING HALF OF #241, found by a live teardown after #244/#245/#261.
-//
-// Four of BNK 2.4's seven namespaced CRs are owned by the CNEInstance -- verified
-// on a real 2.4.0-EA install:
-//
-//	CNEController  ownedBy CNEInstance/f5-bnk-f5-cne-controller
-//	F5Tmm          ownedBy CNEInstance/f5-bnk-f5-cne-controller
-//	Afm            ownedBy CNEInstance/f5-bnk-f5-cne-controller
-//	Downloader     ownedBy CNEInstance/f5-bnk-f5-cne-controller
-//
-// The drain deleted them anyway, while the CNEInstance that declares them still
-// existed. That fights the operator: the CNEInstance IS the statement that those
-// objects should exist, so the controller reconciles them back or their uninstall
-// finalizers wait for a teardown nobody has asked for. They never finalized inside
-// the 4m budget, and the repair path cleared their finalizers by hand on every
-// single teardown.
-//
-// None of the earlier fixes could have helped, and the reason is worth stating:
-// the webhook only guards k8s.f5net.com, while all seven of these are k8s.f5.com.
-// The webhook never touched them.
-func TestOwnedChildrenAreLeftToTheirOwner(t *testing.T) {
-	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
-	child.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "k8s.f5.com/v1",
-		Kind:       "CNEInstance",
-		Name:       "f5-bnk-f5-cne-controller",
-	}})
-	dc := newFake(child, cr(gvrCNEInstance, "CNEInstance", "f5-bnk", "f5-bnk-f5-cne-controller"))
-
-	var mu sync.Mutex
-	var deletedNames []string
-	dc.PrependReactor("delete", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
-		mu.Lock()
-		deletedNames = append(deletedNames, a.(k8stesting.DeleteAction).GetName())
-		mu.Unlock()
-		return false, nil, nil
-	})
-
-	var buf bytes.Buffer
-	drainBNKCustomResources(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}, "f5-bnk",
-		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
-
-	mu.Lock()
-	got := append([]string(nil), deletedNames...)
-	mu.Unlock()
-
-	for _, n := range got {
-		if n == "owned-child" {
-			t.Errorf("the drain deleted owned-child, which is owned by a CNEInstance this same "+
-				"drain removes.\nDeleting a child while its owner still exists fights the "+
-				"controller: the owner is the declaration that the child should exist, so it is "+
-				"reconciled back or its finalizer waits forever. Deletions attempted: %v", got)
-		}
-	}
-}
-
-// An object owned by something the drain is NOT deleting must still be deleted --
-// otherwise the skip becomes a way to leave objects behind forever.
-func TestAnObjectOwnedBySomethingElseIsStillDeleted(t *testing.T) {
-	orphanish := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-elsewhere")
-	orphanish.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       "something-we-do-not-touch",
-	}})
-	dc := newFake(orphanish)
-
-	var mu sync.Mutex
-	deletes := 0
-	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
-		mu.Lock()
-		deletes++
-		mu.Unlock()
-		return false, nil, nil
-	})
-
-	var buf bytes.Buffer
-	drainBNKCustomResources(context.Background(), dc,
-		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
-		300*time.Millisecond, 20*time.Millisecond, time.Second, &buf, nil)
-
-	mu.Lock()
-	n := deletes
-	mu.Unlock()
-	if n == 0 {
-		t.Error("an object owned by a Deployment the drain never touches was skipped. " +
-			"The skip must only apply when the OWNER is also being deleted, or objects are " +
-			"left behind on the strength of an ownerReference nobody is acting on.")
-	}
-}
-
-// An owned child must not count as PRESENT, or skipping it is worse than not
-// skipping it.
-//
-// present drives "has this phase drained yet". If an owned child keeps the leaf
-// phase non-empty, the wait always times out, the ROOT phase never runs, the
-// CNEInstance is never deleted -- and so the children are never garbage-collected
-// either. The first version of the skip did exactly that: it stopped deleting the
-// children and then blocked forever waiting for them to disappear.
-func TestAnOwnedChildDoesNotKeepThePhaseFromDraining(t *testing.T) {
-	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
-	child.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "k8s.f5.com/v1", Kind: "CNEInstance", Name: "root",
-	}})
-	dc := newFake(child)
-
-	gvrs := []schema.GroupVersionResource{gvrIPAM, gvrCNEInstance}
-	p := deleteAllIn(context.Background(), dc, []schema.GroupVersionResource{gvrIPAM},
-		gvrs, "f5-bnk", nil, map[string]bool{}, map[string]bool{}, map[string]types.UID{}, nil)
-
-	if p.owned != 1 {
-		t.Errorf("owned = %d, want 1", p.owned)
-	}
-	if p.present != 0 {
-		t.Errorf("present = %d, want 0.\n"+
-			"An owned child is not this drain's to drain — it goes when its owner goes. "+
-			"Counting it keeps the phase permanently non-empty, so the wait times out and the "+
-			"root phase never deletes the owner that would have collected it.", p.present)
-	}
-}
-
 // A CR the product's own webhook forbids deleting must not block the phase either.
 //
 //	admission webhook "f5validate.f5net.com" denied the request:
@@ -1243,19 +1121,13 @@ func TestWebhookDenialIsNotConfusedWithAnUncallableWebhook(t *testing.T) {
 
 // The remaining count must apply the SAME exclusions the delete pass does.
 //
-// deleteAllIn stopped counting owned children and product-forbidden CRs as
-// present, but countIn -- which produces the number the operator is shown -- still
-// counted everything. So a teardown that had correctly left four children to their
-// owner reported "7 BNK custom resource(s) did not finalize", and a number that
-// overstates the problem is how a healthy teardown gets investigated as a broken
-// one.
+// deleteAllIn stops counting product-forbidden CRs as present, but countIn --
+// which produces the number the operator is shown -- once counted everything. So
+// a teardown that had correctly left objects alone still reported them as having
+// failed to finalize, and a number that overstates the problem is how a healthy
+// teardown gets investigated as a broken one.
 func TestTheRemainingCountExcludesWhatTheDrainDeliberatelyLeft(t *testing.T) {
-	child := cr(gvrIPAM, "IPAM", "f5-bnk", "owned-child")
-	child.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "k8s.f5.com/v1", Kind: "CNEInstance", Name: "root",
-	}})
 	dc := newFake(
-		child,
 		cr(gvrIPAM, "IPAM", "f5-bnk", "sys-default-tcp"),
 		cr(gvrIPAM, "IPAM", "f5-bnk", "genuinely-stuck"),
 	)
@@ -1271,8 +1143,8 @@ func TestTheRemainingCountExcludesWhatTheDrainDeliberatelyLeft(t *testing.T) {
 	}
 	if present != 1 {
 		t.Errorf("present = %d, want 1 — only genuinely-stuck actually failed to drain.\n"+
-			"owned-child goes with its owner and sys-default-tcp goes with the namespace; "+
-			"neither is something that failed to finalize.", present)
+			"sys-default-tcp goes with the namespace and is not something that failed to finalize.",
+			present)
 	}
 }
 
@@ -1493,5 +1365,55 @@ func TestADifferentUIDUnderTheSameNameIsARecreation(t *testing.T) {
 	}
 	if p.present != 0 {
 		t.Errorf("present = %d, want 0 — a re-created object must not hold the phase open", p.present)
+	}
+}
+
+// The 2.4 drain must target the guide's set and nothing else (#266).
+//
+// Breadth here is not free: every group added is a group whose objects the drain
+// will delete and then wait for, and #241 was caused entirely by waiting on
+// objects that were never going to move. A group should be added by a deliberate
+// edit with a reason, not inherited from a discovery sweep.
+func TestTheTwoFourDrainTargetsOnlyTheGuidesGroups(t *testing.T) {
+	got := drainGroupsForLine("2.4")
+	want := map[string]string{
+		"gateway.k8s.f5.com": "use-case CRs, GatewaySettings, Infra, EgressGateway",
+		"fic.f5.com":         "IPAM/IPAMRange — the checkpoint before the CNEInstance",
+		"k8s.f5.com":         "the CNEInstance; floManagedComponent drops the rest",
+	}
+
+	for _, g := range got {
+		if _, ok := want[g]; !ok {
+			t.Errorf("2.4 drains %q, which the 2.4 uninstall order does not name.\n"+
+				"Adding a group means the drain deletes its objects and then waits for them, "+
+				"which is exactly what #241 was.", g)
+		}
+		delete(want, g)
+	}
+	for g, why := range want {
+		t.Errorf("2.4 no longer drains %q (%s) — the guide requires it", g, why)
+	}
+
+	// k8s.f5net.com is the one deliberately dropped, and it is where both
+	// undrainable product defaults live.
+	for _, g := range got {
+		if g == "k8s.f5net.com" {
+			t.Error("2.4 drains k8s.f5net.com again. Everything in it is either a product " +
+				"default that cannot be drained (sys-default-tcp is refused outright, " +
+				"security-fqdn-dns-resolver is recreated on sight) or config the namespace " +
+				"delete removes anyway.")
+		}
+	}
+}
+
+// 2.3 keeps the old breadth, because its use-case CRs ARE the k8s.f5net.com
+// family. Narrowing a line that cannot be tested here would be a guess.
+func TestTheTwoThreeDrainKeepsTheFullGroupSet(t *testing.T) {
+	for _, line := range []string{"2.3", ""} {
+		got := drainGroupsForLine(line)
+		if len(got) != len(BNKCRDGroups) {
+			t.Errorf("line %q drains %d group(s), want all %d — 2.3's use-case CRs are the "+
+				"k8s.f5net.com F5SPK* family and must still be drained", line, len(got), len(BNKCRDGroups))
+		}
 	}
 }

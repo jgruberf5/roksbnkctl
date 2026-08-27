@@ -11,7 +11,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -121,7 +120,7 @@ func sweepBNKCustomResources(ctx context.Context, cctx *config.Context, tfws *tf
 	// almost never coincide. This lets a refused delete remove the webhook and
 	// retry itself, inside the window it just proved exists.
 	neutralise := webhookNeutraliser(kubeconfig, floNS)
-	gvrs := discoverBNKNamespacedGVRs(kubeconfig)
+	gvrs := discoverBNKNamespacedGVRs(kubeconfig, cctx.Workspace.BNKLineOrEmpty())
 	if len(gvrs) == 0 {
 		// No F5 CRDs resolved: either BNK is not installed or the CRDs are
 		// already gone. Either way there is nothing to drain.
@@ -364,7 +363,6 @@ type deletePass struct {
 	refused  int // delete calls that came back with a real error
 	marked   int // objects already carrying a deletionTimestamp
 	unknown  int // kinds whose contents could not be established this pass
-	owned    int // objects left to their owner's garbage collection
 	remade   int // objects the controller re-created after we deleted them
 	denied   int // objects an admission webhook refuses to delete, by design
 }
@@ -429,17 +427,6 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []sche
 			// ownership. #217's leaves-first insight was right about the objects
 			// the guide names; it was applied to every F5 CR in the namespace,
 			// which swept in the ones ownership already handles.
-			// NOT COUNTED AS PRESENT. present drives "has this phase drained yet",
-			// and an owned child is not this drain's to drain -- it goes when its
-			// owner goes. Counting it kept the leaf phase permanently non-empty,
-			// so the wait always timed out and the ROOT phase never ran, so the
-			// CNEInstance was never deleted and the children were never collected.
-			// The skip without this is worse than no skip at all.
-			if ownedByKindIn(item, allGVRs) {
-				p.owned++
-				continue
-			}
-
 			// AN OBJECT THE CONTROLLER PUTS BACK CANNOT BE DRAINED.
 			//
 			// Detected by UID, not by name: a re-created object is a NEW object,
@@ -600,15 +587,10 @@ func countAndNameIn(ctx context.Context, dc dynamic.Interface, gvrs, allGVRs []s
 			// operator gets told the wrong number.
 			//
 			// This counts what is REMAINING, which is what "N BNK custom
-			// resource(s) did not finalize" reports. An owned child is going with
-			// its owner and a CR the product forbids deleting goes with the
-			// namespace: neither is something that failed to finalize. Counting
-			// them said 7 when 4 were children this drain had deliberately left
-			// alone -- a number that overstates the problem is how a healthy
-			// teardown gets investigated as a broken one.
-			if ownedByKindIn(list.Items[i], allGVRs) {
-				continue
-			}
+			// resource(s) did not finalize" reports. A CR the product forbids
+			// deleting goes with the namespace and is not something that failed
+			// to finalize; counting it overstates the problem, which is how a
+			// healthy teardown gets investigated as a broken one.
 			if skip[gvr.Resource+"/"+list.Items[i].GetName()] {
 				continue
 			}
@@ -643,7 +625,7 @@ func typeIsGone(err error) bool {
 // what this code deletes — the only part of the sweep that can destroy something
 // it was never meant to touch — so it is a pure function with its own tests,
 // while this wrapper is the untestable half that merely fetches.
-func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource {
+func discoverBNKNamespacedGVRs(kubeconfig []byte, line string) []schema.GroupVersionResource {
 	cfg, err := clientcmd.RESTConfigFromKubeConfig(kubeconfig)
 	if err != nil {
 		return nil
@@ -660,7 +642,7 @@ func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource 
 	if lists == nil && err != nil {
 		return nil
 	}
-	return selectBNKResources(lists)
+	return selectBNKResources(lists, line)
 }
 
 // selectBNKResources picks the resources the drain is allowed to delete.
@@ -678,9 +660,9 @@ func discoverBNKNamespacedGVRs(kubeconfig []byte) []schema.GroupVersionResource 
 // Verbs are matched exactly. A substring check over the joined verb list accepts
 // "delete" inside "deletecollection" and selects resources the drain cannot
 // actually delete one at a time.
-func selectBNKResources(lists []*metav1.APIResourceList) []schema.GroupVersionResource {
-	groups := make(map[string]bool, len(BNKCRDGroups))
-	for _, g := range BNKCRDGroups {
+func selectBNKResources(lists []*metav1.APIResourceList, line string) []schema.GroupVersionResource {
+	groups := make(map[string]bool)
+	for _, g := range drainGroupsForLine(line) {
 		groups[g] = true
 	}
 
@@ -759,38 +741,6 @@ func webhookRefusal(err error) bool {
 		(strings.Contains(msg, "webhook") && strings.Contains(msg, "no endpoints available"))
 }
 
-// ownedByKindIn reports whether item has an ownerReference to a KIND this drain is
-// also deleting, ANYWHERE in the run rather than in the current phase.
-//
-// That distinction is the whole thing: splitCNEInstance puts cneinstances in the
-// ROOT phase, so a leaf-phase check against its own phase's GVRs cannot see the
-// CNEInstance and every owned child is deleted exactly as before. The first
-// version of this did that and the test caught it. Such an object does not need deleting: removing the owner removes
-// it, and deleting it first fights the controller that owns it.
-//
-// Matched on Kind rather than on the exact owner object, because the drain works
-// through GVRs and a resource name ("cneinstances") is not a Kind ("CNEInstance").
-// Deriving the Kind from the resource would need a RESTMapper the drain does not
-// otherwise carry; comparing case-insensitively against the resource name with the
-// plural dropped is enough to tell CNEInstance from Afm, and a miss here is safe
-// in the conservative direction -- the object is deleted as before.
-func ownedByKindIn(item unstructured.Unstructured, gvrs []schema.GroupVersionResource) bool {
-	owners := item.GetOwnerReferences()
-	if len(owners) == 0 {
-		return false
-	}
-	for _, o := range owners {
-		k := strings.ToLower(o.Kind)
-		for _, gvr := range gvrs {
-			r := strings.ToLower(gvr.Resource)
-			if r == k+"s" || r == k+"es" || r == k {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // webhookDenial reports whether an admission webhook DELIBERATELY rejected the
 // request, as opposed to being uncallable.
 //
@@ -809,4 +759,37 @@ func webhookDenial(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "admission webhook") && strings.Contains(msg, "denied the request")
+}
+
+// drainGroupsForLine is the set of API groups the drain deletes from.
+//
+// ON 2.4 IT IS THE GUIDE'S SET AND NOTHING MORE (#266):
+//
+//	gateway.k8s.f5.com   use-case CRs, GatewaySettings, Infra, EgressGateway
+//	fic.f5.com           IPAM / IPAMRange, the checkpoint before the CNEInstance
+//	k8s.f5.com           the CNEInstance -- floManagedComponent drops the rest
+//
+// k8s.f5net.com is deliberately NOT drained on 2.4. Everything in it there is
+// either a product default that cannot be drained at all
+// (f5-big-tcp-settings/sys-default-tcp is refused outright,
+// f5-big-dns-caches/security-fqdn-dns-resolver is recreated on sight) or
+// data-plane config the namespace delete removes anyway. Deleting from it was
+// what made the drain unable to finish, and it bought nothing: a clean teardown
+// finds only the CNEInstance to remove and completes in seconds.
+//
+// ON 2.3, AND ON AN UNKNOWN LINE, THE OLD BREADTH IS KEPT. The 2.3 use-case CRs
+// ARE the k8s.f5net.com F5SPK* family, so narrowing there would stop draining the
+// objects that most need it. There is no 2.3 cluster to test against, and an
+// untested narrowing of a line this cannot exercise is not a simplification, it
+// is a guess.
+//
+// floManagedComponent is NOT line-gated and applies to both. Letting the operator
+// remove the CNEInstance's own children is right on 2.3 for the same reason it is
+// right on 2.4: the CNEInstance is the declaration those objects exist, so
+// deleting them under it is a fight with the controller either way.
+func drainGroupsForLine(line string) []string {
+	if line != "2.4" {
+		return BNKCRDGroups
+	}
+	return []string{"gateway.k8s.f5.com", "fic.f5.com", "k8s.f5.com"}
 }
