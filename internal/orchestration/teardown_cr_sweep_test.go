@@ -858,3 +858,30 @@ func TestAnUnlistableKindIsNotReportedAsDrained(t *testing.T) {
 			"reporting 0 remaining tells the destroy to proceed against unknown contents.")
 	}
 }
+
+// The give-up is evaluated before the deadline is, so on the final iteration the
+// remaining budget is already negative. Offering to skip "-2s" of budget is a
+// number that cannot be true, and a log that prints impossible numbers stops
+// being read -- which matters here, because this message is the only thing
+// telling an operator why the teardown stopped early.
+func TestTheGiveUpMessageNeverReportsANegativeBudget(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+			`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+	})
+
+	var buf bytes.Buffer
+	// The poll has to be LARGE relative to the budget, which is the real shape:
+	// production polls every 3s against a 4m budget, so the loop can overshoot the
+	// deadline by up to a full poll. A short poll here would overshoot by
+	// milliseconds, which .Round(time.Second) renders as "0s" -- the test would
+	// pass with or without the clamp and prove nothing.
+	drainBNKCustomResources(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk",
+		100*time.Millisecond, time.Second, 50*time.Millisecond, &buf)
+
+	if strings.Contains(buf.String(), "the -") {
+		t.Errorf("the give-up message reports a negative remaining budget:\n%s", buf.String())
+	}
+}

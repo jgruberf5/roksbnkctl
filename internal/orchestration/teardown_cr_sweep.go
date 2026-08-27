@@ -239,10 +239,18 @@ func drainPhase(
 			}
 			if time.Since(refusingSince) >= refusalGrace {
 				if w != nil {
+					// Clamped: the give-up is checked before the deadline is, so
+					// on the last iteration time.Until(deadline) is negative and
+					// the message would offer to skip "-2s" of budget. A number
+					// that cannot be true is how a log stops being read.
+					skipped := time.Until(deadline)
+					if skipped < 0 {
+						skipped = 0
+					}
 					fmt.Fprintf(w, "  ⚠ %s: every delete was refused for %s, so waiting cannot help — skipping the rest of the %s budget.\n"+
 						"    The reason is above, one line per object. A validating webhook whose backend is\n"+
 						"    already gone is the usual cause; the destroy continues and the namespace is repaired after.\n",
-						ns, refusalGrace, time.Until(deadline).Round(time.Second))
+						ns, refusalGrace, skipped.Round(time.Second))
 				}
 				return deleted, p.present + p.unknown
 			}
