@@ -33,6 +33,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/jgruberf5/roksbnkctl/tools/refgen/mdesc"
 )
 
 type field struct {
@@ -133,7 +135,7 @@ func main() {
 		sd := structs[n]
 		fmt.Fprintf(&b, "## `%s`\n\n", sd.Name)
 		if sd.Doc != "" {
-			fmt.Fprintf(&b, "%s\n\n", sd.Doc)
+			fmt.Fprintf(&b, "%s\n\n", mdesc.Prepare(sd.Doc))
 		}
 		fmt.Fprintln(&b, "| key | type | line | default | required | description |")
 		fmt.Fprintln(&b, "|---|---|---|---|---|---|")
@@ -153,7 +155,7 @@ func main() {
 				def = "`" + def + "`"
 			}
 			fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s | %s |\n",
-				fl.YAMLKey, fl.GoType, line, def, req, escapePipes(fl.Doc))
+				fl.YAMLKey, fl.GoType, line, def, req, mdesc.Cell(fl.Doc))
 		}
 		fmt.Fprintln(&b)
 	}
@@ -227,8 +229,6 @@ func firstSentence(s string) string {
 	}
 	return s
 }
-
-func escapePipes(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 
 func typeString(e ast.Expr) string {
 	switch t := e.(type) {

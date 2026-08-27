@@ -136,3 +136,89 @@ func TestUndocumentedConfigFieldsDoNotGrow(t *testing.T) {
 		t.Logf("undocumented config fields down to %d (ceiling %d) — lower the ceiling in this test.", blank, ceiling)
 	}
 }
+
+// The generated chapters carry text the generators do not control -- Go doc
+// comments off the Workspace struct, and `description` strings out of
+// terraform/variables.tf. Markdown passes raw HTML straight through, so a
+// comment mentioning ~/.roksbnkctl/<name>/config.yaml emitted a live <name> tag
+// and the browser rendered NOTHING (#239). The published book read "Workspace is
+// ~/.roksbnkctl//config.yaml": the one word telling you the segment was a
+// placeholder was the word that disappeared.
+//
+// mdbook reported this on every build, eleven times, and the warnings scrolled
+// past. This turns the same property into a failing test.
+//
+// It asserts on the CHECKED-IN chapters rather than on mdesc's unit tests,
+// because those cover the escaper in isolation and this covers the thing a
+// reader actually gets. A generator that stopped calling mdesc entirely would
+// pass every test in that package and fail this one.
+func TestGeneratedChaptersHaveNoRawHTMLTags(t *testing.T) {
+	root := repoRootForDemoTest(t)
+
+	for _, chapter := range []string{
+		"book/src/28-configuration-reference.md",
+		"book/src/29-terraform-variable-reference.md",
+		"book/src/27-command-reference.md",
+	} {
+		t.Run(filepath.Base(chapter), func(t *testing.T) {
+			b, err := os.ReadFile(filepath.Join(root, chapter))
+			if err != nil {
+				t.Fatalf("read %s: %v", chapter, err)
+			}
+
+			inFence := false
+			for i, line := range strings.Split(string(b), "\n") {
+				// A fenced block is literal text, brackets and all -- chapter 27 is
+				// mostly usage blocks full of `cmd <name>`, and every one of them is
+				// correct. Missing this was the first version's false positive.
+				if strings.HasPrefix(strings.TrimSpace(line), "```") {
+					inFence = !inFence
+					continue
+				}
+				if inFence {
+					continue
+				}
+				for _, tag := range rawTagsOutsideCode(line) {
+					t.Errorf("%s:%d: %q is outside a code span, so markdown emits it as an HTML tag "+
+						"and it renders as nothing.\n"+
+						"  The generators route description text through tools/refgen/mdesc; this line did not go through it.\n"+
+						"  line: %s",
+						chapter, i+1, tag, strings.TrimSpace(line))
+				}
+			}
+		})
+	}
+}
+
+// rawTagsOutsideCode returns every <...> in line that markdown would emit as raw
+// HTML: that is, every one not sitting inside an inline backtick code span.
+// Escaped brackets (&lt;) and backtick-wrapped placeholders are both fine and are
+// what the generators now produce. Callers skip fenced blocks before calling.
+func rawTagsOutsideCode(line string) []string {
+	var out []string
+	inCode := false
+
+	for i := 0; i < len(line); {
+		if line[i] == '`' {
+			n := 0
+			for i+n < len(line) && line[i+n] == '`' {
+				n++
+			}
+			inCode = !inCode
+			i += n
+			continue
+		}
+		if line[i] == '<' && !inCode {
+			if close := strings.IndexByte(line[i:], '>'); close > 0 {
+				tag := line[i : i+close+1]
+				// Only flag things markdown treats as a tag: '<' then a letter or '/'.
+				if c := tag[1]; c == '/' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					out = append(out, tag)
+				}
+			}
+		}
+		i++
+	}
+
+	return out
+}
