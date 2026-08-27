@@ -150,9 +150,15 @@ func TestUseGatewaySettingsIsOnFor24AndAbsentOn23(t *testing.T) {
 
 	// The 2.3 list is also the regression guard for the hoist that made the
 	// override reachable: it has to render what it rendered before, in order.
+	//
+	// VPC_NAME and IBM_TRUSTED_PROFILE_ID were in this list until #228 removed
+	// them. They are NOT a behaviour change to defend: the f5ingress binary
+	// contains zero occurrences of either on both lines, while CLOUD_VPC and
+	// CLOUD_TRUSTED_PROFILE beside them are present. They were emitted, ignored,
+	// and pinned here — which is how a guard ends up protecting a defect.
 	want := []string{
 		"TMM_DEFAULT_MTU", "CLOUD_ENV", "CLOUD_PROVIDER", "CLOUD_NETWORK_CONFIGMAP",
-		"VPC_NAME", "CLOUD_REGION", "IBM_TRUSTED_PROFILE_ID", "GSLB_DATACENTER_NAME",
+		"CLOUD_REGION", "GSLB_DATACENTER_NAME",
 		"CLOUD_VPC", "CLOUD_TRUSTED_PROFILE",
 	}
 	if strings.Join(on23, ",") != strings.Join(want, ",") {

@@ -32,7 +32,7 @@ run: build
 clean:
 	rm -rf bin/
 
-.PHONY: generate book book-pdf book-test book-serve book-clean release release-publish \
+.PHONY: audit-env generate book book-pdf book-test book-serve book-clean release release-publish \
         book-publish stamp-changelog goreleaser-check goreleaser-snapshot \
         pages-assure staticcheck build-integration-tags integration-test
 
@@ -285,6 +285,25 @@ tf-validation-test:
 # (e.g., on a doc-only change where they're confident no backend code
 # moved). Default is unset — step 4 runs.
 SKIP_INTEGRATION_TEST ?=
+
+# audit-env — the hop nothing else checks: values handed to a consumer that
+# ignores them. See scripts/audit-consumed-values.sh for why the other three hops
+# are already guarded and this one was not (#227, #228).
+#
+# NOT part of `release`: it needs FAR credentials and pulls multi-GB images, so it
+# is an explicit step, like the CI demos. Run it when adding a value to a CR or a
+# chart, and at release time when the manifest version moves.
+#
+#   make audit-env FAR_KEY=/path/to/cne_pull_64.json
+audit-env:
+	@if [ -z "$(FAR_KEY)" ]; then \
+	    echo "make audit-env FAR_KEY=/path/to/cne_pull_64.json" >&2; \
+	    echo "  (the FAR service-account json — the same one bnk up uses)" >&2; \
+	    exit 2; \
+	fi
+	@FAR_KEY="$(FAR_KEY)" MANIFEST_VERSION="$(or $(MANIFEST_VERSION),2.4.0-EA)" \
+	    ./scripts/audit-consumed-values.sh
+
 
 # generate — refresh every GENERATED artifact from its source.
 #

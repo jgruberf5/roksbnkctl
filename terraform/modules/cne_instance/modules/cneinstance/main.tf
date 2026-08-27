@@ -240,18 +240,16 @@ locals {
           value = "cloud-network-mapping"
         },
       ] : [],
+      # CLOUD_VPC and CLOUD_TRUSTED_PROFILE are the names the controller reads.
+      # VPC_NAME and IBM_TRUSTED_PROFILE_ID sat beside them until #228 -- the
+      # "emit it under two names, one must be right" habit that also produced the
+      # GTM pair (#227). The f5ingress binary contains zero occurrences of either
+      # on both lines, while CLOUD_VPC (4 / 7) and CLOUD_TRUSTED_PROFILE (1 / 1)
+      # are present. F5's approved 2.4 reference lists neither of the dead ones.
       [
-        {
-          name  = "VPC_NAME"
-          value = var.cneinstance_vpc_name
-        },
         {
           name  = "CLOUD_REGION"
           value = var.cneinstance_cloud_region
-        },
-        {
-          name  = "IBM_TRUSTED_PROFILE_ID"
-          value = var.cneinstance_ibm_trusted_profile_id
         },
         {
           name  = "GSLB_DATACENTER_NAME"
