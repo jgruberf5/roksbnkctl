@@ -116,7 +116,12 @@ func runTeardownWebhookSweep(
 	interval time.Duration,
 	w io.Writer,
 ) func() {
-	total := sweepOnce(ctx, cs, floNS, w)
+	// Errors are reported ONCE, not once per tick. At 3s intervals across a
+	// destroy that can run ten minutes, an unreachable API server would otherwise
+	// print the same warning two hundred times and bury the rest of the teardown.
+	var errLogged bool
+
+	total := sweepOnce(ctx, cs, floNS, w, &errLogged)
 
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
@@ -130,7 +135,7 @@ func runTeardownWebhookSweep(
 			case <-sctx.Done():
 				return
 			case <-tick.C:
-				total += sweepOnce(sctx, cs, floNS, w)
+				total += sweepOnce(sctx, cs, floNS, w, &errLogged)
 			}
 		}
 	}()
@@ -149,13 +154,14 @@ func runTeardownWebhookSweep(
 }
 
 // sweepOnce removes any validating webhook served from floNS, returning how many
-// it removed. Errors are reported once per sweep and never returned: the loop
-// must keep running through a transient API error, because the condition it is
-// holding open lasts as long as the teardown does.
-func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.Writer) int {
+// it removed. Errors are never returned: the loop must keep running through a
+// transient API error, because the condition it is holding open lasts as long as
+// the teardown does. errLogged makes the report once rather than once per tick.
+func sweepOnce(ctx context.Context, cs kubernetes.Interface, floNS string, w io.Writer, errLogged *bool) int {
 	deleted, err := k8s.DeleteOrphanedAdmissionWebhooks(ctx, cs, floNS, nil)
 	if err != nil {
-		if ctx.Err() == nil && w != nil {
+		if ctx.Err() == nil && w != nil && !*errLogged {
+			*errLogged = true
 			fmt.Fprintf(w, "  ⚠ could not remove the admission webhook served from %s (%v).\n"+
 				"    If the namespace hangs in Terminating, delete its ValidatingWebhookConfiguration by hand.\n", floNS, err)
 		}

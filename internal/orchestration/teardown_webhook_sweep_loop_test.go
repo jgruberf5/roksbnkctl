@@ -3,6 +3,7 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -189,4 +190,25 @@ func waitForWebhookGone(t *testing.T, cs kubernetes.Interface, name string, with
 		time.Sleep(5 * time.Millisecond)
 	}
 	return false
+}
+
+// The sweep runs every 3s for as long as the destroy takes, which can be ten
+// minutes. A persistent API error must therefore be reported ONCE: at one line
+// per tick it would print two hundred copies of the same warning and bury the
+// rest of the teardown output, which is how a real failure becomes invisible.
+func TestAPersistentSweepErrorIsReportedOnce(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("list", "validatingwebhookconfigurations",
+		func(k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, fmt.Errorf("the API server is unreachable")
+		})
+
+	var buf bytes.Buffer
+	stop := runTeardownWebhookSweep(context.Background(), cs, "f5-bnk", 5*time.Millisecond, &buf)
+	time.Sleep(60 * time.Millisecond) // ~12 ticks
+	stop()
+
+	if n := strings.Count(buf.String(), "could not remove the admission webhook"); n != 1 {
+		t.Errorf("the sweep reported the same error %d times; want 1.\n%s", n, buf.String())
+	}
 }
