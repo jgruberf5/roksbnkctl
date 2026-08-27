@@ -28,6 +28,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   were never redirected to a mirror *by that setting*. Removing it does not change
   that; it stops the configuration claiming otherwise.
 
+  The audit isolates its FAR credential from both docker *and* helm, and removes
+  it on every exit path — an earlier version isolated docker only, so a run
+  silently added `repo.f5.com` to the operator's persistent helm credentials.
+
   The audit reports a **control** per section and refuses to report findings when
   a control fails, so a broken extraction shows up as "not reporting it" rather
   than as a clean bill of health. That caught a false positive during this work:

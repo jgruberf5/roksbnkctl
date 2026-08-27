@@ -49,10 +49,38 @@ die()  { warn "$*"; exit 2; }
 command -v docker >/dev/null || die "docker not on PATH"
 command -v helm   >/dev/null || die "helm not on PATH"
 
-# An isolated docker config: the Windows credential helper fails under WSL, and
-# this keeps the credential out of the user's real config either way.
+# ISOLATED CREDENTIALS, AND CLEANED UP.
+#
+# BOTH clients, not one. An earlier version isolated docker and then called
+# `helm registry login` with no equivalent, which writes to the operator's REAL
+# ~/.config/helm/registry/config.json -- so running an audit silently added
+# repo.f5.com to their persistent credentials, from a script whose header claims
+# it keeps the credential out of their config. Half-isolation is worse than none,
+# because the claim is what someone relies on.
+#
+# The docker side additionally works around the Windows credential helper, which
+# fails under WSL with "The stub received bad data".
 DCFG="$WORK/dockercfg"; mkdir -p "$DCFG"; chmod 700 "$DCFG"
 printf '{}' > "$DCFG/config.json"; chmod 600 "$DCFG/config.json"
+HELM_CFG="$WORK/helm-registry.json"
+printf '{}' > "$HELM_CFG"; chmod 600 "$HELM_CFG"
+export HELM_REGISTRY_CONFIG="$HELM_CFG"
+
+# The credential lands in those files, so they go when the script does -- on
+# success, on failure, and on Ctrl-C. Only the pulled corpora are worth keeping,
+# and only when the caller asked for a cache via AUDIT_WORK.
+# shellcheck disable=SC2329  # invoked by the trap below
+cleanup() {
+    docker --config "$DCFG" logout "$FAR_HOST" >/dev/null 2>&1 || true
+    rm -f "$DCFG/config.json" "$HELM_CFG"
+    rmdir "$DCFG" 2>/dev/null || true
+    if [ -z "${AUDIT_WORK:-}" ]; then
+        rm -rf "$WORK"
+    else
+        say "    (corpora kept in $WORK; credentials removed)"
+    fi
+}
+trap cleanup EXIT INT TERM
 
 say "==> Authenticating to $FAR_HOST"
 < "$FAR_KEY" docker --config "$DCFG" login -u _json_key_base64 --password-stdin "$FAR_HOST" >/dev/null 2>&1 \
