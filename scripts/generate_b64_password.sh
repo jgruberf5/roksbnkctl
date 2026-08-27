@@ -80,8 +80,7 @@ cat >&2 <<'NOTE'
 
   Where this goes:
     config.yaml   any *_b64 field — ibmcloud.api_key_b64, bnk.cis.bigip_password_b64,
-                  bnk.gtm.password_b64, registry.generic_password_b64,
-                  bnkforge.password_b64
+                  registry.generic_password_b64, bnkforge.password_b64
     ROKSBNKCTL_*_B64        take THIS base64 value
     ROKSBNKCTL_*_PASSWORD   take the RAW password, NOT this — they base64 it
                             themselves, and pasting this double-encodes it

@@ -23,7 +23,14 @@ output "cneinstance_namespace" {
 output "cneinstance_manifest" {
   description = "The full CNEInstance manifest (as JSON)"
   value       = var.enabled ? jsonencode(local.cneinstance_manifest) : null
-  # Carries cneinstance_gtm_password through the spec.
+  # KEPT sensitive after #227 removed the GTM password this used to carry.
+  #
+  # The spec no longer holds a credential VALUE -- what is left is names,
+  # namespaces and env whose values are not secret. The flag stays anyway: it
+  # costs nothing, and the failure modes are asymmetric. Marking a
+  # non-credential sensitive hides it from `terraform output`; unmarking one that
+  # turns out to carry a credential puts it in a log. If a secret is ever added
+  # to the spec, this is already right.
   sensitive = true
 }
 
