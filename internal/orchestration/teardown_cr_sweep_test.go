@@ -1011,3 +1011,59 @@ func TestWebhookRefusalRecognisesTheRealMessageAndNothingElse(t *testing.T) {
 		})
 	}
 }
+
+// The retry must not be gated on the neutraliser having DELETED something.
+//
+// "The webhook is already gone" is the BEST case for retrying, not a reason to
+// skip it -- and it happens routinely, because the background sweep is removing
+// the same webhook on its own 3s tick. If the sweep removes it a few
+// milliseconds before a delete that was already in flight, the delete comes back
+// refused, the neutraliser finds nothing left to delete, and gating on that skips
+// the retry at the exact moment it would have succeeded.
+//
+// Worse, the refusal then counts toward the give-up: accepted==0, marked==0,
+// refused>0 starts the clock on a cluster where the webhook is absent and every
+// delete would now be accepted.
+//
+// Asserted against deleteAllIn rather than the whole drain, because ONE CALL IS
+// EXACTLY ONE PASS. Driving this through drainBNKCustomResources was the first
+// attempt and it proved nothing: an ordinary later pass drained the object and
+// the test passed either way. Shrinking the budget to force a single pass did not
+// work either -- the fake client is fast enough that a 1ms deadline had not
+// expired by the end of the first pass.
+func TestTheRetryIsNotGatedOnTheNeutraliserFindingSomethingToDelete(t *testing.T) {
+	dc := newFake(cr(gvrIPAM, "IPAM", "f5-bnk", "ipam-1"))
+
+	attempts := 0
+	dc.PrependReactor("delete", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		attempts++
+		if attempts == 1 {
+			return true, nil, fmt.Errorf(`Internal error occurred: failed calling webhook ` +
+				`"f5validate.f5net.com": no endpoints available for service "f5-validation-svc"`)
+		}
+		return false, nil, nil // the webhook is gone; the retry lands
+	})
+
+	// The background sweep already removed it, so there is nothing left for the
+	// neutraliser to delete -- which is what DeleteOrphanedAdmissionWebhooks
+	// reports as zero removed.
+	called := 0
+	neutralise := func(context.Context) bool { called++; return false }
+
+	p := deleteAllIn(context.Background(), dc,
+		[]schema.GroupVersionResource{gvrIPAM}, "f5-bnk", nil, map[string]bool{}, neutralise)
+
+	if called != 1 {
+		t.Fatalf("neutralise called %d time(s); want 1 — the refusal should have triggered it", called)
+	}
+	if attempts != 2 {
+		t.Errorf("the delete was attempted %d time(s); want 2.\n"+
+			"A webhook refusal must be retried after attempting neutralisation, whether or not "+
+			"the neutraliser had anything left to remove. The webhook already being gone is the "+
+			"best case for retrying, not a reason not to.", attempts)
+	}
+	if p.accepted != 1 || p.refused != 0 {
+		t.Errorf("accepted=%d refused=%d, want 1/0 — the retry succeeded, so the pass made progress "+
+			"and must not count toward the give-up clock", p.accepted, p.refused)
+	}
+}

@@ -381,10 +381,21 @@ func deleteAllIn(ctx context.Context, dc dynamic.Interface, gvrs []schema.GroupV
 			// Acting on the refusal turns the race into a sequence: the error IS
 			// the proof the webhook is back, so remove it and retry immediately,
 			// inside the window before FLO restores it again.
+			// RETRY REGARDLESS OF WHAT THE NEUTRALISER FOUND. Gating the retry on
+			// it having deleted something is backwards: "the webhook is already
+			// gone" is the BEST case for retrying, not a reason to skip it. And it
+			// happens routinely, because the background sweep is removing the same
+			// webhook on its own tick -- if the sweep wins by a few milliseconds,
+			// a delete already in flight still comes back refused, the neutraliser
+			// finds nothing left, and gating there would skip the retry at exactly
+			// the moment it would have succeeded. The refusal would then count
+			// toward the give-up on a cluster where every delete is now fine.
+			//
+			// Bounded: this is reached only for a genuine webhook refusal, so it is
+			// one extra delete per refused object per pass, not a general retry.
 			if err != nil && !apierrors.IsNotFound(err) && neutralise != nil && webhookRefusal(err) {
-				if neutralise(ctx) {
-					err = dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
-				}
+				neutralise(ctx)
+				err = dc.Resource(gvr).Namespace(ns).Delete(ctx, item.GetName(), metav1.DeleteOptions{})
 			}
 
 			if err == nil {
