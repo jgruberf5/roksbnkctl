@@ -47,4 +47,24 @@ regexes = [
   # search indexer. Allowlisting the string rather than those paths keeps the
   # generated book scanned for anything else.
   '''ZW5jb2RlZC1hcGkta2V5LXZhbHVl''',
+
+  # The literal placeholder in the Artifactory-mirror appendix's example curl:
+  #
+  #   curl -u admin:'<password>' -X POST ...
+  #
+  # gitleaks' curl-auth-user rule matches the `-u user:secret` SHAPE and extracts
+  # `admin:'<password>'` as the secret. The value is the six characters
+  # "password" between angle brackets — there is no credential here, and a real
+  # one could not match this pattern because it would have to be spelled
+  # `<password>`.
+  #
+  # Both spellings are listed because the book is published as HTML: mdBook
+  # escapes the brackets, so book/*.html and the demo guide carry
+  # `admin:'&lt;password&gt;'` while book/src/*.md carries the raw form. Four
+  # findings, one string, two encodings.
+  #
+  # Found by the Monday scheduled sweep rather than a push: a PR scans its diff,
+  # so a line committed on 2026-08-19 was not re-examined until the next
+  # full-history scan twelve days later.
+  '''admin:'(<|&lt;)password(>|&gt;)\'''',
 ]
