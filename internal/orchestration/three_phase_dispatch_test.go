@@ -15,7 +15,7 @@ package orchestration
 //
 // The real leaf phases (RunTrialUp / runTestingUp) go through openTF /
 // openTestingTF → a live terraform binary + a real workspace, so they are the
-// gated-live driver's surface (scripts/e2e-three-phase.sh), not a hermetic
+// gated-live driver's surface under scripts/, not a hermetic
 // unit. Here we pin the DECISION logic and the CONCURRENCY plumbing — the two
 // things that are pure and deterministic.
 

@@ -10,7 +10,7 @@ import (
 )
 
 // apikeyCmd prints the workspace's resolved IBM Cloud API key — the scripting
-// seam so external tooling (e.g. scripts/deploy-artifactory.sh) can reuse the
+// seam so external tooling can reuse the
 // SAME credential roksbnkctl uses, without re-implementing the resolver chain.
 var apikeyCmd = &cobra.Command{
 	Use:   "apikey",

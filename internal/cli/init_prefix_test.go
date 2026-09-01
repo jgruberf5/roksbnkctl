@@ -8,7 +8,8 @@
 // runInit() calls ibm.New()/Verify() (live IBM Cloud) between the resource
 // group step and the interview, with no in-process stub seam — so a full
 // cobra-driven interactive `init` cannot run hermetically without creds
-// (the same gap the Sprint 19 init_var_file_test.go positive cases
+// (the same gap the Sprint 19 init --var-file positive cases,
+// since removed with that flag in fbf3459,
 // skip-guard). The interview BODY, however, is factored into in-package
 // helpers staff exposes (runPrefixInterview, promptPrefix,
 // seedVarFileInterview, printNamePlan), which this file drives directly so
@@ -302,7 +303,7 @@ func TestPrintNamePlan_LegacyEmptyPrefix_PrintsNothing(t *testing.T) {
 // runInit verifies credentials before reaching the interview (no in-process
 // stub seam), so it skip-guards exactly like the Sprint 19 var-file positive
 // cases and goes assertive automatically when IBMCLOUD_API_KEY is present.
-// The gated-live scripts/e2e-init-prefix.sh covers this path for the
+// The gated-live e2e scripts under scripts/ cover this path for the
 // integrator's `!` cycle.
 func TestInitPrefix_CobraDefaultAccept_PersistsPrefix(t *testing.T) {
 	skipIfNoLiveIBMCreds(t)
