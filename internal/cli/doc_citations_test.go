@@ -47,7 +47,10 @@ func TestCommentsDoNotCiteFilesThatDoNotExist(t *testing.T) {
 	root := repoRootForDocTest(t)
 
 	var findings []string
-	for _, dir := range []string{"internal", "cmd", "tools"} {
+	// Every Go file in the module, not a hand-listed subset. Three root-level
+	// files sat outside the first version's list, which is how a scan quietly
+	// covers less than it claims to.
+	for _, dir := range []string{".", "internal", "cmd", "tools"} {
 		walkGoFiles(t, filepath.Join(root, dir), func(path string, lines []string) {
 			rel, _ := filepath.Rel(root, path)
 			for i, line := range lines {
