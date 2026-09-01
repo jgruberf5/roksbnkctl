@@ -159,3 +159,55 @@ func TestDoctorIgnoresATokenItCannotParse(t *testing.T) {
 		t.Error("an unparseable token was reported on; its expiry is unknown, not expired")
 	}
 }
+
+// A stale phase kubeconfig must NOT fail `doctor`.
+//
+// Nothing reads these files, so they break nothing — the warning exists to save
+// an hour of diagnosis, not to gate anything. `doctor` is run in CI and by
+// `--backend` checks; turning a harmless leftover into a non-zero exit would make
+// the command unusable on any workspace that has ever applied, and the pressure
+// would then be to delete the check rather than fix the cause.
+//
+// HasFailures counts only StatusError today. This pins that relationship from
+// the other side, so a later change to either one has to face the question.
+func TestAStalePhaseKubeconfigDoesNotFailDoctor(t *testing.T) {
+	cctx, wsDir := workspaceFixture(t, "ws7")
+	phaseKubeconfig(t, wsDir, "flo", tokenKubeconfig(jwtWithExp(t, time.Now().Add(-time.Hour))))
+
+	c, ok := staleKubeconfigCheck(cctx)
+	if !ok {
+		t.Fatal("expected a check")
+	}
+	if doctor.HasFailures([]doctor.Check{c}) {
+		t.Errorf("status %q makes doctor exit non-zero. These files break nothing; the check "+
+			"exists to shorten a diagnosis, and a gate that fails on every applied workspace "+
+			"gets deleted rather than heeded.", c.Status)
+	}
+}
+
+// The report must never carry any part of the token.
+//
+// doctor output is pasted into issues and CI logs. A credential in a diagnostic
+// is a worse outcome than the confusing 401 this check exists to explain — and it
+// is an easy regression, because the natural way to say "this token expired" is
+// to show the token.
+func TestTheReportNeverContainsTheToken(t *testing.T) {
+	cctx, wsDir := workspaceFixture(t, "ws8")
+	tok := jwtWithExp(t, time.Now().Add(-time.Hour))
+	phaseKubeconfig(t, wsDir, "flo", tokenKubeconfig(tok))
+
+	c, ok := staleKubeconfigCheck(cctx)
+	if !ok {
+		t.Fatal("expected a check")
+	}
+	whole := c.Name + " " + c.Detail
+	if strings.Contains(whole, tok) {
+		t.Error("the report contains the whole token")
+	}
+	// Substrings too: a truncated credential is still a credential.
+	for _, part := range strings.Split(tok, ".") {
+		if len(part) >= 8 && strings.Contains(whole, part) {
+			t.Errorf("the report contains a token segment (%d chars)", len(part))
+		}
+	}
+}
