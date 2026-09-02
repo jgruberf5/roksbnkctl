@@ -34,6 +34,16 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   source: adopting a mirror you did not build means proving it against upstream,
   and pinning the tag is what makes that reliable.
 
+  **Upgrading an existing mirror requires re-replication.** The BOM now names a
+  different artifact, so a mirror populated before this release does not contain
+  it and `registry verify` reports `missing at target` until `registry replicate`
+  is re-run. Verified against a real mirror: the pre-fix binary reported
+  `digest mismatch` on `bitnami/kubectl:latest` (1 of 94), the fixed binary
+  reported the new image missing, and after `registry replicate` — which skipped
+  the 93 unchanged artifacts and copied one — `verify` reported all 94 present and
+  digest-matched. The superseded `bitnami/kubectl:latest` stays in the mirror as an
+  orphan; `registry prune` removes it.
+
   The image name, host and tag are now terraform variables, and
   `TestNodeLabelerDefaultsMatchTheShippedTerraform` fails if they drift from the
   Go constants the BOM uses. Previously the only thing keeping the BOM naming the
