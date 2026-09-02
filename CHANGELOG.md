@@ -6,6 +6,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.60.0 — 2026-09-02
+
+**Workspace commands stopped authenticating with a token that died an hour ago.**
+
 ### Added
 
 - **`doctor` reports expired per-phase kubeconfigs** (#277). A workspace's
@@ -85,7 +89,7 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   hermetic test that were both deleted, as though you could still run them.
 
 
-## v1.59.1 — 2026-08-27
+## v1.60.0 — 2026-08-27
 
 **A licence stuck in registration now fails in five minutes instead of thirty.**
 

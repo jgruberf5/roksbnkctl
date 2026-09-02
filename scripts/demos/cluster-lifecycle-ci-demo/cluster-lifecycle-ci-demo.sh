@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# cluster-lifecycle-ci-demo.sh  (roksbnkctl v1.59.1)
+# cluster-lifecycle-ci-demo.sh  (roksbnkctl v1.60.0)
 #
 # The SAME lifecycle as cluster-lifecycle-cli-demo, told the way it actually ships:
 # as a CI pipeline. ZERO host install — every step is a `docker run` of the
@@ -54,7 +54,7 @@ FORGE_PASS="${FORGE_PASS:-}"                    # Forge password. Default: empty
 FORGE_INSECURE="${FORGE_INSECURE:-true}"        # Forge usually has a self-signed cert
 
 TEST_HOSTS="${TEST_HOSTS:-https://www.example.com}"   # probe targets, space-separated
-RUNNER_TAG="${RUNNER_TAG:-v1.59.1}"             # runner image tag every step runs. Default: the current
+RUNNER_TAG="${RUNNER_TAG:-v1.60.0}"             # runner image tag every step runs. Default: the current
                                                 # release. A test bumps this on release, because a stale
                                                 # pin silently exercises an old binary and passes.
 RUNNER="${RUNNER_IMAGE:-ghcr.io/jgruberf5/roksbnkctl-tools-runner:$RUNNER_TAG}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# far-replication-demo.sh  (roksbnkctl v1.59.1)
+# far-replication-demo.sh  (roksbnkctl v1.60.0)
 #
 # Replicating the F5 Artifact Repository (FAR) into a private OCI registry with
 # roksbnkctl. An air-gapped cluster cannot reach repo.f5.com, so every chart and

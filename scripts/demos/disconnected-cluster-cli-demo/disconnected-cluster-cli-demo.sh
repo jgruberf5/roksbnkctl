@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# disconnected-cluster-cli-demo.sh  (roksbnkctl v1.59.1)
+# disconnected-cluster-cli-demo.sh  (roksbnkctl v1.60.0)
 #
 # Shows the THREE things that make a disconnected F5 BIG-IP Next for Kubernetes
 # (BNK) install work, onto a cluster you ALREADY HAVE:
