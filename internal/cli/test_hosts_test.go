@@ -5,7 +5,7 @@
 // parity discipline carries forward).
 //
 // All sub-cases drive cobra in-process via the existing `runRootCmd`
-// harness (defined in `internal/cli/init_var_file_test.go`). A fresh
+// harness (defined in `internal/cli/roottest_test.go`). A fresh
 // `ROKSBNKCTL_HOME=t.TempDir()` per sub-case keeps each run hermetic
 // — the persistence path lands in the tempdir's
 // `<workspace>/config.yaml` and nothing reaches the operator's real

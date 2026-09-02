@@ -19,7 +19,7 @@
 //
 //  2. The per-command `cobra.NoArgs` audit. These run via the existing
 //     `runRootCmd` harness (the same path
-//     `internal/cli/init_var_file_test.go` uses) since `ValidateArgs`
+//     `internal/cli/roottest_test.go` defines) since `ValidateArgs`
 //     fires inside `rootCmd.Execute()` BEFORE `PersistentPreRunE` and
 //     before any RunE — no subprocess needed, no preflight
 //     involvement.
@@ -534,7 +534,8 @@ func TestArgvStrictness_NoArgs_Sweep(t *testing.T) {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 // writeArgvFixture drops content at <dir>/<name> and returns the abs
-// path. Mirrors writeTFVars() in init_var_file_test.go — kept under a
+// path. Mirrors the tfvars writer that lived in init_var_file_test.go until
+// `init --var-file` was removed (fbf3459) — kept under a
 // distinct name so the two helpers don't collide on package-level
 // imports while staying additive.
 func writeArgvFixture(t *testing.T, dir, name, content string) string {

@@ -271,7 +271,13 @@ Validates that a cluster brought up via one backend can be inspected + torn down
 
 ## Phase-handoff regression (Issue 2)
 
-`scripts/e2e-phase-handoff.sh` is a **gated live-verify** driver for
+> **Historical.** `scripts/e2e-phase-handoff.sh` was removed at v1.12.0 and
+> `internal/tf/secondphase_handoff_test.go` at `64cc8cd`. The regression they
+> covered is now guarded by `internal/orchestration/second_phase_reuse.go` and its
+> tests. The section is kept because the failure mode is worth understanding; the
+> two file references below no longer resolve.
+
+`scripts/e2e-phase-handoff.sh` was a **gated live-verify** driver for
 `issues/issue_sprint16_validator.md` Issue 2 — the regression where the
 second (bnk/testing) phase of `roksbnkctl up` re-created the cluster
 VPC / transit gateway / client VPC the cluster phase already made, and
