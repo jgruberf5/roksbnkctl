@@ -6,6 +6,24 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **`doctor` reports expired per-phase kubeconfigs** (#277). A workspace's
+  `state/kubeconfig/` directory holds the kubeconfigs Terraform writes as a side
+  effect of `config_dir`, each carrying a roughly one-hour IAM token that nothing
+  refreshes. Pointing `kubectl` at one yourself yields only
+
+  ```
+  the server has asked for the client to provide credentials
+  ```
+
+  which names no file, so the obvious next moves — re-login, check the cluster,
+  inspect `~/.kube/config` — all look fine. The new **workspace phase kubeconfigs**
+  check parses the `exp` claim from each and says which are dead. It warns rather
+  than fails, and never deletes anything. An expiry it cannot read is reported as
+  nothing at all rather than as expired: a check that guessed would call healthy
+  credentials dead, and the value of the report is that it can be believed.
+
 ### Fixed
 
 - **Workspace commands preferred an expired kubeconfig over a valid one**
@@ -46,6 +64,26 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   post-apply. `book/src/14-credentials-resolver.md` had it right all along, so the
   book contradicted itself and the wrong half was the half with the copyable
   command.
+
+### Documentation
+
+- **Comments citing files that no longer exist** (#279). Eight comments across the
+  Go sources pointed at four deleted files, two of them removed in v1.12.0 —
+  `internal/cli/init_var_file_test.go`, `scripts/deploy-artifactory.sh`,
+  `scripts/e2e-init-prefix.sh`, and `scripts/e2e-three-phase.sh`. A comment that
+  names a path is a promise the path is there to read; these had been wrong for
+  dozens of releases. `TestCommentsDoNotCiteFilesThatDoNotExist` now walks the Go
+  sources under the module root, `internal/`, `cmd/`, and `tools/` and fails on a
+  cited path that does not resolve.
+
+  Markdown is deliberately not under the guard: scanning `book/` and `docs/` gave
+  22 hits, nearly all legitimate — a tutorial citing the file it is teaching you to
+  create, and `docs/PLAN.md`, whose per-sprint paths are a historical record. A
+  gate with that hit rate teaches people to ignore it.
+
+  `docs/E2E_TEST.md` is annotated as historical: it described a live driver and a
+  hermetic test that were both deleted, as though you could still run them.
+
 
 ## v1.59.1 — 2026-08-27
 
