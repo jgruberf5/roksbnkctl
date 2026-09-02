@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c585b643.js";
+            window.path_to_searchindex_js = "searchindex-29664864.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -242,9 +242,21 @@ choco install kubernetes-helm
 <p>Required only for the <code>roksbnkctl ibmcloud &lt;args...&gt;</code> passthrough. The cluster-lifecycle path uses IBM Go SDKs internally — <code>roksbnkctl up</code> does <strong>not</strong> shell out to <code>ibmcloud</code> — so you can skip this binary if you don’t need the passthrough.</p>
 <h3 id="kubeconfig"><a class="header" href="#kubeconfig"><code>kubeconfig</code></a></h3>
 <p>Resolves the kubeconfig path via <code>$KUBECONFIG</code> first, then <code>~/.kube/config</code>. Cluster-side commands (<code>status</code>, <code>logs</code>, every <code>k &lt;verb&gt;</code>) need it.</p>
-<p><code>roksbnkctl up</code> writes the admin kubeconfig at <code>~/.kube/config</code> (mode 0600) on a fresh apply. If you already have a multi-cluster <code>~/.kube/config</code>, point <code>$KUBECONFIG</code> at the workspace’s state directory instead:</p>
-<pre><code class="language-bash">export KUBECONFIG=~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig
+<p><code>roksbnkctl up</code> writes the admin kubeconfig at <code>~/.kube/config</code> (mode 0600) on a fresh apply.</p>
+<p>If you already have a multi-cluster <code>~/.kube/config</code>, <strong>do not</strong> point <code>$KUBECONFIG</code> at
+<code>~/.roksbnkctl/&lt;workspace&gt;/state/kubeconfig</code>. That is a <em>directory</em> of per-phase
+kubeconfigs Terraform writes as a side effect of <code>config_dir</code>, each carrying a
+roughly one-hour IAM token that nothing refreshes. An hour after an apply they
+authenticate as nobody, and the only symptom is:</p>
+<pre><code>error: You must be logged in to the server (the server has asked for the client to provide credentials)
 </code></pre>
+<p>Use the workspace-scoped verbs instead — they select the kubeconfig that addresses
+<em>this</em> workspace’s cluster, and skip any whose credential has expired:</p>
+<pre><code class="language-bash">roksbnkctl -w &lt;workspace&gt; k get pods -A
+roksbnkctl -w &lt;workspace&gt; kubectl get nodes
+</code></pre>
+<p>To refresh the admin kubeconfig at <code>~/.kube/config</code>, run <code>roksbnkctl kubeconfig --download</code>.
+<code>roksbnkctl doctor</code> reports expired phase kubeconfigs under <strong>workspace phase kubeconfigs</strong>.</p>
 <p>Failure mode: <code>$KUBECONFIG and ~/.kube/config both missing</code>. Fix: run <code>roksbnkctl kubeconfig --download</code> to fetch the admin kubeconfig from IBM Cloud.</p>
 <h3 id="workspace"><a class="header" href="#workspace"><code>workspace</code></a></h3>
 <p>Reports the resolved workspace name and whether its <code>config.yaml</code> exists.</p>

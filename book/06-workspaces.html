@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-c585b643.js";
+            window.path_to_searchindex_js = "searchindex-29664864.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -398,11 +398,13 @@ roksbnkctl ws delete e2e-cleanup --force
 </code></pre>
 <p>With no workspaces left, the pointer is empty and the next bare command reports <code>no workspace selected</code> (no phantom <code>default</code>); <code>roksbnkctl init</code> starts fresh.</p>
 <h2 id="using-a-workspaces-environment-in-your-shell"><a class="header" href="#using-a-workspaces-environment-in-your-shell">Using a workspace’s environment in your shell</a></h2>
-<p><code>roksbnkctl shell</code> drops you into a subshell with <code>KUBECONFIG</code>, <code>IBMCLOUD_API_KEY</code>, <code>IC_API_KEY</code>, and <code>IBMCLOUD_REGION</code> pre-loaded from the current workspace:</p>
+<p><code>roksbnkctl shell</code> drops you into a subshell with <code>KUBECONFIG</code>, <code>IBMCLOUD_API_KEY</code>, <code>IC_API_KEY</code>, and <code>IBMCLOUD_REGION</code> pre-loaded from the current workspace. <code>KUBECONFIG</code> resolves the way kubectl
+resolves it — the first existing entry in an inherited <code>$KUBECONFIG</code>, else
+<code>~/.kube/config</code> — not the workspace state directory:</p>
 <pre><code class="language-bash">roksbnkctl shell
 # (now in a subshell)
 echo $KUBECONFIG
-# /home/you/.roksbnkctl/default/state/kubeconfig
+# /home/you/.kube/config
 exit
 # (back to the parent shell)
 </code></pre>
