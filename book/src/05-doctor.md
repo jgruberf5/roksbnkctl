@@ -99,11 +99,28 @@ Required only for the `roksbnkctl ibmcloud <args...>` passthrough. The cluster-l
 
 Resolves the kubeconfig path via `$KUBECONFIG` first, then `~/.kube/config`. Cluster-side commands (`status`, `logs`, every `k <verb>`) need it.
 
-`roksbnkctl up` writes the admin kubeconfig at `~/.kube/config` (mode 0600) on a fresh apply. If you already have a multi-cluster `~/.kube/config`, point `$KUBECONFIG` at the workspace's state directory instead:
+`roksbnkctl up` writes the admin kubeconfig at `~/.kube/config` (mode 0600) on a fresh apply.
+
+If you already have a multi-cluster `~/.kube/config`, **do not** point `$KUBECONFIG` at
+`~/.roksbnkctl/<workspace>/state/kubeconfig`. That is a *directory* of per-phase
+kubeconfigs Terraform writes as a side effect of `config_dir`, each carrying a
+roughly one-hour IAM token that nothing refreshes. An hour after an apply they
+authenticate as nobody, and the only symptom is:
+
+```
+error: You must be logged in to the server (the server has asked for the client to provide credentials)
+```
+
+Use the workspace-scoped verbs instead — they select the kubeconfig that addresses
+*this* workspace's cluster, and skip any whose credential has expired:
 
 ```bash
-export KUBECONFIG=~/.roksbnkctl/<workspace>/state/kubeconfig
+roksbnkctl -w <workspace> k get pods -A
+roksbnkctl -w <workspace> kubectl get nodes
 ```
+
+To refresh the admin kubeconfig at `~/.kube/config`, run `roksbnkctl kubeconfig --download`.
+`roksbnkctl doctor` reports expired phase kubeconfigs under **workspace phase kubeconfigs**.
 
 Failure mode: `$KUBECONFIG and ~/.kube/config both missing`. Fix: run `roksbnkctl kubeconfig --download` to fetch the admin kubeconfig from IBM Cloud.
 

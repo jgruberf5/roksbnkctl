@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
 	"github.com/jgruberf5/roksbnkctl/internal/k8s"
@@ -54,6 +55,10 @@ func workspaceKubeTarget() (kubeTarget, error) {
 	}
 	id := co.ClusterID
 
+	// Two passes in one loop: take the first candidate that both addresses the
+	// cluster AND still holds a live credential; remember the first that merely
+	// addresses it, in case none is live.
+	var stale kubeTarget
 	for _, cand := range kubeconfigCandidates(ws) {
 		data, rerr := os.ReadFile(cand)
 		if rerr != nil {
@@ -63,9 +68,26 @@ func workspaceKubeTarget() (kubeTarget, error) {
 		// merely mention it: IBM's kubeconfigs carry a decoy context that names
 		// the cluster id but has no user, which would authenticate as
 		// system:anonymous and get every request forbidden.
-		if kctx := k8s.ContextForCluster(data, id); kctx != "" {
-			return kubeTarget{Path: cand, Context: kctx}, nil
+		kctx := k8s.ContextForCluster(data, id)
+		if kctx == "" {
+			continue
 		}
+		tgt := kubeTarget{Path: cand, Context: kctx}
+		if credentialLive(data) {
+			return tgt, nil
+		}
+		if stale.Path == "" {
+			stale = tgt
+		}
+	}
+
+	// Everything that addresses the cluster is expired. Return the same target
+	// this function has always returned rather than inventing a new failure:
+	// the command still fails, but it fails the way it did before, and `doctor`
+	// names the file (#277). Refusing here would turn a bad credential into
+	// "no kubeconfig addresses workspace", which is a worse lie.
+	if stale.Path != "" {
+		return stale, nil
 	}
 
 	return kubeTarget{}, fmt.Errorf(
@@ -108,4 +130,29 @@ func kubeconfigCandidates(ws string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// credentialSelectionSkew keeps workspaceKubeTarget from choosing a credential
+// that is technically alive but will die mid-command. A minute is well under
+// the ~1h token life, so it never rejects a freshly minted one.
+const credentialSelectionSkew = time.Minute
+
+// credentialLive reports whether a kubeconfig's credential is good for at least
+// credentialSelectionSkew longer. It exists because ContextForCluster answers
+// "can this file address the cluster", which an expired file still can: the
+// per-phase kubeconfigs terraform writes carry ~1h IAM tokens that nothing
+// rewrites, and preferring one an hour later is issue #281.
+//
+// An unreadable expiry means USABLE, not expired. MinExpiry errors when a
+// kubeconfig carries neither a token nor a client cert -- an exec-plugin or
+// OIDC config, whose credential is minted at call time and cannot be judged
+// from the file. Those are perfectly good; treating "cannot tell" as dead would
+// reject them and break auth methods that work today. The check may only ever
+// demote a credential it can PROVE is expired.
+func credentialLive(data []byte) bool {
+	exp, err := k8s.MinExpiry(data)
+	if err != nil {
+		return true
+	}
+	return time.Until(exp) > credentialSelectionSkew
 }

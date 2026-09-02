@@ -125,6 +125,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	// probe library is built into the binary, but useful for
 	// surfacing "DNS resolution latency" alongside the other doctor
 	// metrics.
+	// Reported before the DNS probe because it explains a failure mode that
+	// otherwise sends people looking at the cluster, the login and their
+	// kubeconfig in turn -- all of which will look fine (#277).
+	if c, ok := staleKubeconfigCheck(cctx); ok {
+		results = append(results, c)
+	}
 	if c, ok := runDNSProbeCheck(cmdContext(cmd), cctx); ok {
 		results = append(results, c)
 	}
