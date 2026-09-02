@@ -197,11 +197,17 @@ func BuildRESTConfigForContext(kubeconfigPath, kubeContext string) (*rest.Config
 }
 
 // BuildClientset returns a typed client for core + apps + batch + etc.
-// kubeconfigPath: empty string → workspace default at
-// ~/.roksbnkctl/<ws>/state/kubeconfig (or whatever DefaultKubeconfigPath
-// resolves);
+// kubeconfigPath: empty string → whatever DefaultKubeconfigPath resolves, which
+// is $KUBECONFIG's first existing entry, then ~/.kube/config;
 // "in-cluster" sentinel → use rest.InClusterConfig() (used by the K8s
 // execution backend in Phase 3, PRD 03).
+//
+// It is NOT ~/.roksbnkctl/<ws>/state/kubeconfig. That directory holds the
+// kubeconfigs the IBM terraform provider writes as a side effect of config_dir,
+// which nothing reads: the providers take host/token from the data source's
+// attributes, and those are re-read on every plan. This comment used to name that
+// path as the default, which is precisely the wrong place to send someone
+// debugging a credential problem (#277).
 //
 // Returns the kubernetes.Interface so callers using fake clientsets in
 // tests can substitute drop-in.

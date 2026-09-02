@@ -92,7 +92,7 @@ func runTestMatrixCmd(cmd *cobra.Command, _ []string) error {
 
 	// Dry-run: print the resolved plan (and the fixtures we would apply)
 	// without a single cluster call. Mirrors the --dry-run discipline of
-	// scripts/e2e-three-phase.sh.
+	// the gated-live e2e scripts under scripts/.
 	if flagMatrixDryRun {
 		fmt.Fprintln(os.Stderr, "→ matrix file:", path)
 		fmt.Fprint(os.Stdout, test.PlanString(cells))

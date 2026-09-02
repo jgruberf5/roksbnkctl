@@ -6,6 +6,85 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Added
+
+- **`doctor` reports expired per-phase kubeconfigs** (#277). A workspace's
+  `state/kubeconfig/` directory holds the kubeconfigs Terraform writes as a side
+  effect of `config_dir`, each carrying a roughly one-hour IAM token that nothing
+  refreshes. Pointing `kubectl` at one yourself yields only
+
+  ```
+  the server has asked for the client to provide credentials
+  ```
+
+  which names no file, so the obvious next moves — re-login, check the cluster,
+  inspect `~/.kube/config` — all look fine. The new **workspace phase kubeconfigs**
+  check parses the `exp` claim from each and says which are dead. It warns rather
+  than fails, and never deletes anything. An expiry it cannot read is reported as
+  nothing at all rather than as expired: a check that guessed would call healthy
+  credentials dead, and the value of the report is that it can be believed.
+
+### Fixed
+
+- **Workspace commands preferred an expired kubeconfig over a valid one**
+  (#281, regression in v1.18.0). `workspaceKubeTarget` ranks the per-phase
+  kubeconfigs Terraform writes under `state/kubeconfig/` above the forge config
+  and `~/.kube/config`, and accepted the first that could *address* the cluster.
+  Addressing is not authenticating: those files carry roughly one-hour IAM tokens
+  that nothing rewrites, so an hour after an apply all nine workspace-scoped call
+  sites — `k get/logs/exec/apply/delete/describe/port-forward` and the
+  `kubectl`/`oc` passthroughs — authenticated with a dead token against a healthy
+  cluster. The symptom named nothing:
+
+  ```
+  couldn't get current server API group list: the server has asked for the client to provide credentials
+  ```
+
+  The self-healing gate that exists for this, `EnsureFreshKubeconfig`, guards the
+  *forge* kubeconfig — sixth in a list of seven, so an expired file at position one
+  always won first. Resolution now skips a candidate whose credential is expired,
+  or expires within a minute, using the existing `k8s.MinExpiry` (tokens and client
+  certs both). A kubeconfig whose expiry cannot be read — exec-plugin and OIDC
+  configs, minted at call time — counts as usable: the check may only demote a
+  credential it can *prove* is dead. When every candidate is expired the resolver
+  returns the one it always did, so a genuinely dead workspace fails the way it
+  used to instead of reporting a targeting problem that does not exist.
+
+  Broke in v1.18.0 (`6d81b02`), which introduced workspace-scoped resolution to fix
+  #55. Scoping was right; sourcing it from the phase kubeconfigs was not. Before
+  that, `k get` used ambient resolution — `~/.kube/config`, whose admin certs last
+  about thirty days.
+
+- **The book told you to do the thing that breaks** (#281). `state/kubeconfig` is
+  a *directory* of per-phase configs, but `book/src/05-doctor.md` handed out
+  `export KUBECONFIG=~/.roksbnkctl/<workspace>/state/kubeconfig` as the fix for a
+  multi-cluster `~/.kube/config`; `book/src/06-workspaces.md` showed `roksbnkctl
+  shell` exporting it (it exports `k8s.DefaultKubeconfigPath()` — `$KUBECONFIG`,
+  then `~/.kube/config`); and `MIGRATING.md` called it a file auto-fetched
+  post-apply. `book/src/14-credentials-resolver.md` had it right all along, so the
+  book contradicted itself and the wrong half was the half with the copyable
+  command.
+
+### Documentation
+
+- **Comments citing files that no longer exist** (#279). Eight comments across the
+  Go sources pointed at four deleted files, two of them removed in v1.12.0 —
+  `internal/cli/init_var_file_test.go`, `scripts/deploy-artifactory.sh`,
+  `scripts/e2e-init-prefix.sh`, and `scripts/e2e-three-phase.sh`. A comment that
+  names a path is a promise the path is there to read; these had been wrong for
+  dozens of releases. `TestCommentsDoNotCiteFilesThatDoNotExist` now walks the Go
+  sources under the module root, `internal/`, `cmd/`, and `tools/` and fails on a
+  cited path that does not resolve.
+
+  Markdown is deliberately not under the guard: scanning `book/` and `docs/` gave
+  22 hits, nearly all legitimate — a tutorial citing the file it is teaching you to
+  create, and `docs/PLAN.md`, whose per-sprint paths are a historical record. A
+  gate with that hit rate teaches people to ignore it.
+
+  `docs/E2E_TEST.md` is annotated as historical: it described a live driver and a
+  hermetic test that were both deleted, as though you could still run them.
+
+
 ## v1.59.1 — 2026-08-27
 
 **A licence stuck in registration now fails in five minutes instead of thirty.**
