@@ -311,6 +311,17 @@ var certManagerImages = []string{
 // the Jetstack cert-manager chart + its quay.io images at certManagerVersion, and
 // the bitnami/kubectl node-labeler image at nodeLabelerImageTag. Versions are the
 // roksbnkctl-rendered defaults (cert_manager_version + the node-labeler tag).
+// nodeLabelerImageHost / nodeLabelerImageName address the node-labeler helper
+// image. It was docker.io + "bitnami/kubectl" until #270: Bitnami stopped
+// publishing versioned tags to docker.io/bitnami, leaving only a floating
+// `latest`, so the artifact could not be pinned where it stood.
+// registry.k8s.io/kubectl is the upstream Kubernetes build -- version-tagged and
+// maintained -- and replaces docker.io in the replication source set.
+const (
+	nodeLabelerImageHost = "registry.k8s.io"
+	nodeLabelerImageName = "kubectl"
+)
+
 func Deps(certManagerVersion, nodeLabelerImageTag string) []Artifact {
 	out := []Artifact{{
 		Kind:       KindChart,
@@ -333,8 +344,8 @@ func Deps(certManagerVersion, nodeLabelerImageTag string) []Artifact {
 	}
 	out = append(out, Artifact{
 		Kind:       KindImage,
-		SourceHost: "docker.io",
-		Name:       "bitnami/kubectl",
+		SourceHost: nodeLabelerImageHost,
+		Name:       nodeLabelerImageName,
 		Tag:        nodeLabelerImageTag,
 		Origin:     OriginNodeLabeler,
 	})

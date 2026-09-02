@@ -3,6 +3,7 @@ package bnkbom
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -77,8 +78,11 @@ func TestBuild_IncludeDeps(t *testing.T) {
 		t.Errorf("no-deps Counts() = (%d, %d), want (4, 2)", c, i)
 	}
 
-	// With deps: + cert-manager chart (1) and its 5 quay.io images + bitnami/kubectl.
-	full, err := Build(data, Options{IncludeDeps: true, CertManagerVersion: "v1.17.3", NodeLabelerImageTag: "1.31"})
+	// With deps: + cert-manager chart (1) and its 5 quay.io images + the
+	// node-labeler kubectl. The tag is passed in, so this fixture stays valid
+	// across version bumps; the SOURCE is asserted below because #270 turned on
+	// which registry it comes from.
+	full, err := Build(data, Options{IncludeDeps: true, CertManagerVersion: "v1.17.3", NodeLabelerImageTag: "v1.36.0"})
 	if err != nil {
 		t.Fatalf("Build(deps): %v", err)
 	}
@@ -94,14 +98,25 @@ func TestBuild_IncludeDeps(t *testing.T) {
 		"charts.jetstack.io/charts/cert-manager:v1.17.3",
 		"quay.io/jetstack/cert-manager-controller:v1.17.3",
 		"quay.io/jetstack/cert-manager-webhook:v1.17.3",
-		"docker.io/bitnami/kubectl:1.31",
+		"registry.k8s.io/kubectl:v1.36.0",
 	} {
 		if _, ok := byRef[ref]; !ok {
 			t.Errorf("expected dep artifact %q in BOM", ref)
 		}
 	}
-	if a := byRef["docker.io/bitnami/kubectl:1.31"]; a.Origin != OriginNodeLabeler {
-		t.Errorf("bitnami/kubectl Origin = %q, want %q", a.Origin, OriginNodeLabeler)
+	if a := byRef["registry.k8s.io/kubectl:v1.36.0"]; a.Origin != OriginNodeLabeler {
+		t.Errorf("node-labeler Origin = %q, want %q", a.Origin, OriginNodeLabeler)
+	}
+
+	// The node-labeler must NOT come from docker.io/bitnami any more (#270).
+	// Bitnami stopped publishing versioned tags there, leaving only a floating
+	// `latest` -- so a BOM sourcing it from there cannot be pinned at all, and
+	// asserting the new ref alone would still pass if a second, stale artifact
+	// were left behind.
+	for ref := range byRef {
+		if strings.Contains(ref, "bitnami/kubectl") {
+			t.Errorf("BOM still carries %q; the node-labeler moved to registry.k8s.io/kubectl", ref)
+		}
 	}
 }
 

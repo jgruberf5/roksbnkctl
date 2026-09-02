@@ -6,6 +6,39 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **The node-labeler image is pinned, and `registry verify` compares against what
+  it mirrored** (#270). Two halves of the same defect.
+
+  `roksbnkctl` supplied `docker.io/bitnami/kubectl:latest` for the node-labeler
+  Job it applies alongside FLO — a floating tag. `registry verify` and
+  `adopt --verify-contents` resolve the *source* digest live and compare it to the
+  mirror, so a mirror replicated on Monday reported as `digest mismatch` on Friday
+  because Docker Hub had moved the tag. Nothing in the cluster had changed. In the
+  air-gapped case the source is unreachable by definition, so re-resolving it can
+  only fail.
+
+  The tag could not simply be pinned where it stood: Bitnami no longer publishes
+  versioned tags to `docker.io/bitnami` at all — all 618 tags on
+  `bitnami/kubectl` are `latest` plus cosign artifacts, with versions moved to the
+  frozen `bitnamilegacy` repo. The node-labeler now comes from
+  **`registry.k8s.io/kubectl:v1.36.0`**, the upstream Kubernetes build, which is
+  version-tagged *and* maintained. `registry.k8s.io` replaces `docker.io` in the
+  replication source set.
+
+  `registry verify` now checks each artifact against the digest replication
+  recorded, falling back to source comparison for anything the record does not
+  cover — so a partial inventory still verifies fully rather than silently passing
+  unchecked. `adopt --verify-contents` deliberately keeps comparing against the
+  source: adopting a mirror you did not build means proving it against upstream,
+  and pinning the tag is what makes that reliable.
+
+  The image name, host and tag are now terraform variables, and
+  `TestNodeLabelerDefaultsMatchTheShippedTerraform` fails if they drift from the
+  Go constants the BOM uses. Previously the only thing keeping the BOM naming the
+  image the install actually pulls was a comment saying it did.
+
 ## v1.60.0 — 2026-09-02
 
 **Workspace commands stopped authenticating with a token that died an hour ago.**

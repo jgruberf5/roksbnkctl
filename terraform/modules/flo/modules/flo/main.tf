@@ -67,11 +67,16 @@ locals {
   # secret is dropped (RBAC handles pulls), so the count gate collapses to 0.
   far_secret_kubectl = var.enabled && !var.use_registry_mirror ? 1 : 0
 
-  # node-labeler helper image. Off the mirror path it's the public
-  # bitnami/kubectl:latest (byte-identical default). In mirror mode it pulls
-  # from the in-cluster image host (the BOM mirrors bitnami/kubectl:latest
-  # under the mirror namespace) so the air-gapped cluster needs no public pull.
-  node_labeler_image      = var.use_registry_mirror ? "${local.far_image_hostname}/bitnami/kubectl:latest" : "bitnami/kubectl:latest"
+  # node-labeler helper image. Off the mirror path it pulls from the public
+  # upstream host; in mirror mode from the in-cluster image host (the BOM
+  # mirrors it under the mirror namespace) so the air-gapped cluster needs no
+  # public pull. Both sides take the SAME name+tag, so the mirrored copy and the
+  # direct pull are the same image.
+  #
+  # The tag is pinned (#270). It was bitnami/kubectl:latest, which meant a mirror
+  # replicated on Monday compared unequal on Friday because Docker Hub had moved
+  # the tag -- `registry verify` reporting a perfectly good mirror as mismatched.
+  node_labeler_image      = var.use_registry_mirror ? "${local.far_image_hostname}/${var.node_labeler_image_name}:${var.node_labeler_image_tag}" : "${var.node_labeler_image_host}/${var.node_labeler_image_name}:${var.node_labeler_image_tag}"
   far_service_account_b64 = local.global_enabled && var.use_cos_bucket ? data.local_file.cne_pull_64_json_file[0].content : var.far_service_account_b64
   far_auth_value          = base64encode("_json_key_base64:${local.far_service_account_b64}")
   far_docker_config_json = replace(
