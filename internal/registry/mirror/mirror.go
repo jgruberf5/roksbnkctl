@@ -454,6 +454,62 @@ func (e *Engine) VerifyAll(ctx context.Context, bom *bnkbom.BOM) []Result {
 	return results
 }
 
+// RecordedKey identifies an artifact in a recorded mirror inventory. It matches
+// the fields config.MirrorArtifact stores, so a caller can key its record by
+// this and hand the map straight to VerifyAllRecorded.
+func RecordedKey(a bnkbom.Artifact) string {
+	return string(a.Kind) + "/" + a.Name + ":" + a.Tag
+}
+
+// VerifyAllRecorded is VerifyAll, except that an artifact present in `recorded`
+// is checked against the digest replication actually wrote rather than against a
+// freshly-resolved SOURCE digest.
+//
+// Why this exists (#270). VerifyAll answers "does the mirror match upstream RIGHT
+// NOW", which is the correct question for `adopt --verify-contents` -- adopting a
+// mirror you did not build means proving it against the source. It is the wrong
+// question for `verify` on a mirror this workspace replicated: upstream is
+// allowed to move, and when it does, a mirror that is byte-for-byte what was
+// replicated reports as "digest mismatch". The air-gapped case makes the flaw
+// plain -- the source is unreachable by definition, so re-resolving it can only
+// fail.
+//
+// An artifact with no recorded digest falls back to source comparison, so a
+// partial record (an older inventory, a hand-adopted mirror) still verifies
+// exactly as it did before rather than silently passing unchecked.
+func (e *Engine) VerifyAllRecorded(ctx context.Context, bom *bnkbom.BOM, recorded map[string]string) []Result {
+	if len(recorded) == 0 {
+		return e.VerifyAll(ctx, bom)
+	}
+	results := make([]Result, 0, len(bom.Artifacts))
+	for _, a := range bom.Artifacts {
+		want, ok := recorded[RecordedKey(a)]
+		if !ok || want == "" {
+			// No record for this one — fall back to the source-comparing path,
+			// one artifact at a time so the rest still use their records.
+			single := &bnkbom.BOM{ManifestVersion: bom.ManifestVersion, Artifacts: []bnkbom.Artifact{a}}
+			results = append(results, e.VerifyAll(ctx, single)...)
+			continue
+		}
+		opts := e.craneOpts(ctx)
+		if a.Kind == bnkbom.KindImage {
+			opts = append(opts, crane.WithPlatform(&v1.Platform{OS: "linux", Architecture: "amd64"}))
+		}
+		dstDigest, err := crane.Digest(sanitizeRef(e.Target.PushRef(a)), opts...)
+		if err != nil {
+			results = append(results, Result{Artifact: a, Err: fmt.Errorf("missing at target: %w", err)})
+			continue
+		}
+		if dstDigest != want {
+			results = append(results, Result{Artifact: a, Digest: dstDigest,
+				Err: fmt.Errorf("digest mismatch: recorded %s, target %s", want, dstDigest)})
+			continue
+		}
+		results = append(results, Result{Artifact: a, Digest: dstDigest})
+	}
+	return results
+}
+
 // Delete removes the given artifacts from the target registry — by digest when
 // the artifact carries one (the reliable form for a registry manifest DELETE),
 // else by the push tag. It returns one Result per artifact (in order); a

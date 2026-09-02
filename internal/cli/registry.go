@@ -247,7 +247,10 @@ func resolveBOMInputs(ws *config.Workspace) registryBOMInputs {
 // (terraform cert_manager_version default; the bitnami/kubectl node-labeler tag.)
 const (
 	defaultCertManagerVersion = "v1.17.3"
-	defaultNodeLabelerTag     = "latest"
+	// Pinned, never floating (#270). A moving tag makes `registry verify` report
+	// a good mirror as digest-mismatched the moment upstream re-pushes.
+	// TestNodeLabelerDefaultsMatchTheShippedTerraform pins this to the terraform.
+	defaultNodeLabelerTag = "v1.36.0"
 )
 
 // FAR-auth COS coordinates — the orchestration COS instance/bucket/region that

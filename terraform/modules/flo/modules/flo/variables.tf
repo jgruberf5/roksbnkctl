@@ -10,6 +10,40 @@ variable "enabled" {
   default     = false
 }
 
+# The node-labeler helper image, split into host/name/tag so the mirror path can
+# reuse the name alone. docker.io/bitnami/kubectl:latest was the default until
+# #270: Bitnami stopped publishing versioned tags to docker.io/bitnami entirely
+# (all 618 tags there are `latest` plus cosign artifacts; versions moved to the
+# frozen `bitnamilegacy` repo), so the tag could not be pinned where it stood.
+# registry.k8s.io/kubectl is the upstream Kubernetes build: version-tagged AND
+# still maintained.
+#
+# Keep these in lockstep with defaultNodeLabeler* in internal/cli/registry.go --
+# the BOM must name the image the install actually pulls, and
+# TestNodeLabelerDefaultsMatchTheShippedTerraform fails when they drift.
+variable "node_labeler_image_host" {
+  description = "Registry host for the node-labeler helper image."
+  type        = string
+  default     = "registry.k8s.io"
+}
+
+variable "node_labeler_image_name" {
+  description = "Repository path of the node-labeler helper image within its host."
+  type        = string
+  default     = "kubectl"
+}
+
+variable "node_labeler_image_tag" {
+  description = "Immutable tag for the node-labeler helper image. Must be a pinned version, never a floating tag: `registry verify` compares mirrored digests, and a tag that moves upstream makes a good mirror report as mismatched (#270)."
+  type        = string
+  default     = "v1.36.0"
+
+  validation {
+    condition     = var.node_labeler_image_tag != "latest"
+    error_message = "node_labeler_image_tag must be a pinned version, not `latest` — a floating tag breaks `registry verify` against a mirror (#270)."
+  }
+}
+
 variable "node_labeler_job_ttl_seconds" {
   description = "ttlSecondsAfterFinished for the node-labeler Job. The Job has a stable name so re-applies don't collide; the TTL garbage-collects the completed Job after this many seconds."
   type        = number
