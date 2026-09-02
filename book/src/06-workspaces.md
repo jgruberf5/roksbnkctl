@@ -297,13 +297,15 @@ With no workspaces left, the pointer is empty and the next bare command reports 
 
 ## Using a workspace's environment in your shell
 
-`roksbnkctl shell` drops you into a subshell with `KUBECONFIG`, `IBMCLOUD_API_KEY`, `IC_API_KEY`, and `IBMCLOUD_REGION` pre-loaded from the current workspace:
+`roksbnkctl shell` drops you into a subshell with `KUBECONFIG`, `IBMCLOUD_API_KEY`, `IC_API_KEY`, and `IBMCLOUD_REGION` pre-loaded from the current workspace. `KUBECONFIG` resolves the way kubectl
+resolves it — the first existing entry in an inherited `$KUBECONFIG`, else
+`~/.kube/config` — not the workspace state directory:
 
 ```bash
 roksbnkctl shell
 # (now in a subshell)
 echo $KUBECONFIG
-# /home/you/.roksbnkctl/default/state/kubeconfig
+# /home/you/.kube/config
 exit
 # (back to the parent shell)
 ```

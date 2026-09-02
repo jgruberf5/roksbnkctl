@@ -21,7 +21,7 @@ The pre-roksbnkctl tooling was a bash-script driver plus a `bnk`-runner docker i
 | `bnk init` / hand-edited `terraform.tfvars` | `roksbnkctl init` (interactive wizard writes `~/.roksbnkctl/<workspace>/config.yaml` and a derived `terraform.tfvars`) |
 | `ibmcloud login --apikey @key.json` | API key resolved by the cred chain (env → OS keychain → workspace config → prompt); see Chapter 14 |
 | `cd terraform && terraform init && terraform plan && terraform apply` | `roksbnkctl up` (runs init + plan + apply; idempotent and resumable) |
-| `./scripts/fetch-kubeconfig.sh && export KUBECONFIG=…` | Auto-fetched post-apply; landed at `~/.roksbnkctl/<workspace>/state/kubeconfig` and pointed to via `KUBECONFIG` in `roksbnkctl shell` |
+| `./scripts/fetch-kubeconfig.sh && export KUBECONFIG=…` | Auto-fetched post-apply to `~/.kube/config`, which is what `roksbnkctl shell` exports. Re-fetch with `roksbnkctl kubeconfig --download` |
 | `docker run bnk-runner …` for `ibmcloud` / `kubectl` / `oc` calls | Built-in passthrough verbs (`roksbnkctl ibmcloud …`, `roksbnkctl k …`) with `--backend local|docker|k8s|ssh:<target>` execution selection |
 | Manual `iperf3` install on jumphost + manual port-forward | `roksbnkctl test throughput` (bundled image, k8s Job by default; no host install required) |
 | Manual `dig` + comparing answers across vantages | `roksbnkctl test dns --gslb-compare` (multi-vantage probe; emits `gslb_divergence` boolean) |
@@ -125,7 +125,7 @@ Every roksbnkctl invocation runs against exactly one workspace, identified by `-
 
 - `config.yaml` — schema is forward-compatible within a major version. Pre-v0.9 → v0.9+ is a re-init.
 - `state/terraform.tfstate` — terraform's own state, untouched by roksbnkctl upgrades.
-- `state/kubeconfig` — yours; roksbnkctl writes it once on first cluster apply and never rewrites unless `--no-kubeconfig` is unset on a subsequent `up`.
+- `state/kubeconfig` — a *directory* of per-phase kubeconfigs Terraform writes as a side effect of `config_dir`. Nothing reads them: the providers take `host`/`token` from the data source, re-read every plan. Their tokens expire in about an hour; they are safe to ignore and safe to delete. Your admin kubeconfig is `~/.kube/config`.
 - OS keychain entries (`service="roksbnkctl"`, `user="<workspace>/ibmcloud_api_key"`) — persistent across binary upgrades.
 
 ### What to back up before a major upgrade (pre-v1.0)

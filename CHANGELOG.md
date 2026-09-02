@@ -6,6 +6,47 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **Workspace commands preferred an expired kubeconfig over a valid one**
+  (#281, regression in v1.18.0). `workspaceKubeTarget` ranks the per-phase
+  kubeconfigs Terraform writes under `state/kubeconfig/` above the forge config
+  and `~/.kube/config`, and accepted the first that could *address* the cluster.
+  Addressing is not authenticating: those files carry roughly one-hour IAM tokens
+  that nothing rewrites, so an hour after an apply all nine workspace-scoped call
+  sites — `k get/logs/exec/apply/delete/describe/port-forward` and the
+  `kubectl`/`oc` passthroughs — authenticated with a dead token against a healthy
+  cluster. The symptom named nothing:
+
+  ```
+  couldn't get current server API group list: the server has asked for the client to provide credentials
+  ```
+
+  The self-healing gate that exists for this, `EnsureFreshKubeconfig`, guards the
+  *forge* kubeconfig — sixth in a list of seven, so an expired file at position one
+  always won first. Resolution now skips a candidate whose credential is expired,
+  or expires within a minute, using the existing `k8s.MinExpiry` (tokens and client
+  certs both). A kubeconfig whose expiry cannot be read — exec-plugin and OIDC
+  configs, minted at call time — counts as usable: the check may only demote a
+  credential it can *prove* is dead. When every candidate is expired the resolver
+  returns the one it always did, so a genuinely dead workspace fails the way it
+  used to instead of reporting a targeting problem that does not exist.
+
+  Broke in v1.18.0 (`6d81b02`), which introduced workspace-scoped resolution to fix
+  #55. Scoping was right; sourcing it from the phase kubeconfigs was not. Before
+  that, `k get` used ambient resolution — `~/.kube/config`, whose admin certs last
+  about thirty days.
+
+- **The book told you to do the thing that breaks** (#281). `state/kubeconfig` is
+  a *directory* of per-phase configs, but `book/src/05-doctor.md` handed out
+  `export KUBECONFIG=~/.roksbnkctl/<workspace>/state/kubeconfig` as the fix for a
+  multi-cluster `~/.kube/config`; `book/src/06-workspaces.md` showed `roksbnkctl
+  shell` exporting it (it exports `k8s.DefaultKubeconfigPath()` — `$KUBECONFIG`,
+  then `~/.kube/config`); and `MIGRATING.md` called it a file auto-fetched
+  post-apply. `book/src/14-credentials-resolver.md` had it right all along, so the
+  book contradicted itself and the wrong half was the half with the copyable
+  command.
+
 ## v1.59.1 — 2026-08-27
 
 **A licence stuck in registration now fails in five minutes instead of thirty.**

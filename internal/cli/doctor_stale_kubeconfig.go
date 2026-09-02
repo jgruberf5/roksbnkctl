@@ -85,9 +85,11 @@ func staleKubeconfigCheck(cctx *config.Context) (doctor.Check, bool) {
 	c.Detail = fmt.Sprintf(
 		"%d of %d carry an EXPIRED token (e.g. %s).\n"+
 			"      Nothing reads these — terraform writes them as a side effect and takes its\n"+
-			"      credential from the data source, which it re-reads every plan. They are safe\n"+
-			"      to ignore and safe to delete, but pointing kubectl at one gives only\n"+
-			"      \"Unauthorized\" with no clue why. Use ~/.kube/config, or:\n"+
+			"      credential from the data source, which it re-reads every plan. roksbnkctl's\n"+
+			"      own verbs skip an expired one when choosing a kubeconfig (#281), so this is\n"+
+			"      informational: they are safe to ignore and safe to delete. Pointing kubectl\n"+
+			"      at one YOURSELF still gives only \"Unauthorized\" with no clue why. Use\n"+
+			"      ~/.kube/config, or refresh it with:\n"+
 			"          roksbnkctl kubeconfig --download",
 		stale, stale+fresh, shortenHome(first))
 	return c, true
