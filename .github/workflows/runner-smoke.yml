@@ -54,7 +54,7 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
           trivy image --format sarif --output trivy-runner.sarif --exit-code 0 --ignore-unfixed roksbnkctl-runner:smoke
       - name: Upload image SARIF
-        uses: github/codeql-action/upload-sarif@v4.37.8
+        uses: github/codeql-action/upload-sarif@v4.37.9
         if: always()
         with:
           sarif_file: trivy-runner.sarif
