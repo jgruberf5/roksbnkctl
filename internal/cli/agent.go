@@ -354,7 +354,7 @@ func launchAgent(cmd *cobra.Command, name, dir, endpoint string) error {
 	argv, env, err := agentArgv(name, dir, endpoint)
 	if errors.Is(err, errNotRunnable) {
 		return fmt.Errorf("`%s` prints guidance rather than a single command, so there is "+
-			"nothing to run.\nUse `roksbnkctl agent %s --show` and follow it.", name, name)
+			"nothing to run.\nSee it with: roksbnkctl agent %s --show", name, name)
 	}
 	if err != nil {
 		return err
