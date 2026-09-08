@@ -6,6 +6,21 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Security
+
+- **`golang.org/x/crypto` to v0.56.0 — two reachable SSH denial-of-service
+  advisories** (GO-2026-6354, GO-2026-6355). Both are in `golang.org/x/crypto/ssh`
+  and both are *reachable* rather than merely present: `govulncheck` traces them to
+  `internal/remote/ssh.go:134`, `remote.Connect` calling `ssh.NewClientConn`, which
+  is the path every `--backend ssh:<target>` command takes. A malicious or faulty
+  peer can deadlock a channel and hang the client.
+
+  The bump is `go.mod` and `go.sum` only, no source change, and it clears both:
+  `govulncheck` reports neither afterwards, and `internal/remote`'s own tests pass.
+
+  This was failing CI on `main` and on every open PR — it is not attributable to
+  any of them, and neither Dependabot PR open at the time bumped `x/crypto`.
+
 ## v1.60.0 — 2026-09-02
 
 **Workspace commands stopped authenticating with a token that died an hour ago.**
