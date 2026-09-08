@@ -10,6 +10,22 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 **Two reachable SSH advisories closed, and mirrors stop failing verification because upstream moved a tag.**
 
+### Added
+
+- **`roksbnkctl agent agy`** — Google's `agy` CLI joins the supported agentic
+  front-ends, alongside `claude`, `gemini`, `aider`, `openai`, `pi` and
+  `opencode`.
+
+  Its recipe seeds the persona with `agy -i "..."`, which runs an initial prompt
+  and then continues interactively. That differs from the `pi` and `opencode`
+  recipes, which rely on those tools auto-loading `AGENTS.md` from the working
+  directory. `agy` does not advertise that behaviour — nothing in the shipped
+  binary references `AGENTS.md` — so assuming it would have produced a recipe that
+  starts a session with no persona loaded and no error to say so.
+
+  Verified against `agy` 1.1.27: `-i` is *"Run an initial prompt interactively and
+  continue the session"*.
+
 ### Fixed
 
 - **The node-labeler image is pinned, and `registry verify` compares against what

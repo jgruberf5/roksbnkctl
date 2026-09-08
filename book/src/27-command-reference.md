@@ -36,7 +36,7 @@ These flags apply to every command. They are declared on the root command and in
 Drive this workspace with an agentic CLI (personas + AGENTS.md)
 
 ```
-roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]
+roksbnkctl agent [claude|gemini|aider|openai|pi|opencode|agy]
 ```
 
 Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.
