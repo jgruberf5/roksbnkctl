@@ -76,6 +76,17 @@ cd %s && \
 #   pi --append-system-prompt "$(cat personas/solution-architect.md)"
 `, dir)
 	},
+	"agy": func(dir, endpoint string) string {
+		return fmt.Sprintf(`# agy (Google)
+cd %s && \
+  agy -i "Read AGENTS.md, then act as the solution-architect persona \
+(personas/solution-architect.md). Confirm scope with me."
+# -i runs that prompt and CONTINUES interactively, so the persona is loaded
+# without relying on agy picking AGENTS.md up by itself.
+# Useful flags: --model, --effort low|medium|high, --add-dir <path>,
+# --mode plan to plan before editing.
+`, dir)
+	},
 	"opencode": func(dir, endpoint string) string {
 		return fmt.Sprintf(`# OpenCode (https://opencode.ai/)
 cd %s && \
@@ -88,7 +99,7 @@ cd %s && \
 }
 
 var agentCmd = &cobra.Command{
-	Use:   "agent [claude|gemini|aider|openai|pi|opencode]",
+	Use:   "agent [claude|gemini|aider|openai|pi|opencode|agy]",
 	Short: "Drive this workspace with an agentic CLI (personas + AGENTS.md)",
 	Long: `Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.
 
@@ -246,5 +257,5 @@ func copyEmbeddedFiles(dir string) (written, skipped []string, err error) {
 
 // agentRecipeNames returns the supported CLI names in a stable order.
 func agentRecipeNames() []string {
-	return []string{"claude", "gemini", "aider", "openai", "pi", "opencode"}
+	return []string{"claude", "gemini", "aider", "openai", "pi", "opencode", "agy"}
 }

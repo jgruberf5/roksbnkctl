@@ -67,14 +67,20 @@ doc-specialist turns the timeline into the customer-facing `report.md`.
 ## Choosing the CLI + endpoint
 
 `roksbnkctl agent <cli>` supports `claude`, `gemini`, `aider`, `openai`, `pi`,
-and `opencode`. Set the workspace default and an optional LLM endpoint in
-`config.yaml`:
+`opencode`, and `agy` (Google). Set the workspace default and an optional LLM
+endpoint in `config.yaml`:
 
 ```yaml
 agent:
   default: claude
   llm_endpoint: ""   # OpenAI-/Anthropic-compatible base URL (cloud vendor or local vLLM); blank = the CLI's own config
 ```
+
+The `agy` recipe seeds the persona with `-i`, which runs an initial prompt and
+then continues interactively. That is deliberate: `pi` and `opencode` auto-load
+`AGENTS.md` from the working directory, and their recipes rely on it, but `agy`
+does not advertise that behaviour — so its recipe passes the instruction rather
+than assuming the file is read.
 
 `roksbnkctl` only *prints* the invocation — it never starts the agent or sends
 anything to an LLM itself. You run the printed command; your CLI uses your
