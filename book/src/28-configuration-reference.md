@@ -360,7 +360,7 @@ RegistryCfg configures the Sprint 29 air-gap registry mirror (PRD 11): which tar
 | `generic_ca_b64` | `string` | 2.3 + 2.4 | — | no | GenericCAB64 is the mirror's CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network. |
 | `generic_ca_sha256` | `string` | 2.3 + 2.4 | — | no | GenericCASHA256 pins the mirror's CA by SHA-256 (hex; a "sha256:" prefix and colons are accepted). |
 | `namespace` | `string` | 2.3 + 2.4 | — | no | Namespace is the mirror project the artifacts land in. |
-| `include_deps` | `*bool` | 2.3 + 2.4 | — | no | IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the bitnami/kubectl node-labeler image) into the BOM. |
+| `include_deps` | `*bool` | 2.3 + 2.4 | — | no | IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the registry.k8s.io/kubectl node-labeler image) into the BOM. |
 | `source_service_account_b64` | `string` | 2.3 + 2.4 | — | no | SourceServiceAccountB64 is the FAR `_json_key_base64` service-account JSON, base64-encoded, used as the replication SOURCE credential for repo.f5.com. |
 
 ## `ResourceToggle`

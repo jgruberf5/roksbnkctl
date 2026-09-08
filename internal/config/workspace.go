@@ -1332,7 +1332,7 @@ type RegistryCfg struct {
 	Namespace string `yaml:"namespace,omitempty"`
 
 	// IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager
-	// chart + images, the bitnami/kubectl node-labeler image) into the BOM. A
+	// chart + images, the registry.k8s.io/kubectl node-labeler image) into the BOM. A
 	// nil pointer means the default (true — a complete air-gap install set needs
 	// them); set it explicitly to false to mirror only the F5 manifest artifacts.
 	IncludeDeps *bool `yaml:"include_deps,omitempty"`
