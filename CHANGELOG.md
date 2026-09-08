@@ -51,6 +51,22 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ### Changed
 
+- **The repository's working agreements moved to `AGENTS.md`**. `CLAUDE.md` is now
+  a one-line `@AGENTS.md` include, so agents that read either filename get the same
+  rules. `AGENTS.md` is the name the widest set of coding tools look for, and this
+  repo is worked on by more than one of them.
+
+  It also makes the repo follow the convention the tool itself ships:
+  `roksbnkctl agent init` has always scaffolded a workspace with `AGENTS.md` plus a
+  one-line `CLAUDE.md` include (`internal/embedded/files/`).
+
+  The rules are byte-identical — only a short header explaining which file to edit
+  was added. The three controls that enforce them (`.githooks/pre-push`,
+  `scripts/pr-review-audit.sh`, `scripts/branch-hygiene.sh`) now cite `AGENTS.md`,
+  and a guard fails if any of them drifts back, if `CLAUDE.md` grows content of its
+  own, or if `AGENTS.md` loses a section heading.
+
+
 - **The embedded Kubernetes client moves to v0.37.0** (#285). `roksbnkctl` does not
   shell out to `kubectl` — it links it — so `k8s.io/kubectl`, `cli-runtime`,
   `client-go`, `api`, `apimachinery` and `component-helpers` all move from v0.36.4

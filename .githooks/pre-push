@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push — refuse to push a branch that has no PR, or a PR with no review.
 #
-# WHY THIS EXISTS. CLAUDE.md has required "every PR gets a review posted as a
+# WHY THIS EXISTS. AGENTS.md has required "every PR gets a review posted as a
 # comment" for some time, and scripts/pr-review-audit.sh has existed to check it.
 # The rule was still broken three times in one session, every time the same way:
 # the work was pushed, progress was reported, and the PR was never opened.

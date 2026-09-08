@@ -6,7 +6,7 @@
 # their in-progress untracked files, and the first sign is their document failing
 # YOUR spellcheck. That happened twice in one session with
 # docs/prd/19-SUPPORT-SUBCOMMAND.md — the second time AFTER a rule against
-# `git add -A` was written into CLAUDE.md.
+# `git add -A` was written into AGENTS.md.
 #
 # A rule that has been broken twice is not a control. This is: it exits non-zero,
 # so it can gate a push.

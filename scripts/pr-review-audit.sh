@@ -2,7 +2,7 @@
 # pr-review-audit.sh — list open PRs that have no review comment, and branches
 # with no PR at all.
 #
-# WHY THIS EXISTS. CLAUDE.md requires every PR to get a complete review posted as
+# WHY THIS EXISTS. AGENTS.md requires every PR to get a complete review posted as
 # a comment. In the session that wrote that rule, two PRs were opened without one
 # and a third branch never got a PR — because "remember to review it" is not a
 # mechanism. This is the mechanism: it is checkable, so it can be run before
