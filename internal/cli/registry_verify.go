@@ -9,7 +9,27 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
+	"github.com/jgruberf5/roksbnkctl/internal/registry/mirror"
 )
+
+// recordedDigests returns the artifact digests this workspace's mirror record
+// carries, keyed by mirror.RecordedKey. Empty (never nil-checked by callers)
+// when there is no record, no inventory, or the record cannot be read -- all of
+// which mean "fall back to comparing against the source".
+func recordedDigests(workspace string) map[string]string {
+	rec, err := config.ReadRegistryMirror(workspace)
+	if err != nil || rec == nil {
+		return nil
+	}
+	out := make(map[string]string, len(rec.Artifacts))
+	for _, a := range rec.Artifacts {
+		if a.Digest == "" {
+			continue
+		}
+		out[a.Kind+"/"+a.Name+":"+a.Tag] = a.Digest
+	}
+	return out
+}
 
 func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	name, ws, err := loadRegistryWorkspace()
@@ -30,7 +50,22 @@ func runRegistryVerify(cmd *cobra.Command, _ []string) error {
 	// the replicate push does. Best-effort capture (public targets return "").
 	verifyCA, _ := resolveMirrorCA(name, ws, registryHostFromPath(target.ImageHostPath()))
 	eng := registryEngine(target, in, verifyCA)
-	bad := eng.Verify(cmdContext(cmd), bom)
+
+	// Verify against the digests replication recorded, when this workspace has a
+	// record. Comparing to a freshly-resolved SOURCE digest asks "does the mirror
+	// match upstream right now", which is not the question here: upstream is
+	// allowed to move, and an air-gapped mirror cannot reach it at all. A mirror
+	// that is exactly what was replicated must verify (#270).
+	//
+	// No record, or an artifact missing from it, falls back to the source
+	// comparison, so nothing that verified before stops verifying.
+	recorded := recordedDigests(name)
+	var bad []mirror.Result
+	for _, r := range eng.VerifyAllRecorded(cmdContext(cmd), bom, recorded) {
+		if r.Err != nil {
+			bad = append(bad, r)
+		}
+	}
 	if flagOutput == "json" {
 		out := make([]map[string]string, 0, len(bad))
 		for _, b := range bad {

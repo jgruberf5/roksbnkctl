@@ -6,6 +6,82 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **The node-labeler image is pinned, and `registry verify` compares against what
+  it mirrored** (#270). Two halves of the same defect.
+
+  `roksbnkctl` supplied `docker.io/bitnami/kubectl:latest` for the node-labeler
+  Job it applies alongside FLO — a floating tag. `registry verify` and
+  `adopt --verify-contents` resolve the *source* digest live and compare it to the
+  mirror, so a mirror replicated on Monday reported as `digest mismatch` on Friday
+  because Docker Hub had moved the tag. Nothing in the cluster had changed. In the
+  air-gapped case the source is unreachable by definition, so re-resolving it can
+  only fail.
+
+  The tag could not simply be pinned where it stood: Bitnami no longer publishes
+  versioned tags to `docker.io/bitnami` at all — all 618 tags on
+  `bitnami/kubectl` are `latest` plus cosign artifacts, with versions moved to the
+  frozen `bitnamilegacy` repo. The node-labeler now comes from
+  **`registry.k8s.io/kubectl:v1.36.0`**, the upstream Kubernetes build, which is
+  version-tagged *and* maintained. `registry.k8s.io` replaces `docker.io` in the
+  replication source set.
+
+  `registry verify` now checks each artifact against the digest replication
+  recorded, falling back to source comparison for anything the record does not
+  cover — so a partial inventory still verifies fully rather than silently passing
+  unchecked. `adopt --verify-contents` deliberately keeps comparing against the
+  source: adopting a mirror you did not build means proving it against upstream,
+  and pinning the tag is what makes that reliable.
+
+  **Upgrading an existing mirror requires re-replication.** The BOM now names a
+  different artifact, so a mirror populated before this release does not contain
+  it and `registry verify` reports `missing at target` until `registry replicate`
+  is re-run. Verified against a real mirror: the pre-fix binary reported
+  `digest mismatch` on `bitnami/kubectl:latest` (1 of 94), the fixed binary
+  reported the new image missing, and after `registry replicate` — which skipped
+  the 93 unchanged artifacts and copied one — `verify` reported all 94 present and
+  digest-matched. The superseded `bitnami/kubectl:latest` stays in the mirror as an
+  orphan; `registry prune` removes it.
+
+  The image name, host and tag are now terraform variables, and
+  `TestNodeLabelerDefaultsMatchTheShippedTerraform` fails if they drift from the
+  Go constants the BOM uses. Previously the only thing keeping the BOM naming the
+  image the install actually pulls was a comment saying it did.
+
+### Changed
+
+- **The embedded Kubernetes client moves to v0.37.0** (#285). `roksbnkctl` does not
+  shell out to `kubectl` — it links it — so `k8s.io/kubectl`, `cli-runtime`,
+  `client-go`, `api`, `apimachinery` and `component-helpers` all move from v0.36.4
+  together. That is a Kubernetes *minor* bump (1.36 → 1.37), not a patch, and it
+  changes the client every `k <verb>` and passthrough runs on.
+
+  Build, `staticcheck` and the full test suite are clean on it, which shows nothing
+  the repo calls was removed in 1.37. It does not show that defaulting,
+  serialisation or field-management behaviour is unchanged, and this tool does
+  server-side apply under a `roksbnkctl` field manager — so if a cluster
+  interaction looks different after upgrading, this is the change to suspect first.
+
+  Also in the same group: `github.com/IBM/go-sdk-core/v5` v5.23.3, and
+  `go-openapi/swag` v0.27.1, which split into twelve submodules and dropped
+  `easyjson` and `intern` out of the dependency graph.
+
+### Security
+
+- **`golang.org/x/crypto` to v0.56.0 — two reachable SSH denial-of-service
+  advisories** (#287; GO-2026-6354, GO-2026-6355). Both are in `golang.org/x/crypto/ssh`
+  and both are *reachable* rather than merely present: `govulncheck` traces them to
+  `internal/remote/ssh.go:134`, `remote.Connect` calling `ssh.NewClientConn`, which
+  is the path every `--backend ssh:<target>` command takes. A malicious or faulty
+  peer can deadlock a channel and hang the client.
+
+  The bump is `go.mod` and `go.sum` only, no source change, and it clears both:
+  `govulncheck` reports neither afterwards, and `internal/remote`'s own tests pass.
+
+  This was failing CI on `main` and on every open PR — it is not attributable to
+  any of them, and neither Dependabot PR open at the time bumped `x/crypto`.
+
 ## v1.60.0 — 2026-09-02
 
 **Workspace commands stopped authenticating with a token that died an hour ago.**

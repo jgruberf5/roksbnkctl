@@ -35,7 +35,7 @@ release — the same manifest `roksbnkctl` reads for version discovery. It
 enumerates every F5 chart and image (for BNK 2.3, that's 25 charts + 56 images),
 tag-pinned. `roksbnkctl` unions in the two dependencies the F5 manifest does not
 cover — **cert-manager** (the Jetstack chart + its quay.io images) and the
-**`bitnami/kubectl`** node-labeler image — plus **the manifest chart itself**
+**`registry.k8s.io/kubectl`** node-labeler image — plus **the manifest chart itself**
 (`release/f5-bigip-k8s-manifest`), because the install needs to read it and a
 mirror that lacked it would send every install back to `repo.f5.com`. So the
 mirror is complete:
@@ -47,7 +47,7 @@ charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
 ...
 images  repo.f5.com/images/tmm-img                 v10.159.3-0.1.5
 images  quay.io/jetstack/cert-manager-controller   v1.17.3
-images  docker.io/bitnami/kubectl                  <tag>
+images  registry.k8s.io/kubectl                   v1.36.0
 ...
 81 F5 artifacts + 6 dependency artifacts
 ```
