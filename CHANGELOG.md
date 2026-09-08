@@ -6,6 +6,31 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Changed
+
+- **`roksbnkctl agent <cli>` now launches the agent; `--show` prints the
+  invocation instead.** This is a **breaking change** to a shipped command.
+
+  It used to only ever print, which left everyone doing the same dance — read the
+  recipe, paste it — and the obvious shortcut, `roksbnkctl agent <cli> | bash`, is
+  silently wrong: `bash`'s standard input is the pipe carrying the recipe, so the
+  agent's first turn is the remaining *comment lines of its own recipe*. Nothing
+  errors; the session just starts as though you had typed them.
+
+  Running the agent also brings `agent` in line with the `kubectl`, `oc` and
+  `ibmcloud` passthroughs, which have always exec'd a real tool. `roksbnkctl` still
+  embeds no LLM — exec'ing someone else's CLI is not embedding one.
+
+  **Launching is refused when standard output is not a terminal.** That guard is
+  the reason this flip is safe: `eval "$(roksbnkctl agent claude)"` was previously
+  the documented way to run one, and under the new default that line would run the
+  agent with its output captured by `$()` and evaluate whatever the model emitted
+  as shell. It now fails with a message pointing at `--show`.
+
+  `openai` has no runnable form — its recipe is an export plus commented examples
+  for whichever OpenAI-compatible REPL you use — so it reports that and points at
+  `--show` rather than guessing at a command.
+
 ## v1.61.0 — 2026-09-08
 
 **Two reachable SSH advisories closed, and mirrors stop failing verification because upstream moved a tag.**
