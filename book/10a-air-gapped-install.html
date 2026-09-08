@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-29664864.js";
+            window.path_to_searchindex_js = "searchindex-a60aa60f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -215,7 +215,7 @@ release — the same manifest <code>roksbnkctl</code> reads for version discover
 enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
 tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
 cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
-<strong><code>bitnami/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
+<strong><code>registry.k8s.io/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
 (<code>release/f5-bigip-k8s-manifest</code>), because the install needs to read it and a
 mirror that lacked it would send every install back to <code>repo.f5.com</code>. So the
 mirror is complete:</p>
@@ -225,7 +225,7 @@ charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
 ...
 images  repo.f5.com/images/tmm-img                 v10.159.3-0.1.5
 images  quay.io/jetstack/cert-manager-controller   v1.17.3
-images  docker.io/bitnami/kubectl                  &lt;tag&gt;
+images  registry.k8s.io/kubectl                   v1.36.0
 ...
 81 F5 artifacts + 6 dependency artifacts
 </code></pre>

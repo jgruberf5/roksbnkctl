@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-29664864.js";
+            window.path_to_searchindex_js = "searchindex-a60aa60f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -3157,7 +3157,7 @@ release — the same manifest <code>roksbnkctl</code> reads for version discover
 enumerates every F5 chart and image (for BNK 2.3, that’s 25 charts + 56 images),
 tag-pinned. <code>roksbnkctl</code> unions in the two dependencies the F5 manifest does not
 cover — <strong>cert-manager</strong> (the Jetstack chart + its quay.io images) and the
-<strong><code>bitnami/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
+<strong><code>registry.k8s.io/kubectl</code></strong> node-labeler image — plus <strong>the manifest chart itself</strong>
 (<code>release/f5-bigip-k8s-manifest</code>), because the install needs to read it and a
 mirror that lacked it would send every install back to <code>repo.f5.com</code>. So the
 mirror is complete:</p>
@@ -3167,7 +3167,7 @@ charts  repo.f5.com/charts/f5-tmm                  15.430.5-0.2.157
 ...
 images  repo.f5.com/images/tmm-img                 v10.159.3-0.1.5
 images  quay.io/jetstack/cert-manager-controller   v1.17.3
-images  docker.io/bitnami/kubectl                  &lt;tag&gt;
+images  registry.k8s.io/kubectl                   v1.36.0
 ...
 81 F5 artifacts + 6 dependency artifacts
 </code></pre>
@@ -10385,7 +10385,7 @@ roksbnkctl down    Tear down BNK (and the cluster if cluster up provisioned it)<
 </div>
 <h2 id="roksbnkctl-agent"><a class="header" href="#roksbnkctl-agent"><code>roksbnkctl agent</code></a></h2>
 <p>Drive this workspace with an agentic CLI (personas + AGENTS.md)</p>
-<pre><code>roksbnkctl agent [claude|gemini|aider|openai|pi|opencode]
+<pre><code>roksbnkctl agent [claude|gemini|aider|openai|pi|opencode|agy]
 </code></pre>
 <p>Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.</p>
 <p>roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
@@ -13151,7 +13151,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>generic_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericCAB64 is the mirror’s CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network.</td></tr>
 <tr><td><code>generic_ca_sha256</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericCASHA256 pins the mirror’s CA by SHA-256 (hex; a “sha256:” prefix and colons are accepted).</td></tr>
 <tr><td><code>namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Namespace is the mirror project the artifacts land in.</td></tr>
-<tr><td><code>include_deps</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the bitnami/kubectl node-labeler image) into the BOM.</td></tr>
+<tr><td><code>include_deps</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the registry.k8s.io/kubectl node-labeler image) into the BOM.</td></tr>
 <tr><td><code>source_service_account_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SourceServiceAccountB64 is the FAR <code>_json_key_base64</code> service-account JSON, base64-encoded, used as the replication SOURCE credential for repo.f5.com.</td></tr>
 </tbody>
 </table>
@@ -14495,12 +14495,17 @@ consent tier); the cloud-operator executes and journals the result; the
 doc-specialist turns the timeline into the customer-facing <code>report.md</code>.</p>
 <h2 id="choosing-the-cli--endpoint"><a class="header" href="#choosing-the-cli--endpoint">Choosing the CLI + endpoint</a></h2>
 <p><code>roksbnkctl agent &lt;cli&gt;</code> supports <code>claude</code>, <code>gemini</code>, <code>aider</code>, <code>openai</code>, <code>pi</code>,
-and <code>opencode</code>. Set the workspace default and an optional LLM endpoint in
-<code>config.yaml</code>:</p>
+<code>opencode</code>, and <code>agy</code> (Google). Set the workspace default and an optional LLM
+endpoint in <code>config.yaml</code>:</p>
 <pre><code class="language-yaml">agent:
   default: claude
   llm_endpoint: ""   # OpenAI-/Anthropic-compatible base URL (cloud vendor or local vLLM); blank = the CLI's own config
 </code></pre>
+<p>The <code>agy</code> recipe seeds the persona with <code>-i</code>, which runs an initial prompt and
+then continues interactively. That is deliberate: <code>pi</code> and <code>opencode</code> auto-load
+<code>AGENTS.md</code> from the working directory, and their recipes rely on it, but <code>agy</code>
+does not advertise that behaviour — so its recipe passes the instruction rather
+than assuming the file is read.</p>
 <p><code>roksbnkctl</code> only <em>prints</em> the invocation — it never starts the agent or sends
 anything to an LLM itself. You run the printed command; your CLI uses your
 credentials and endpoint.</p>

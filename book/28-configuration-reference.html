@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-29664864.js";
+            window.path_to_searchindex_js = "searchindex-a60aa60f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -635,7 +635,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>generic_ca_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericCAB64 is the mirror’s CA chain, PEM, base64-encoded — the AUTHORITATIVE copy, recorded from the file that generated it rather than learned from the network.</td></tr>
 <tr><td><code>generic_ca_sha256</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>GenericCASHA256 pins the mirror’s CA by SHA-256 (hex; a “sha256:” prefix and colons are accepted).</td></tr>
 <tr><td><code>namespace</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Namespace is the mirror project the artifacts land in.</td></tr>
-<tr><td><code>include_deps</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the bitnami/kubectl node-labeler image) into the BOM.</td></tr>
+<tr><td><code>include_deps</code></td><td><code>*bool</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>IncludeDeps unions the non-F5 dependency artifacts (Jetstack cert-manager chart + images, the registry.k8s.io/kubectl node-labeler image) into the BOM.</td></tr>
 <tr><td><code>source_service_account_b64</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>SourceServiceAccountB64 is the FAR <code>_json_key_base64</code> service-account JSON, base64-encoded, used as the replication SOURCE credential for repo.f5.com.</td></tr>
 </tbody>
 </table>

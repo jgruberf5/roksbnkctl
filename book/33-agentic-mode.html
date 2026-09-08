@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-29664864.js";
+            window.path_to_searchindex_js = "searchindex-a60aa60f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -233,12 +233,17 @@ consent tier); the cloud-operator executes and journals the result; the
 doc-specialist turns the timeline into the customer-facing <code>report.md</code>.</p>
 <h2 id="choosing-the-cli--endpoint"><a class="header" href="#choosing-the-cli--endpoint">Choosing the CLI + endpoint</a></h2>
 <p><code>roksbnkctl agent &lt;cli&gt;</code> supports <code>claude</code>, <code>gemini</code>, <code>aider</code>, <code>openai</code>, <code>pi</code>,
-and <code>opencode</code>. Set the workspace default and an optional LLM endpoint in
-<code>config.yaml</code>:</p>
+<code>opencode</code>, and <code>agy</code> (Google). Set the workspace default and an optional LLM
+endpoint in <code>config.yaml</code>:</p>
 <pre><code class="language-yaml">agent:
   default: claude
   llm_endpoint: ""   # OpenAI-/Anthropic-compatible base URL (cloud vendor or local vLLM); blank = the CLI's own config
 </code></pre>
+<p>The <code>agy</code> recipe seeds the persona with <code>-i</code>, which runs an initial prompt and
+then continues interactively. That is deliberate: <code>pi</code> and <code>opencode</code> auto-load
+<code>AGENTS.md</code> from the working directory, and their recipes rely on it, but <code>agy</code>
+does not advertise that behaviour — so its recipe passes the instruction rather
+than assuming the file is read.</p>
 <p><code>roksbnkctl</code> only <em>prints</em> the invocation — it never starts the agent or sends
 anything to an LLM itself. You run the printed command; your CLI uses your
 credentials and endpoint.</p>
