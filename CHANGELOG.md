@@ -49,10 +49,28 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   Go constants the BOM uses. Previously the only thing keeping the BOM naming the
   image the install actually pulls was a comment saying it did.
 
+### Changed
+
+- **The embedded Kubernetes client moves to v0.37.0** (#285). `roksbnkctl` does not
+  shell out to `kubectl` — it links it — so `k8s.io/kubectl`, `cli-runtime`,
+  `client-go`, `api`, `apimachinery` and `component-helpers` all move from v0.36.4
+  together. That is a Kubernetes *minor* bump (1.36 → 1.37), not a patch, and it
+  changes the client every `k <verb>` and passthrough runs on.
+
+  Build, `staticcheck` and the full test suite are clean on it, which shows nothing
+  the repo calls was removed in 1.37. It does not show that defaulting,
+  serialisation or field-management behaviour is unchanged, and this tool does
+  server-side apply under a `roksbnkctl` field manager — so if a cluster
+  interaction looks different after upgrading, this is the change to suspect first.
+
+  Also in the same group: `github.com/IBM/go-sdk-core/v5` v5.23.3, and
+  `go-openapi/swag` v0.27.1, which split into twelve submodules and dropped
+  `easyjson` and `intern` out of the dependency graph.
+
 ### Security
 
 - **`golang.org/x/crypto` to v0.56.0 — two reachable SSH denial-of-service
-  advisories** (GO-2026-6354, GO-2026-6355). Both are in `golang.org/x/crypto/ssh`
+  advisories** (#287; GO-2026-6354, GO-2026-6355). Both are in `golang.org/x/crypto/ssh`
   and both are *reachable* rather than merely present: `govulncheck` traces them to
   `internal/remote/ssh.go:134`, `remote.Connect` calling `ssh.NewClientConn`, which
   is the path every `--backend ssh:<target>` command takes. A malicious or faulty
