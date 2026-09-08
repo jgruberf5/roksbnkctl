@@ -6,6 +6,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.61.0 — 2026-09-08
+
+**Two reachable SSH advisories closed, and mirrors stop failing verification because upstream moved a tag.**
+
 ### Fixed
 
 - **The node-labeler image is pinned, and `registry verify` compares against what
