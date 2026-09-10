@@ -5,21 +5,21 @@ go 1.26.0
 require (
 	github.com/IBM/go-sdk-core/v5 v5.23.3
 	github.com/IBM/ibm-cos-sdk-go v1.14.1
-	github.com/IBM/platform-services-go-sdk v0.103.0
+	github.com/IBM/platform-services-go-sdk v0.103.1
 	github.com/gliderlabs/ssh v0.3.8
-	github.com/google/go-containerregistry v0.22.0
+	github.com/google/go-containerregistry v0.22.1
 	github.com/hashicorp/go-version v1.9.0
 	github.com/hashicorp/terraform-exec v0.25.3
 	github.com/joho/godotenv v1.5.1
 	github.com/miekg/dns v1.1.73
-	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.1
+	github.com/moby/moby/api v1.56.0
+	github.com/moby/moby/client v0.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.56.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.37.0
