@@ -200,6 +200,12 @@ variable "cert_manager_version" {
 # COS Bucket — shared by flo and license
 # ============================================================
 
+variable "ibmcloud_cos_resource_group" {
+  description = "Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group, which is the pre-#295 behaviour. Set it when the supply chain lives centrally (typically `default`) and the workspace was placed elsewhere."
+  type        = string
+  default     = ""
+}
+
 variable "ibmcloud_cos_bucket_region" {
   description = "IBM Cloud region where the COS bucket is located"
   type        = string

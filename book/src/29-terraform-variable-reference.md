@@ -32,6 +32,7 @@ Source: `terraform/variables.tf`
 | `install_cert_manager` | `bool` | `true` | Install cert-manager. When false, cert_manager_namespace is passed directly to flo. | no |
 | `cert_manager_namespace` | `string` | `"cert-manager"` | Kubernetes namespace for cert-manager | no |
 | `cert_manager_version` | `string` | `"v1.17.3"` | cert-manager Helm chart version | no |
+| `ibmcloud_cos_resource_group` | `string` | `""` | Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group, which is the pre-#295 behaviour. Set it when the supply chain lives centrally (typically `default`) and the workspace was placed elsewhere. | no |
 | `ibmcloud_cos_bucket_region` | `string` | `"us-south"` | IBM Cloud region where the COS bucket is located | no |
 | `ibmcloud_cos_instance_name` | `string` | `"bnk-supply-chain"` | IBM Cloud COS instance name | no |
 | `ibmcloud_resources_cos_bucket` | `string` | `"bnk-artifacts"` | IBM Cloud COS bucket containing FAR auth key and JWT files | no |
@@ -286,6 +287,7 @@ Source: `terraform/modules/flo/variables.tf`
 | `scratch_dir` | `string` | `"/work/.bnk/scratch"` | Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image's /work mount. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the FLO phase invokes `roksbnkctl tfx <verb>` in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
+| `ibmcloud_cos_resource_group` | `string` | `""` | Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group (#295). | no |
 
 ## Module: `flp`
 
@@ -320,6 +322,7 @@ Source: `terraform/modules/flp/variables.tf`
 | `flp_node_port_source_cidrs` | `list(string)` | `[]` | With flp_node_port_access: open the proxy's NodePort on the cluster's worker security group to these CIDRs (the consuming cluster's subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched. | no |
 | `flp_storage_class` | `string` | `"ibmc-vpc-block-metro-10iops-tier"` | Dynamic StorageClass for the FLP's PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart's POST-RENDERER (`roksbnkctl flp postrender`). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to `roksbnkctl` on PATH for a direct `terraform apply`. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container. | no |
+| `ibmcloud_cos_resource_group` | `string` | `""` | Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group (#295). | no |
 
 ## Module: `flp_vsi`
 
@@ -367,6 +370,7 @@ Source: `terraform/modules/flp_vsi/variables.tf`
 | `flp_vsi_create_vpc` | `bool` | `false` | Build the proxy its own VPC, address prefix and public gateway instead of placing it in one that already exists. Default false keeps existing workspaces byte-identical. | no |
 | `flp_vsi_vpc_name` | `string` | `""` | Name for the VPC created when flp_vsi_create_vpc = true. Empty uses flp-vsi-vpc. | no |
 | `flp_vsi_subnet_cidr` | `string` | `"10.250.0.0/24"` | Address prefix for the VPC created when flp_vsi_create_vpc = true. Must not overlap anything the consuming clusters can already route to. | no |
+| `ibmcloud_cos_resource_group` | `string` | `""` | Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group (#295). | no |
 
 ## Module: `gateway`
 
@@ -443,6 +447,7 @@ Source: `terraform/modules/license/variables.tf`
 | `kubeconfig_dir` | `string` | `"/work/.bnk/scratch/kubeconfig/license"` | Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch. | no |
 | `roksbnkctl_binary` | `string` | `""` | Absolute path to the roksbnkctl binary; the license phase invokes `roksbnkctl tfx <verb>` in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to `roksbnkctl` on PATH. | no |
 | `cluster_absent` | `bool` | `false` | True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0). | no |
+| `ibmcloud_cos_resource_group` | `string` | `""` | Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group (#295). | no |
 
 ## Module: `roks_cluster`
 

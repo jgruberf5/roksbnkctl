@@ -126,3 +126,9 @@ variable "roksbnkctl_binary" {
   type        = string
   default     = ""
 }
+
+variable "ibmcloud_cos_resource_group" {
+  description = "Resource group holding the supply-chain COS instance. Empty resolves the workspace's own resource group (#295)."
+  type        = string
+  default     = ""
+}

@@ -624,6 +624,11 @@ func renderBNKCOS(w io.Writer, ws *config.Workspace) {
 		if cos.Region != "" {
 			fmt.Fprintf(w, "ibmcloud_cos_bucket_region = %q\n", cos.Region)
 		}
+		// Empty is meaningful: the terraform default resolves the workspace's own
+		// group, so omitting the line keeps the pre-#295 behaviour exactly.
+		if cos.ResourceGroup != "" {
+			fmt.Fprintf(w, "ibmcloud_cos_resource_group = %q\n", cos.ResourceGroup)
+		}
 	}
 }
 

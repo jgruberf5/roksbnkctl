@@ -259,6 +259,7 @@ COSCfg points roksbnkctl at the IBM Cloud Object Storage that holds the FAR auth
 | `instance` | `string` | 2.3 + 2.4 | `bnk-supply-chain` | no | Instance is the IBM Cloud Object Storage service instance holding the bucket. |
 | `bucket` | `string` | 2.3 + 2.4 | `bnk-artifacts` | no | Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file. |
 | `region` | `string` | 2.3 + 2.4 | `us-south` | no | Region is the bucket's region, which need not match ibmcloud.region. |
+| `resource_group` | `string` | 2.3 + 2.4 | — | no | ResourceGroup is the IBM Cloud resource group holding Instance. |
 | `upload` | `[]COSUpload` | 2.3 + 2.4 | — | no | Upload lists local files to place into that bucket before the phases that read them run. |
 
 ## `COSUpload`
