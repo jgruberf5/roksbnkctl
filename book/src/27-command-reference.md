@@ -36,18 +36,24 @@ These flags apply to every command. They are declared on the root command and in
 Drive this workspace with an agentic CLI (personas + AGENTS.md)
 
 ```
-roksbnkctl agent [claude|gemini|aider|openai|pi|opencode|agy]
+roksbnkctl agent [claude|gemini|aider|openai|pi|opencode|agy] [flags]
 ```
 
 Agentic mode. roksbnkctl embeds no LLM — bring your own coding-agent CLI.
 
   roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
   roksbnkctl agent             List supported CLIs + this workspace's default
-  roksbnkctl agent `<cli>`       Print the invocation to launch `<cli>` against the workspace
+  roksbnkctl agent `<cli>`       Launch `<cli>` against the workspace\n  roksbnkctl agent `<cli>` --show  Print the invocation instead of running it
 
 Personas (act as exactly one at a time): solution-architect (customer
 interface, owns scope), cloud-operator (runs the lifecycle), test-engineer
 (validation probes), doc-specialist (the report). See personas/ after init.
+
+**Flags**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--show` | `bool` | `false` | print the invocation instead of running the agent |
 
 ### `roksbnkctl agent init`
 

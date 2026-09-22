@@ -82,9 +82,31 @@ then continues interactively. That is deliberate: `pi` and `opencode` auto-load
 does not advertise that behaviour — so its recipe passes the instruction rather
 than assuming the file is read.
 
-`roksbnkctl` only *prints* the invocation — it never starts the agent or sends
-anything to an LLM itself. You run the printed command; your CLI uses your
-credentials and endpoint.
+`roksbnkctl agent <cli>` **launches** the agent, in the workspace directory, with
+your terminal attached. Add `--show` to print the invocation instead of running
+it — useful for putting it in a script, or for `openai`, whose recipe is guidance
+for whichever OpenAI-compatible REPL you use rather than a single command.
+
+```console
+$ roksbnkctl agent agy            # launches agy in the workspace
+$ roksbnkctl agent agy --show     # prints the invocation, runs nothing
+```
+
+`roksbnkctl` still embeds no LLM and sends nothing anywhere itself: it execs your
+CLI, exactly as `roksbnkctl kubectl` execs kubectl. Your CLI uses your credentials
+and endpoint.
+
+**Do not pipe the `--show` output into a shell.** `roksbnkctl agent <cli> --show |
+bash` looks like the obvious shortcut and is silently wrong: `bash`'s standard
+input is the pipe carrying the recipe, so the agent's first turn is the remaining
+*comment lines of its own recipe*. Nothing errors — the session simply begins as
+though you had typed them. If you need to run a printed recipe, use
+`eval "$(roksbnkctl agent <cli> --show)"`, which leaves your terminal on standard
+input.
+
+Running without `--show` is refused when standard output is not a terminal. An
+agent session needs one, and capturing it — `$(...)` or a pipe — would send the
+model's output somewhere it does not belong.
 
 ## Safety model
 
