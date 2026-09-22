@@ -6,10 +6,26 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.62.0 — 2026-09-22
+
+**`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**
+
 ### Changed
 
+- **Dependencies** (#297, #298). `golang.org/x/crypto` v0.56.0 → **v0.57.0** —
+  verified not to reopen GO-2026-6354/6355, the two reachable SSH advisories closed
+  in v1.61.0 (#287). `moby/client` v0.5.1 → **v0.6.0**, a minor bump on the library
+  behind `--backend docker`. `github/codeql-action` 4.37.9 → 4.38.0, plus patch
+  bumps to the IBM SDKs, `go-containerregistry`, `x/sync`, `x/term` and five
+  indirect modules.
+
+
 - **`roksbnkctl agent <cli>` now launches the agent; `--show` prints the
-  invocation instead.** This is a **breaking change** to a shipped command.
+  invocation instead** (#293). This is a **breaking change** to a shipped command.
+
+  Note that v1.61.0 shipped `roksbnkctl agent agy` but *not* the ability to launch
+  it — those were separate changes and only the first made that release, so the
+  v1.61.0 binary prints a recipe when asked to run an agent.
 
   It used to only ever print, which left everyone doing the same dance — read the
   recipe, paste it — and the obvious shortcut, `roksbnkctl agent <cli> | bash`, is
