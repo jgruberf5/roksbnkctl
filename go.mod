@@ -1,6 +1,6 @@
 module github.com/jgruberf5/roksbnkctl
 
-go 1.26.0
+go 1.26.6
 
 require (
 	github.com/IBM/go-sdk-core/v5 v5.23.4
