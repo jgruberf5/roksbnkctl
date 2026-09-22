@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
 
@@ -105,7 +109,7 @@ var agentCmd = &cobra.Command{
 
   roksbnkctl agent init        Scaffold AGENTS.md + personas/ + journal/ into the workspace
   roksbnkctl agent             List supported CLIs + this workspace's default
-  roksbnkctl agent <cli>       Print the invocation to launch <cli> against the workspace
+  roksbnkctl agent <cli>       Launch <cli> against the workspace\n  roksbnkctl agent <cli> --show  Print the invocation instead of running it
 
 Personas (act as exactly one at a time): solution-architect (customer
 interface, owns scope), cloud-operator (runs the lifecycle), test-engineer
@@ -124,7 +128,11 @@ re-run: existing files are left untouched (your edits survive).`,
 	RunE: runAgentInit,
 }
 
+var flagAgentShow bool
+
 func init() {
+	agentCmd.Flags().BoolVar(&flagAgentShow, "show", false,
+		"print the invocation instead of running the agent")
 	agentCmd.AddCommand(agentInitCmd)
 	rootCmd.AddCommand(agentCmd)
 }
@@ -159,8 +167,9 @@ func runAgent(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(out, "  - %s\n", name)
 		}
 		fmt.Fprintf(out, "\nDefault for this workspace: %s\n", agentDefault(ws))
-		fmt.Fprintln(out, "\nRun:  roksbnkctl agent <name>   to print its invocation,")
-		fmt.Fprintln(out, "      roksbnkctl agent init       to scaffold the persona files first.")
+		fmt.Fprintln(out, "\nRun:  roksbnkctl agent <name>          to launch it,")
+		fmt.Fprintln(out, "      roksbnkctl agent <name> --show   to print the invocation instead,")
+		fmt.Fprintln(out, "      roksbnkctl agent init            to scaffold the persona files first.")
 		return nil
 	}
 
@@ -171,11 +180,14 @@ func runAgent(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown agent %q (try: %v)", args[0], agentRecipeNames())
 	}
-	fmt.Fprint(out, recipe(dir, endpoint))
-	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
-		fmt.Fprintf(out, "\n# NOTE: %s has no AGENTS.md yet — run `roksbnkctl agent init` first.\n", dir)
+	if flagAgentShow {
+		fmt.Fprint(out, recipe(dir, endpoint))
+		if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+			fmt.Fprintf(out, "\n# NOTE: %s has no AGENTS.md yet — run `roksbnkctl agent init` first.\n", dir)
+		}
+		return nil
 	}
-	return nil
+	return launchAgent(cmd, args[0], dir, endpoint)
 }
 
 func runAgentInit(cmd *cobra.Command, _ []string) error {
@@ -258,4 +270,118 @@ func copyEmbeddedFiles(dir string) (written, skipped []string, err error) {
 // agentRecipeNames returns the supported CLI names in a stable order.
 func agentRecipeNames() []string {
 	return []string{"claude", "gemini", "aider", "openai", "pi", "opencode", "agy"}
+}
+
+// ── launching ───────────────────────────────────────────────────────────────
+//
+// `roksbnkctl agent <cli>` RUNS the agent; `--show` prints the invocation
+// instead. It used to only ever print, which left every user doing the same
+// dance -- read the recipe, paste it -- and the obvious shortcut for that,
+// `roksbnkctl agent <cli> | bash`, is silently WRONG: bash's stdin is the pipe
+// carrying the recipe, so the agent's first "user turn" is the remaining comment
+// lines of its own recipe. It does not error. It just starts a session having
+// apparently been told "# -i runs that prompt and CONTINUES interactively."
+//
+// Running it here also brings `agent` in line with the kubectl/oc/ibmcloud
+// passthroughs, which have always exec'd a real tool. The "roksbnkctl embeds no
+// LLM" property is unchanged: exec'ing someone else's CLI is not embedding one,
+// any more than `roksbnkctl kubectl` embeds Kubernetes.
+
+// agentArgv builds the command to exec for a recipe, or returns errNotRunnable
+// when the recipe is guidance rather than a single command.
+var errNotRunnable = errors.New("this recipe is guidance, not a single command")
+
+// agentBinary is the executable each recipe launches, used for the
+// "is it installed" check before anything else happens.
+var agentBinary = map[string]string{
+	"claude": "claude", "gemini": "gemini", "aider": "aider",
+	"pi": "pi", "opencode": "opencode", "agy": "agy",
+	// "openai" is deliberately absent: its recipe is an export plus commented
+	// examples for whichever OpenAI-compatible REPL you use, not a command.
+}
+
+func agentArgv(name, dir, endpoint string) ([]string, []string, error) {
+	env := os.Environ()
+	switch name {
+	case "claude":
+		if endpoint != "" {
+			env = append(env, "ANTHROPIC_BASE_URL="+endpoint)
+		}
+		return []string{"claude"}, env, nil
+	case "gemini":
+		sys, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+		if err != nil {
+			return nil, nil, fmt.Errorf("gemini needs AGENTS.md as its system instruction: %w", err)
+		}
+		return []string{"gemini", "chat", "--system-instruction", string(sys)}, env, nil
+	case "aider":
+		argv := []string{"aider", "--read", "AGENTS.md", "--read", "personas/solution-architect.md"}
+		if endpoint != "" {
+			argv = append(argv, "--openai-api-base", endpoint)
+		}
+		return append(argv, "config.yaml", "decisions.md"), env, nil
+	case "pi":
+		return []string{"pi"}, env, nil
+	case "opencode":
+		return []string{"opencode"}, env, nil
+	case "agy":
+		return []string{"agy", "-i", agentPersonaPrompt}, env, nil
+	}
+	return nil, nil, errNotRunnable
+}
+
+// agentPersonaPrompt is the seed turn for agents that do not auto-load
+// AGENTS.md. Kept identical to the text the --show recipe prints, so what runs
+// and what is documented cannot drift.
+const agentPersonaPrompt = "Read AGENTS.md, then act as the solution-architect persona " +
+	"(personas/solution-architect.md). Confirm scope with me."
+
+// stdoutIsTerminal is a variable so the refusal below can be tested in both
+// directions. Under `go test` stdout is never a terminal, so without this seam
+// the only reachable branch is the refusal, and the launch path would be
+// asserted by nothing.
+var stdoutIsTerminal = func() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
+
+// launchAgent execs the agent in dir with stdio inherited.
+//
+// It REFUSES when stdout is not a terminal. That guard exists for one specific
+// reason: before this change the command only printed, so `eval "$(roksbnkctl
+// agent claude)"` was the documented way to run it. If that line survives in
+// someone's notes and the default flips under it, the agent runs with its stdout
+// captured by $(), and whatever an LLM emits gets evaluated as shell. Failing
+// loudly is the only acceptable behaviour there.
+func launchAgent(cmd *cobra.Command, name, dir, endpoint string) error {
+	argv, env, err := agentArgv(name, dir, endpoint)
+	if errors.Is(err, errNotRunnable) {
+		return fmt.Errorf("`%s` prints guidance rather than a single command, so there is "+
+			"nothing to run.\nSee it with: roksbnkctl agent %s --show", name, name)
+	}
+	if err != nil {
+		return err
+	}
+
+	if !stdoutIsTerminal() {
+		return fmt.Errorf("refusing to launch %s: stdout is not a terminal.\n"+
+			"An agent session needs one, and capturing it — `$(roksbnkctl agent %s)` or a "+
+			"pipe — would feed the agent's own output somewhere it does not belong.\n"+
+			"To see the invocation instead: roksbnkctl agent %s --show", name, name, name)
+	}
+
+	bin := agentBinary[name]
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("%s is not on PATH. Install it, or print the invocation with "+
+			"`roksbnkctl agent %s --show`", bin, name)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+		return fmt.Errorf("%s has no AGENTS.md — run `roksbnkctl agent init` first "+
+			"(the agent would start with no persona and no working agreements)", dir)
+	}
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "→ %s in %s\n", bin, dir)
+	c := exec.CommandContext(cmdContext(cmd), argv[0], argv[1:]...)
+	c.Dir = dir
+	c.Env = env
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c.Run()
 }
