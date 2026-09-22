@@ -6,6 +6,38 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`registry_cos.create: false` could never produce a working cluster** (#294).
+  A ROKS-on-VPC cluster requires a Standard COS CRN to back its internal registry
+  *unconditionally* — there is no "no registry backing" mode. So `create: false`
+  does not mean "skip the COS", it means "use that one". The cluster module read
+
+  ```hcl
+  cos_instance_crn = var.create_cos_instance ? ibm_resource_instance.cos_instance[0].crn : null
+  ```
+
+  so the adopt path passed `null` and IBM rejected the create with
+
+  ```
+  E7278  Provide a standard cloud object storage instance CRN to back up the
+         internal registry in your OpenShift on VPC Gen 2 cluster.
+  ```
+
+  The adopted name *was* rendered into tfvars and then dropped on the floor. The
+  module now looks the instance up and passes its CRN, and a plan-time
+  precondition catches `create: false` with nothing named — E7278 names neither a
+  variable nor an instance, so the error arrived with nothing to act on.
+
+  This is the one path available when an account has hit its COS instance cap,
+  which is exactly the situation that motivates adopting.
+
+  The `registry_cos_name` / `registry_cos_crn` outputs now report the adopted
+  instance too. They previously covered only the created one, so the CLI fell
+  back to guessing `<cluster>-cos-instance` / `<cluster>-cos` — names an adopted
+  instance has no reason to match — and the workspace recorded no registry COS at
+  all.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**
