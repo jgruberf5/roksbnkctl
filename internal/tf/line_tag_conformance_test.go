@@ -267,10 +267,15 @@ var lineProbes = []lineProbe{
 		Why:     "spec.deploymentSize; only the DEFAULT is line-selected (Small on 2.3, Tiny on 2.4)",
 	},
 	{
-		Struct: "BNKNetworkCfg", Key: "tmm_k8s_routes", Want: "both",
+		// Was "both" until #307: the entry sat in the SHARED tmm defaults, so a 2.4
+		// CNEInstance carried TMM_K8S_ROUTES even though F5's approved 2.4 reference
+		// has no such variable — that line uses ENABLE_K8S_ROUTES, a boolean, emitted
+		// from adv_env_line. The entry is now line-gated in position, so consumption
+		// is 2.3-only and the struct tag says so.
+		Struct: "BNKNetworkCfg", Key: "tmm_k8s_routes", Want: "2.3",
 		Var: "cneinstance_tmm_k8s_routes", Values: []string{`"10.199.0.0/18"`},
 		Modules: []string{"cneinstance"},
-		Why:     "advanced.tmm.env TMM_K8S_ROUTES, in the shared defaults rather than adv_env_line",
+		Why:     "advanced.tmm.env TMM_K8S_ROUTES, line-gated to 2.3; 2.4 uses ENABLE_K8S_ROUTES",
 	},
 	{
 		// Two values because the DEFAULT is line-dependent: true on 2.3, false on

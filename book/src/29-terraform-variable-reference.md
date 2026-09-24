@@ -65,7 +65,7 @@ Source: `terraform/variables.tf`
 | `cneinstance_vlan_prefixlen_external` | `number` | `0` | External VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen, so a deployment that does not care keeps one knob and one value. | no |
 | `cneinstance_vlan_prefixlen_internal` | `number` | `0` | Internal VLAN self-IP prefix length. 0 (default) → cneinstance_vlan_prefixlen. See the external variable for why the two can differ. | no |
 | `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
-| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
+| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). 2.3 ONLY -- on 2.4 the env var is gated off and ENABLE_K8S_ROUTES (a boolean) is used instead, so this value never reaches the CNEInstance (#307). Default is the ROKS default pod subnet. | no |
 | `license_mode` | `string` | `"connected"` | License operation mode (connected, disconnected, or f5licenseproxy) | no |
 | `flp_license_server_url` | `string` | `""` | Base URL of the in-cluster F5 License Proxy service (FLP mode only; e.g. https://f5-license-proxy.`<ns>`.svc.cluster.local:8443) | no |
 | `license_server_root_ca` | `string` | `""` | PEM of the FLP root CA, written into the licenseserver-rootca Secret so CWC trusts the proxy (FLP mode only) | no |
@@ -210,7 +210,7 @@ Source: `terraform/modules/cne_instance/variables.tf`
 | `cneinstance_vlan_prefixlen_external` | `number` | `0` | External VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen. | no |
 | `cneinstance_vlan_prefixlen_internal` | `number` | `0` | Internal VLAN self-IP prefix length; 0 inherits cneinstance_vlan_prefixlen. | no |
 | `cneinstance_vlan_prefixlen` | `number` | `24` | TMM self-IP prefix length (spec.prefixlen_v4) for the external/internal F5SPKVlan CRs | no |
-| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). Default is the ROKS default pod subnet. | no |
+| `cneinstance_tmm_k8s_routes` | `string` | `"172.17.0.0/18"` | Pod CIDR TMM routes to (advanced.tmm.env TMM_K8S_ROUTES). 2.3 ONLY -- on 2.4 the env var is gated off and ENABLE_K8S_ROUTES (a boolean) is used instead, so this value never reaches the CNEInstance (#307). Default is the ROKS default pod subnet. | no |
 | `create_roks_cluster` | `bool` | `false` | When true, cluster is being created by roks_cluster — skip plan-time cluster credential fetch | no |
 | `roks_cluster_dependency_id` | `string` | `null` | roks_cluster sentinel ID — when set, defers runtime_config fetch to apply time after roks_cluster completes | no |
 | `flo_dependency_id` | `string` | `null` | flo_ready sentinel ID — pass module.flo.flo_ready_id to defer cne_instance until flo completes and CRDs are registered | no |

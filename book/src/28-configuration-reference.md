@@ -217,7 +217,7 @@ BNKNetworkCfg is the optional cloud-network-mapping / VLAN zone data.
 | `vlan_prefixlen` | `*int` | 2.3 | `24` | no | VLANPrefixLen is the self-IP prefix length (spec.prefixlen_v4) TMM applies to its external and internal self-IPs on the F5SPKVlan CRs — the size of the L2 subnet TMM treats as directly connected on each VLAN. |
 | `vlan_prefixlen_external` | `*int` | 2.3 | — | no | VLANPrefixLenExternal / VLANPrefixLenInternal override VLANPrefixLen for one VLAN. |
 | `vlan_prefixlen_internal` | `*int` | 2.3 | — | no | VLANPrefixLenInternal is the same override for the INTERNAL VLAN. |
-| `tmm_k8s_routes` | `string` | 2.3 + 2.4 | `172.17.0.0/18` | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
+| `tmm_k8s_routes` | `string` | 2.3 | `172.17.0.0/18` | no | TMMK8SRoutes is the Kubernetes pod CIDR TMM installs a route toward (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal data path. |
 
 ## `BNKPreflightCfg`
 

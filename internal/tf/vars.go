@@ -860,6 +860,18 @@ func renderBNKNetwork(w io.Writer, ws *config.Workspace) {
 			fmt.Fprintf(w, "cneinstance_vlan_prefixlen_internal = %d\n", *net.VLANPrefixLenInternal)
 		}
 		if net.TMMK8SRoutes != "" {
+			// 2.4 drops TMM_K8S_ROUTES: the terraform gates it off, because F5's
+			// approved 2.4 reference uses ENABLE_K8S_ROUTES (a boolean) instead of a
+			// CIDR (#307). Still RENDER the tfvar so `terraform.applied.tfvars`
+			// records what the operator asked for, but say plainly that it will not
+			// reach the CNEInstance. A config field that silently does nothing is the
+			// failure mode #279 was about, moved from comments into config.
+			if ws.BNKLineOrEmpty() == "2.4" {
+				fmt.Fprintf(os.Stderr,
+					"warning: bnk.network.tmm_k8s_routes = %q is ignored on BNK 2.4 — "+
+						"that line uses ENABLE_K8S_ROUTES rather than a CIDR, so the value is "+
+						"not placed on the CNEInstance (#307)\n", net.TMMK8SRoutes)
+			}
 			fmt.Fprintf(w, "cneinstance_tmm_k8s_routes = %q\n", net.TMMK8SRoutes)
 		}
 	}

@@ -265,7 +265,7 @@ locals {
         }
       ],
     )
-    tmm = [
+    tmm = concat([
       {
         name  = "TMM_CALICO_ROUTER"
         value = "default"
@@ -274,22 +274,41 @@ locals {
         name  = "TMM_DEFAULT_MTU"
         value = "9000"
       },
-      {
-        name  = "PAL_CPU_SET"
-        value = "0,2"
-      },
-      {
-        name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
-        value = "TRUE"
-      },
+      ],
+      # 2.3 ONLY. F5's approved 2.4 reference carries neither PAL_CPU_SET nor
+      # TMM_K8S_ROUTES; on 2.4 the routing knob is ENABLE_K8S_ROUTES (a boolean,
+      # emitted from adv_env_line below) rather than a CIDR. Until #307 both were
+      # emitted unconditionally, so a 2.4 CNEInstance carried the 2.3 defaults AND
+      # the 2.4 additions at once -- verified on a live 2.4.0-EA cluster, which is
+      # how this was found. PRD 18 §"advanced.tmm.env" predicted it.
+      #
+      # PAL_CPU_SET pins TMM to two cores while the container requests and limits
+      # cpu: 1, which is the pairing the 2.4 reference drops.
+      #
+      # Spliced in POSITION rather than appended, so a shipping 2.3 install sees no
+      # CNEInstance diff from this change -- the same rule the cneController gate
+      # above follows.
+      local.line_pre_24 ? [
+        {
+          name  = "PAL_CPU_SET"
+          value = "0,2"
+        },
+      ] : [],
+      [
+        {
+          name  = "TMM_MAPRES_ADDL_VETHS_ON_DP"
+          value = "TRUE"
+        },
+      ],
       # Pod CIDR TMM routes to (install-guide value = ROKS default pod
-      # subnet). Was missing — without it TMM can't route to application
-      # pods.
-      {
-        name  = "TMM_K8S_ROUTES"
-        value = var.cneinstance_tmm_k8s_routes
-      }
-    ]
+      # subnet). 2.3 ONLY -- see above.
+      local.line_pre_24 ? [
+        {
+          name  = "TMM_K8S_ROUTES"
+          value = var.cneinstance_tmm_k8s_routes
+        },
+      ] : [],
+    )
     pseudoCNI = [
       {
         name  = "DISABLE_CHECKSUM_OFFLOAD"

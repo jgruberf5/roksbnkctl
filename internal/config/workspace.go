@@ -1175,7 +1175,12 @@ type BNKNetworkCfg struct {
 	// (advanced.tmm.env TMM_K8S_ROUTES), so TMM can reach backend pods on the internal
 	// data path. "" → the terraform default (the ROKS pod subnet 172.17.0.0/18); set
 	// only for a non-default cluster pod CIDR. Rendered as cneinstance_tmm_k8s_routes.
-	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty" default:"172.17.0.0/18"`
+	//
+	// 2.3 ONLY. F5's approved 2.4 reference carries no TMM_K8S_ROUTES: that line uses
+	// ENABLE_K8S_ROUTES, a boolean, so a CIDR has nothing to configure. The terraform
+	// gates the env var off for 2.4 and the render path warns when this is set there,
+	// rather than leaving a config field that silently does nothing (#307).
+	TMMK8SRoutes string `yaml:"tmm_k8s_routes,omitempty" default:"172.17.0.0/18" line:"2.3"`
 }
 
 // GatewayCfg carries optional overrides for the Gateway phase (the BNK

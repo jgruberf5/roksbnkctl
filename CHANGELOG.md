@@ -6,6 +6,22 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **BNK 2.4 no longer gets `PAL_CPU_SET` and `TMM_K8S_ROUTES`** (#307). F5's
+  approved 2.4 reference carries neither; that line uses `ENABLE_K8S_ROUTES`, a
+  boolean, rather than a CIDR. Both sat in the *shared* `advanced.tmm.env`
+  defaults, so a 2.4 CNEInstance carried the 2.3 defaults **and** the 2.4
+  additions at once — observed on a live 2.4.0-EA cluster.
+
+  `docs/prd/18-BNK-2-4-SUPPORT.md` predicted this when 2.4 support was written; the
+  terraform never acted on it. Both entries are now line-gated **in position**, so a
+  shipping 2.3 install sees no CNEInstance diff.
+
+  `bnk.network.tmm_k8s_routes` is marked 2.3-only, and setting it on 2.4 now warns
+  instead of being quietly dropped — a config field that silently does nothing is
+  the failure mode #279 was about, moved from comments into config.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**

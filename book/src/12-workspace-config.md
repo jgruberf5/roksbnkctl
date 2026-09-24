@@ -221,7 +221,7 @@ bnk:
     vlan_prefixlen: 24                #   self-IP prefix length (F5SPKVlan)
     vlan_prefixlen_external: 23       #   optional; overrides the shared value
     vlan_prefixlen_internal: 26       #   optional; the two VLANs need not match
-    tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to
+    tmm_k8s_routes: 172.17.0.0/18     #   pod CIDR TMM routes to (2.3 only)
     zones:                            #   one entry per AZ (3 total)
       - ext_vlan_cidr: 10.155.15.0/24
         int_vlan_cidr: 10.254.99.0/24
@@ -259,6 +259,8 @@ Provide **all three zones** when you set `zones` — supplying zones replaces th
 `vlan_prefixlen` and `tmm_k8s_routes` are network-wide, shared across all zones. **`vlan_prefixlen` is independent of your VLAN CIDRs and is never derived from them** — nothing validates the two against each other. Usually you want them to agree; a deliberate disagreement, paired with static routes, is how a smaller or larger directly-connected block is forced and the remainder steered. The mask can also differ **between the two VLANs** via `vlan_prefixlen_external` / `vlan_prefixlen_internal`: TMM can front a `/23` externally while the internal side is a `/26`, which one shared scalar could not express. Unset either override to inherit the shared value; `ROKSBNKCTL_VLAN_PREFIXLEN_EXTERNAL` and `ROKSBNKCTL_VLAN_PREFIXLEN_INTERNAL` set them from the environment.
 
 `tmm_k8s_routes` is the pod CIDR TMM installs a route toward (`TMM_K8S_ROUTES`) so it can reach the backend pods on the internal data path. The default is the ROKS default pod subnet — set it if your cluster's isn't.
+
+**It applies to BNK 2.3 only.** F5's approved 2.4 reference carries no `TMM_K8S_ROUTES`: that line uses `ENABLE_K8S_ROUTES`, a boolean, so a CIDR has nothing to configure. On 2.4 the env var is gated off the CNEInstance and `roksbnkctl` warns if you set this, rather than accepting a value that silently does nothing (#307).
 
 **What each zone CIDR becomes on 2.4.** The same values drive a different set of
 objects on each line, which is why they are marked "2.3 + 2.4" rather than being
