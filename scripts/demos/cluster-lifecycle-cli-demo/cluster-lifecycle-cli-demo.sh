@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# cluster-lifecycle-cli-demo.sh  (roksbnkctl v1.62.0)
+# cluster-lifecycle-cli-demo.sh  (roksbnkctl v1.63.0)
 #
 # The roksbnkctl LIFECYCLE, driven one phase at a time from the CLI, on a cluster
 # roksbnkctl builds and then destroys on camera:

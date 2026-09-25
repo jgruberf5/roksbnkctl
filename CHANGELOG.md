@@ -6,6 +6,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.63.0 — 2026-09-25
+
+**`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**
+
 ### Fixed
 
 - **`registry_cos.create: false` could never produce a working cluster** (#294).
