@@ -333,6 +333,36 @@ locals {
         name  = "DISABLE_HT"
         value = "true"
       },
+      # READ BY FLO, NOT BY TMM. Do not "clean this up" (#307).
+      #
+      # Grepping the shipped artifacts -- the technique #228 used on f5ingress --
+      # gives three answers for the same name, and only the third is the whole
+      # story:
+      #
+      #   tmm-img:v10.204.15-0.1.46 (2.4.0 GA)    0 occurrences
+      #   f5ingress:v14.91.12-0.4.7 (controller)  0 occurrences, across all
+      #                                           2766 files in the image
+      #   f5-lifecycle-operator:v2.30.0-0.5.2     PRESENT, carrying
+      #                                             "Found ENABLE_K8S_ROUTES"
+      #                                             "error parsing ENABLE_K8S_ROUTES env var: %w"
+      #                                           beside
+      #                                             "Adding TMM TMM_K8S_ROUTES environment variables"
+      #
+      # So it is not inert: FLO parses it, and ENABLE_K8S_ROUTES / TMM_K8S_ROUTES
+      # are the two ends of one control split across components. #307 concluded
+      # "read by nothing" from the TMM image alone and proposed deleting it --
+      # the same mistake, in this same block, that #308 made and that #307 was
+      # itself written to correct.
+      #
+      # Checking this needs a PULL AND GREP of the operator image: it ships no
+      # shell, so `kubectl exec` cannot answer it. Use `strings -a`, not `grep`
+      # -- plain grep finds nothing in a 95MB statically linked Go binary, and
+      # returns a confident zero for variables that are demonstrably read.
+      #
+      # TMM_K8S_ROUTES is ALSO set directly, in the shared defaults below, from
+      # var.cneinstance_tmm_k8s_routes. Both land on the same value on a default
+      # install, so the live TMM env does NOT distinguish the two paths -- the
+      # operator binary is the evidence, not the running pod.
       {
         name  = "ENABLE_K8S_ROUTES"
         value = "true"

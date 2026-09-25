@@ -6,6 +6,42 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Documentation
+
+- **`ENABLE_K8S_ROUTES` is read by the lifecycle operator, not by TMM — and it
+  must not be removed** (#307, closed as not-a-defect).
+
+  #307 reported it as emitted on 2.4 but "read by nothing", and proposed
+  deleting it. That was measured against the TMM image alone. Pulling and
+  grepping the other two images settles it:
+
+  | image | `ENABLE_K8S_ROUTES` |
+  | --- | --- |
+  | `tmm-img:v10.204.15-0.1.46` (2.4.0 GA) | 0 occurrences |
+  | `f5ingress:v14.91.12-0.4.7` (CNE controller) | 0 occurrences, across all 2766 files |
+  | `f5-lifecycle-operator:v2.30.0-0.5.2` | **present**, with `Found ENABLE_K8S_ROUTES` and `error parsing ENABLE_K8S_ROUTES env var: %w`, beside `Adding TMM TMM_K8S_ROUTES environment variables` |
+
+  So `ENABLE_K8S_ROUTES` and `TMM_K8S_ROUTES` are the two ends of one control
+  split across components: FLO parses the first, `/opt/bin/mapres` in the TMM
+  image reads the second to decide whether to install the ipv4/ipv6 gateway
+  rule. Removing either changes behaviour on every 2.4 install.
+
+  Nothing ships differently. What changes is the comment — which grouped it with
+  `TMM_IGNORE_GATEWAYS` and `DISABLE_HT` as "TMM settings" — and PRD 18, whose
+  `advanced.tmm.env` table said 2.4 drops `PAL_CPU_SET` and `TMM_K8S_ROUTES`.
+  That table is what produced #308 (closed unmerged; it would have stripped a
+  live gateway-rule control from every 2.4 cluster) and then #307. **Where F5's
+  reference document and the shipped binary disagree, we follow the binary.**
+
+  Guarded now, because twice is enough: tests assert `ENABLE_K8S_ROUTES` is
+  emitted on 2.4, absent on 2.3, and that `TMM_K8S_ROUTES` is present on both
+  lines. Deleting the variable fails the build.
+
+  Method note for whoever checks this next: the operator ships no shell, so
+  `kubectl exec` cannot grep it — pull the image. And use `strings -a`, not
+  `grep`: plain `grep` finds nothing in a 95 MB statically linked Go binary and
+  returns a confident zero even for variables the component demonstrably reads.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**

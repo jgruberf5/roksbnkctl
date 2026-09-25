@@ -96,17 +96,36 @@ Confirmed differences in the CNEInstance body (guide pp. 9–13 vs
 | `advanced.externalBigip.env` | absent | `ENABLE_EXT_BIGIP_DATASERVER_MONITOR`, `ENABLE_EXT_BIGIP_POOL_MONITOR`, `EXTERNAL_BIGIP_LOGIN_SECRET: f5-bigip-ctlr-login`, `CLUSTER_IDENTIFIER` |
 | `advanced.demoMode.enabled` | `true` | `false` |
 | `advanced.tmm.rollingUpdate` | absent | `maxUnavailable: 1, maxSurge: 0` |
-| `advanced.tmm.env` | `TMM_CALICO_ROUTER`, `TMM_DEFAULT_MTU`, `PAL_CPU_SET`, `TMM_MAPRES_ADDL_VETHS_ON_DP`, `TMM_K8S_ROUTES` | same minus `PAL_CPU_SET` and `TMM_K8S_ROUTES`, plus `TMM_IGNORE_GATEWAYS: "true"`, `DISABLE_HT: "true"`, **`ENABLE_K8S_ROUTES: "true"`** |
+| `advanced.tmm.env` | `TMM_CALICO_ROUTER`, `TMM_DEFAULT_MTU`, `PAL_CPU_SET`, `TMM_MAPRES_ADDL_VETHS_ON_DP`, `TMM_K8S_ROUTES` | F5's reference drops `PAL_CPU_SET` and `TMM_K8S_ROUTES` and adds `TMM_IGNORE_GATEWAYS: "true"`, `DISABLE_HT: "true"`, `ENABLE_K8S_ROUTES: "true"`. **We keep all of them** — both dropped names are live in the shipped 2.4 GA artifacts (#307) |
 | `advanced.cneController.env` | `TMM_DEFAULT_MTU`, `CLOUD_ENV`, `CLOUD_PROVIDER`, `CLOUD_NETWORK_CONFIGMAP`, `VPC_NAME`, `CLOUD_REGION`, `IBM_TRUSTED_PROFILE_ID`, `GSLB_DATACENTER_NAME`, `CLOUD_VPC`, `CLOUD_TRUSTED_PROFILE` | `TMM_DEFAULT_MTU`, `CLOUD_ENV`, `CLOUD_PROVIDER`, `CLOUD_TRUSTED_PROFILE`, `GSLB_DATACENTER_NAME`, **`USE_GATEWAY_SETTINGS: "true"`** |
 | `advanced.ipamController.env` | absent | optional Infoblox block (`PROVIDER`, `INFOBLOX_*`, `CREDENTIAL_SECRET`, `CERTIFICATE_SECRET`, `INSECURE`) |
 | `networkAttachments` | `["ens3-ipvlan-l2", "macvlan-conf"]` | `["ens3-ipvlan-l2"]` only |
 
 Two notes on the env list:
 
-- `TMM_K8S_ROUTES` (a CIDR) appears to become `ENABLE_K8S_ROUTES` (a boolean).
-  If so, `bnk.network.tmm_k8s_routes` is inert under 2.4 — same class of problem
-  as the self-IPs. **Must verify**, because the alternative reading is that
-  `ENABLE_K8S_ROUTES` merely gates a route set the controller now derives itself.
+- `TMM_K8S_ROUTES` (a CIDR) vs `ENABLE_K8S_ROUTES` (a boolean) — **RESOLVED
+  (#307), and it is the alternative reading, not the replacement one.** They are
+  the two ends of one control, split across components:
+
+  | name | read by | evidence |
+  |---|---|---|
+  | `ENABLE_K8S_ROUTES` | `f5-lifecycle-operator` | `Found ENABLE_K8S_ROUTES`, `error parsing ENABLE_K8S_ROUTES env var: %w` |
+  | `TMM_K8S_ROUTES` | `/opt/bin/mapres` in the TMM image | `--tmm-k8s-routes`, `Skip adding ipv4 gw rule to %s as TMM_K8S_ROUTES is enabled` |
+
+  Neither name appears anywhere in the `f5ingress` CNE-controller image — 0
+  occurrences across all 2766 files of `v14.91.12-0.4.7`. The operator binary
+  carries `Adding TMM TMM_K8S_ROUTES environment variables` a few bytes from the
+  `ENABLE_K8S_ROUTES` strings.
+
+  So `bnk.network.tmm_k8s_routes` is **NOT inert** under 2.4, and neither
+  variable should be dropped. Verified against `f5-lifecycle-operator:v2.30.0-0.5.2`
+  and `tmm-img:v10.204.15-0.1.46`, both pulled with the production FAR key.
+
+  **This entry was wrong twice.** It was written from F5's reference document,
+  which produced #308 (closed unmerged — it would have stripped a live
+  gateway-rule control from every 2.4 cluster), and then #307, which concluded
+  "read by nothing" after checking only the TMM image. Where the reference
+  document and the shipped binary disagree, **the binary is what we follow.**
 - The guide's *prose* ("Change the variables in cneinstance-cr.yaml") lists
   `CLOUD_VPC` and `CLOUD_REGION` as things to set, but the sample YAML on the
   same page omits both. That is an internal inconsistency in the EA document.
@@ -482,8 +501,10 @@ without Step 7.
 
 Each of these changes the design, not just a value:
 
-1. **`ENABLE_K8S_ROUTES` vs `TMM_K8S_ROUTES`** — boolean replacement, or an
-   additional gate? Determines whether `bnk.network.tmm_k8s_routes` survives.
+1. ~~**`ENABLE_K8S_ROUTES` vs `TMM_K8S_ROUTES`** — boolean replacement, or an
+   additional gate?~~ **RESOLVED (#307): an additional gate.** FLO reads
+   `ENABLE_K8S_ROUTES`; `mapres` in the TMM image reads `TMM_K8S_ROUTES`.
+   `bnk.network.tmm_k8s_routes` survives. See the env-list note above.
 2. **`CLOUD_VPC` / `CLOUD_REGION`** — the guide's prose and its YAML disagree.
    If the controller now discovers both from the trusted profile, our emitting
    them is harmless; if it validates its env, it is not.
