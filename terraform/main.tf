@@ -311,27 +311,28 @@ module "testing" {
   source         = "./modules/testing"
   cluster_absent = var.cluster_absent
 
-  ibmcloud_api_key                     = var.ibmcloud_api_key
-  ibmcloud_cluster_region              = var.ibmcloud_cluster_region
-  ibmcloud_resource_group              = var.ibmcloud_resource_group
-  roks_cluster_name_or_id              = module.roks_cluster.roks_cluster_name
-  testing_transit_gateway_name         = module.roks_cluster.transit_gateway_name
-  testing_create_tgw_jumphost          = var.testing_create_tgw_jumphost
-  testing_create_cluster_jumphosts     = var.testing_create_cluster_jumphosts
-  testing_ssh_key_name                 = var.testing_ssh_key_name
-  testing_jumphost_profile             = var.testing_jumphost_profile
-  testing_min_vcpu_count               = var.testing_min_vcpu_count
-  testing_min_memory_gb                = var.testing_min_memory_gb
-  testing_create_client_vpc            = var.testing_create_client_vpc
-  testing_client_vpc_name              = var.testing_client_vpc_name
-  testing_client_vpc_region            = var.testing_client_vpc_region
-  testing_tgw_jumphost_name            = var.testing_tgw_jumphost_name
-  testing_cluster_jumphost_name_prefix = var.testing_cluster_jumphost_name_prefix
-  testing_jumphost_allowed_cidrs       = var.testing_jumphost_allowed_cidrs
-  testing_client_vpc_inbound_cidrs     = var.testing_client_vpc_inbound_cidrs
-  cluster_vpc_id                       = module.roks_cluster.roks_cluster_vpc_id
-  roks_cluster_dependency_id           = module.roks_cluster.cluster_ready_id
-  create_roks_cluster                  = var.create_roks_cluster
+  ibmcloud_api_key                        = var.ibmcloud_api_key
+  ibmcloud_cluster_region                 = var.ibmcloud_cluster_region
+  ibmcloud_resource_group                 = var.ibmcloud_resource_group
+  roks_cluster_name_or_id                 = module.roks_cluster.roks_cluster_name
+  testing_transit_gateway_name            = module.roks_cluster.transit_gateway_name
+  testing_create_tgw_jumphost             = var.testing_create_tgw_jumphost
+  testing_create_cluster_jumphosts        = var.testing_create_cluster_jumphosts
+  testing_ssh_key_name                    = var.testing_ssh_key_name
+  testing_jumphost_profile                = var.testing_jumphost_profile
+  testing_jumphost_total_volume_bandwidth = var.testing_jumphost_total_volume_bandwidth
+  testing_min_vcpu_count                  = var.testing_min_vcpu_count
+  testing_min_memory_gb                   = var.testing_min_memory_gb
+  testing_create_client_vpc               = var.testing_create_client_vpc
+  testing_client_vpc_name                 = var.testing_client_vpc_name
+  testing_client_vpc_region               = var.testing_client_vpc_region
+  testing_tgw_jumphost_name               = var.testing_tgw_jumphost_name
+  testing_cluster_jumphost_name_prefix    = var.testing_cluster_jumphost_name_prefix
+  testing_jumphost_allowed_cidrs          = var.testing_jumphost_allowed_cidrs
+  testing_client_vpc_inbound_cidrs        = var.testing_client_vpc_inbound_cidrs
+  cluster_vpc_id                          = module.roks_cluster.roks_cluster_vpc_id
+  roks_cluster_dependency_id              = module.roks_cluster.cluster_ready_id
+  create_roks_cluster                     = var.create_roks_cluster
 }
 
 

@@ -154,6 +154,44 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   guard, whose reasons are different and worse; this one deliberately hands that
   case over rather than reporting twice for one edit.
 
+- **Jumphosts now pin `total_volume_bandwidth`, so a profile downsize stays
+  possible** (#316).
+
+  The attribute is optional+computed on `ibm_is_instance`. Left unset, IBM fills
+  it from the profile at **creation** — 20000 Mbps for a `bx2-128x512` — and
+  terraform records it in state. A later profile change carries that stored
+  value into the update, and the API rejects the whole thing:
+
+  ```
+  instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+  must not be greater than max volume bandwidth 3500Mbps
+  ```
+
+  It rejects it **after stopping the VM**, leaving it stopped on the old
+  profile. That is what made #312's remediation fail in practice.
+
+  New jumphosts pin `1000` (`testing_jumphost_total_volume_bandwidth`), which is
+  ample for machines running `curl`, `iperf3` and a small echo server, and is
+  below the ceiling of every profile the auto-select can reach. With a modest
+  stored value, resizing down no longer trips the limit.
+
+  **This prevents the trap; it does not clear it.** A jumphost created before
+  this release still carries the oversized value in its state, and this change
+  is not verified to rescue one — the API's validation order is unknown and this
+  session had no account to test it against. For existing oversized jumphosts
+  the verified paths remain:
+
+  ```
+  roksbnkctl testing down && roksbnkctl testing up      # recommended
+  ```
+
+  or, in place:
+
+  ```
+  ibmcloud is instance-update <vm> --profile bx2-2x8 --total-volume-bandwidth 1000
+  ibmcloud is instance-start <vm>
+  ```
+
 ### Security
 
 - **The gateway phase opened UDP 6789 inbound on every worker node from

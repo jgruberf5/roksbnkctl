@@ -73,6 +73,12 @@ variable "testing_jumphost_profile" {
   default     = ""
 }
 
+variable "testing_jumphost_total_volume_bandwidth" {
+  description = "Volume bandwidth (Mbps) pinned on each jumphost. IBM computes this from the profile at creation and terraform carries the stored value into a later profile change, so an unmanaged value taken from an oversized profile makes a downsize impossible (#316). 1000 is ample for jumphosts, which run curl/iperf3 and no disk-heavy work, and is below the ceiling of every profile the auto-select can pick."
+  type        = number
+  default     = 1000
+}
+
 variable "testing_min_vcpu_count" {
   description = "Minimum vCPU count when auto-selecting the instance profile"
   type        = number
