@@ -253,7 +253,10 @@ roksbnkctl testing down
 roksbnkctl testing up
 ```
 
-Resizing in place is the tempting move and it does not work. `total_volume_bandwidth`
+From **v1.64.0** new jumphosts pin `total_volume_bandwidth` to 1000 Mbps
+(`testing_jumphost_total_volume_bandwidth`), which keeps a later downsize
+possible. Jumphosts created *before* that release do not carry the pin, and for
+them resizing in place is the tempting move and it does not work. `total_volume_bandwidth`
 is set by the API from the profile at creation and carried in state, so shrinking
 the profile is rejected —
 
