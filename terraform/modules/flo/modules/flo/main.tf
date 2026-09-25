@@ -900,6 +900,24 @@ resource "helm_release" "flo" {
   # the helm provider loads it from disk and does NO OCI login — the login's
   # credential-store step fails on Windows, and dropping the creds pulls anonymously.
   chart            = local.flo_chart_archive
+  # Pin the version terraform PLANS, or a manifest bump can never apply.
+  #
+  # `chart` is a local archive path, so `version` is a COMPUTED attribute: with it
+  # unset, terraform carries the prior state value into the plan (v2.30.0-0.1.27 on
+  # an EA install), the provider then loads the newly-staged GA archive and returns
+  # v2.30.0-0.5.2, and terraform aborts the apply with
+  #
+  #   Provider produced inconsistent final plan ... .version: was
+  #   cty.StringVal("v2.30.0-0.1.27"), but now cty.StringVal("v2.30.0-0.5.2")
+  #
+  # blaming the helm provider for what is really an unpredictable planned value.
+  # Re-running does NOT converge: the archive path on disk moves forward while
+  # state keeps the old version, so every retry reproduces it. Hit upgrading a live
+  # 2.4.0-EA workspace to the 2.4.0 GA manifest.
+  #
+  # flo_chart_version is the same value that builds flo_chart_archive, so the
+  # planned version and the staged chart can never disagree.
+  version          = local.flo_chart_version
   namespace        = var.flo_namespace
   create_namespace = false
 

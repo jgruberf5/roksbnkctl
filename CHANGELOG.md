@@ -81,6 +81,31 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   floating IP and its security groups; moving those into the COS's group would
   have been a worse bug than the one being fixed.
 
+- **A `bnk.manifest_version` bump could not apply** (#309, layer 1). `helm_release.flo`
+  installs from a locally-staged archive, so `chart` is a file path and `version` was
+  left unset — making it a *computed* attribute. Terraform carried the prior state
+  value into the plan, the provider then loaded the newly-staged archive and returned
+  a different version, and the apply died:
+
+  ```
+  Provider produced inconsistent final plan
+    module.flo.module.flo.helm_release.flo[0]
+    .version: was cty.StringVal("v2.30.0-0.1.27"), but now cty.StringVal("v2.30.0-0.5.2")
+  ```
+
+  blaming the helm provider for an unpredictable planned value. **Re-running did not
+  work around it** — the stale value lives in terraform state, not on disk, so every
+  retry reproduced it identically.
+
+  `version` is now pinned to `local.flo_chart_version`, the same value that builds
+  `flo_chart_archive`, so the planned version and the staged chart cannot disagree.
+  Verified in production upgrading `sm-cli` from `2.4.0-EA` to the `2.4.0` GA
+  manifest: the GA FLO operator deployed (`f5-lifecycle-operator:v2.30.0-0.5.2`).
+
+  This is **one of two** defects blocking an in-place manifest bump. The other — the
+  CNEManifest rename being planned as an in-place update — is still open on #309, so
+  a manifest bump still needs `bnk down` + `bnk up`.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**
