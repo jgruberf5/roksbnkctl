@@ -6,6 +6,42 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`cleanup` could delete a COS instance — or a cluster, VPC, transit gateway
+  or SSH key — that the workspace ADOPTED rather than created** (#302).
+
+  The sweep finds orphans by name prefix, and an adopted resource matches
+  exactly like one the tool made: `matchesPrefix("sm-cli-registry-cos",
+  "sm-cli")` is true. Nothing in the confirmation list marked it, and `--auto`
+  skips the list entirely.
+
+  This bites hardest where adopting is the only option. `registry_cos.create:
+  false` exists for the `RC-InstanceCountExceeded` case — the account is at its
+  COS cap — so deleting the adopted instance is not "re-run and it comes back",
+  and it backs a live cluster's internal registry.
+
+  `cleanup` now reads the workspace's adopt decisions and protects what they
+  name, across **every** path where roksbnkctl reads a resource it never
+  creates: `cluster.name` (with `create: false`),
+  `resources.transit_gateway.existing`, `resources.registry_cos.existing`,
+  `resources.client_vpc.existing`, `resources.cluster_vpc.existing` (a VPC
+  **ID**, not a name) and `resources.testing_ssh_key_name`. #302 traced only the
+  COS path and said the others were unverified — they have the same defect, and
+  the SSH key has no `create` toggle at all because the testing module only ever
+  reads it through a `data` source.
+
+  Protected resources are still **listed**, separately, with the config key that
+  spared them — an operator who cannot see why something was skipped will delete
+  it by hand. And they are removed from the set *before* the confirmation step,
+  so the delete loop never sees one: `--auto` skips the prompt, not the
+  protection.
+
+  `terraform` was never the danger. Adopted resources are read through `data`
+  sources and data sources are never destroyed, so `down` was always safe. Only
+  `cleanup`'s independent sweep could reach them, precisely because it does not
+  consult terraform state — which is both the feature and was the defect.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**
