@@ -6,6 +6,10 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+## v1.64.0 — 2026-09-25
+
+**Seven severity high and medium defects, four of them things the tool did to a customer's cluster without being asked: deleted an adopted COS, opened a worker port to the world, linked a Trusted Profile nothing could assume, and billed $440/day for jumphosts that run `curl`.**
+
 ### Fixed
 
 - **Every BNK 2.4 install linked its Trusted Profile to a service account that
