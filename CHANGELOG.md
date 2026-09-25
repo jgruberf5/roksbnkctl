@@ -1954,7 +1954,6 @@ also **faster** than before despite matching ~6x more patterns, because secrets
 are now indexed by first byte.
 
 ### Added
-
 - `exitcode.SelfUpdateStranded` (**125**) — an upgrade that left no binary at
   the install path. Documented in chapters 7a and 17. (#154)
 - `RegistryMirror.MissingCount` — a mirror record can now say its replicate did
@@ -1966,7 +1965,6 @@ are now indexed by first byte.
   two full passes. (#143)
 
 ### Fixed
-
 - The provider lockfile is embedded and seeded rather than absent. (#147)
 - The credential redactor covers base64 forms, standard and URL alphabets,
   standalone and embedded. (#145)
@@ -1981,7 +1979,6 @@ are now indexed by first byte.
 - `bnk up` refuses an incomplete mirror record. (#150)
 
 ### Changed
-
 - Provider constraints bounded with `~>`; `tls`, `time`, `local` and `external`
   are now declared at the root, where a bound governs the whole tree. They were
   declared only in submodules with bare `>=`, so nothing bounded them. (#147)
@@ -1989,7 +1986,6 @@ are now indexed by first byte.
   `platform-services-go-sdk` 0.103.0. (#138)
 
 ### Testing
-
 - The argv subprocess test built a 112MB binary into a fresh tempdir on every
   run and never removed it; 94 runs filled a 16GB `/tmp` and surfaced as a
   linker error in an unrelated package. Now built to a fixed, self-truncating
