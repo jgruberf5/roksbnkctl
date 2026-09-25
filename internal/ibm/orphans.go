@@ -28,6 +28,62 @@ type OrphanResource struct {
 	// THIS sweep is deleting is a CRN comparison. Empty for surfaces that do not
 	// publish one; never used for deletion (that is always ID).
 	CRN string
+
+	// Protected marks a resource the sweep FOUND but must not delete, because
+	// the workspace adopted it rather than creating it (#302). The name match
+	// that finds orphans cannot tell the two apart: a workspace with prefix
+	// `sm-cli` adopting `sm-cli-registry-cos` matches its own prefix exactly.
+	//
+	// Reported rather than silently dropped — an operator who cannot see why a
+	// resource was spared will delete it by hand.
+	Protected bool
+	// ProtectedBy names the config key that spared it, e.g.
+	// "resources.registry_cos.existing".
+	ProtectedBy string
+}
+
+// AdoptedRef names one resource the workspace ADOPTED. The sweep matches
+// resources by `<prefix>-*` name and has no other notion of ownership, so
+// adoption has to be supplied from the workspace config.
+type AdoptedRef struct {
+	// Kind is the orphan kind this may protect. Empty matches any kind, which
+	// is deliberate for values that could land on more than one surface.
+	Kind string
+	// Value is the name, ID or CRN exactly as the workspace config carries it.
+	Value string
+	// Source is the config key, shown to the operator.
+	Source string
+}
+
+// markProtected flags every found resource that an AdoptedRef names.
+//
+// This is applied ONCE, to the whole result, rather than at each discovery
+// site. Five surfaces append to `found`, and a per-site check is a rule a
+// sixth surface can be added without. The cost of forgetting it is deleting a
+// customer's resource, so the check lives where nothing can route around it.
+func markProtected(found []OrphanResource, adopted []AdoptedRef) []OrphanResource {
+	for i := range found {
+		for _, a := range adopted {
+			if a.Value == "" {
+				continue
+			}
+			if a.Kind != "" && a.Kind != found[i].Kind {
+				continue
+			}
+			// IBM resource names are case-insensitive in practice and an
+			// operator may write either case in config; CRNs and IDs are
+			// compared the same way because a case difference there is a typo,
+			// not a different resource.
+			if strings.EqualFold(a.Value, found[i].Name) ||
+				strings.EqualFold(a.Value, found[i].ID) ||
+				strings.EqualFold(a.Value, found[i].CRN) {
+				found[i].Protected = true
+				found[i].ProtectedBy = a.Source
+				break
+			}
+		}
+	}
+	return found
 }
 
 // SweepScope bounds the orphan search: the workspace prefix every resource is
@@ -38,6 +94,10 @@ type SweepScope struct {
 	Prefix    string
 	ClusterID string
 	Regions   []string
+	// Adopted lists resources the workspace reuses rather than owns. They are
+	// still discovered and still reported, but marked Protected so no caller
+	// can delete them — including `cleanup --auto`, which skips the prompt.
+	Adopted []AdoptedRef
 }
 
 // OrphanKindOrder returns the teardown priority for a kind (lower = delete
@@ -210,7 +270,7 @@ func (c *Client) FindOrphans(ctx context.Context, scope SweepScope) ([]OrphanRes
 		}
 	}
 
-	return found, nil
+	return markProtected(found, scope.Adopted), nil
 }
 
 // findBNKTrustedProfile locates the FLO CNE-controller trusted profile for a
@@ -248,7 +308,24 @@ func (c *Client) findBNKTrustedProfile(ctx context.Context, clusterID string) (*
 // reads it, and it must: a gateway cannot be deleted while anything is attached,
 // and whether detaching a given network is in scope depends on whether the
 // sweep is deleting that network too. Pass the full discovered set.
+// ErrProtectedResource is returned when something asks to delete a resource the
+// workspace adopted. It is not recoverable by retrying.
+var ErrProtectedResource = errors.New("refusing to delete a resource this workspace adopted")
+
 func (c *Client) DeleteOrphan(ctx context.Context, o OrphanResource, sweep []OrphanResource) error {
+	// The second layer, and the one that matters. cleanup already removes
+	// protected resources from the set it iterates — but that is a property of
+	// the CALLER, and a caller can be changed. A mutation that pointed the
+	// delete loop at the unfiltered slice compiled, passed every test, and
+	// deleted the customer's adopted COS (#302).
+	//
+	// So the refusal also lives here, at the point of no return, where every
+	// kind funnels through one switch. Deleting an adopted resource now takes
+	// two independent mistakes rather than one.
+	if o.Protected {
+		return fmt.Errorf("%w: %s %s (adopted via %s)", ErrProtectedResource, o.Kind, o.Name, o.ProtectedBy)
+	}
+
 	switch o.Kind {
 	case "instance", "floating_ip", "public_gateway", "subnet", "security_group", "ssh_key", "vpc":
 		collection := vpcCollectionFor(o.Kind)

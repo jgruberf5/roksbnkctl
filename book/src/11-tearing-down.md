@@ -162,6 +162,53 @@ Everything whose name is the workspace prefix or a `<prefix>-` child, across:
 
 Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is **best-effort**: a failure on one resource is reported and the sweep continues. Re-run `cleanup` for anything blocked on an async delete (e.g. a VPC that can't go until its cluster finishes terminating).
 
+### What it will NOT delete: resources this workspace adopted
+
+A name match cannot tell a resource `roksbnkctl` **created** from one the
+workspace **adopted**. They look identical, and the adopted name usually matches
+the prefix exactly — a workspace with prefix `sm-cli` adopting
+`sm-cli-registry-cos` is the motivating case.
+
+So `cleanup` reads the workspace's adopt decisions and refuses to delete what
+they name. Adopted resources are still listed, separately, with the config key
+that spared them:
+
+```
+2 resource(s) match the prefix but are ADOPTED by this workspace and will NOT be deleted:
+
+KIND          NAME                 REGION    ADOPTED VIA
+cos_instance  sm-cli-registry-cos            resources.registry_cos.existing
+cluster       sm-cli               us-east   cluster.name (create: false)
+  (roksbnkctl never created these; remove the config key if you want cleanup to own them)
+```
+
+The protected set is every path where `roksbnkctl` reads a resource it never
+creates:
+
+| Config key | Kind |
+| --- | --- |
+| `cluster.name` with `create: false` | the ROKS cluster |
+| `resources.transit_gateway.existing` | transit gateway |
+| `resources.registry_cos.existing` | COS instance |
+| `resources.client_vpc.existing` | VPC (by name) |
+| `resources.cluster_vpc.existing` | VPC (by **ID**) |
+| `resources.testing_ssh_key_name` | SSH key |
+
+The SSH key has no `create` toggle because it is never created: the testing
+module reaches it only through a `data` source, so whenever it is named, it is
+adopted.
+
+> **This is why `--auto` is safe to schedule.** Protected resources are removed
+> from the set *before* the confirmation step, so the delete loop never sees
+> one. `--auto` skips the prompt, not the protection.
+
+Note that `terraform` was never the danger here. Adopted resources are read
+through `data` sources, and data sources are never destroyed — so `down` was
+always safe. It is `cleanup`'s independent sweep that can reach them, precisely
+because it does not consult Terraform state at all. That independence is the
+feature (it catches what state lost) and was the defect (it caught what state
+never owned).
+
 ### How the Transit Gateway is handled
 
 A gateway cannot be deleted while anything is attached to it, so `cleanup` detaches its connections first, **waits for them to actually clear**, and only then deletes the gateway. The detach is asynchronous — IBM leaves the connection in `deleting` for a few seconds — and deleting the gateway during that window fails with:
