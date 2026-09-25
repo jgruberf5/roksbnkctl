@@ -220,6 +220,60 @@ roksbnkctl testing down   # destroys the jumphosts; cluster + BNK untouched
 Because each phase owns a separate state directory, `bnk down` physically
 cannot touch `state-testing/`, and `testing down` cannot touch `state/`.
 
+## Jumphost sizing, and why it is worth checking once
+
+`testing up` picks the jumphost instance profile itself unless
+`resources.testing_jumphost_profile` names one. The intent is the **smallest**
+profile meeting `testing_min_vcpu_count` (4) and `testing_min_memory_gb` (8) —
+these VMs run `curl`, `iperf3` and a small echo server, nothing more.
+
+Through **v1.63.0** it picked the largest instead. The selection sorted profile
+*names*, and `sort()` is lexicographic, so among the eligible `bx2` profiles
+
+```
+"bx2-128x512" < "bx2-16x64" < "bx2-2x8" < "bx2-32x128" < "bx2-4x16"
+```
+
+and the first element was a 128 vCPU / 512 GB machine — roughly **$6/hour each**,
+about **$440/day** for a three-zone cluster jumphost set. Fixed in v1.64.0.
+
+### If you already have oversized jumphosts
+
+Check before upgrading:
+
+```
+ibmcloud is instances --output json | jq -r '.[] | select(.name|test("jumphost")) | "\(.name) \(.profile.name)"'
+```
+
+If they are `bx2-128x512` (or anything larger than you expect), **recreate them
+rather than resizing in place**:
+
+```
+roksbnkctl testing down
+roksbnkctl testing up
+```
+
+From **v1.64.0** new jumphosts pin `total_volume_bandwidth` to 1000 Mbps
+(`testing_jumphost_total_volume_bandwidth`), which keeps a later downsize
+possible. Jumphosts created *before* that release do not carry the pin, and for
+them resizing in place is the tempting move and it does not work. `total_volume_bandwidth`
+is set by the API from the profile at creation and carried in state, so shrinking
+the profile is rejected —
+
+```
+instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+must not be greater than max volume bandwidth 3500Mbps
+```
+
+— and the apply stops the VMs *before* it fails, leaving them **stopped on the
+old profile**. If you are already in that state, recover out of band and then
+re-run `testing up`, which will plan no further change:
+
+```
+ibmcloud is instance-update <vm> --profile bx2-2x8 --total-volume-bandwidth 1000
+ibmcloud is instance-start <vm>
+```
+
 ## Reuse an existing cluster
 
 If you already have a ROKS cluster (yours or a teammate's), skip the Cluster
@@ -333,6 +387,32 @@ come from the BNK 2.3 install guide; override the HTTPRoute backend, client
 subnets, egress mode (`snatpool`/`automap`/`both`) and VXLAN port via the
 `config.yaml` `gateway` block. `cluster down` refuses while the Gateway phase
 has resources, so tear it down first (`gateway down`).
+
+### The VXLAN security-group rule, and what it opens
+
+The gateway phase adds one inbound rule to the **cluster's own worker security
+group** (`kube-<cluster-id>`), permitting the egress VXLAN port (UDP 6789 by
+default, `gateway.vxlan_port`).
+
+This rule is **required, not hardening**. TMM answers a remote node's VXLAN from
+its *external-VLAN self-IP*, and the workers' security group does not otherwise
+admit that source — so without the rule, egress from any node that is not itself
+running a TMM fails.
+
+Through **v1.63.0** the rule permitted `0.0.0.0/0`. From v1.64.0 it is scoped to
+the per-zone external-VLAN CIDRs (`resources`/`bnk` zone config
+`ext_vlan_cidr`), one rule per CIDR, because those are the only addresses a TMM
+self-IP can have. That matters because this rule sits on a security group shared
+by everything else running on those workers.
+
+> **Upgrading replaces the rule rather than editing it.** The resource moved from
+> `count` to `for_each`, so terraform removes the single open rule and creates
+> the scoped ones; ordering is not guaranteed, so run `gateway up` when a few
+> seconds of egress disruption is acceptable.
+
+If every zone's `ext_vlan_cidr` is empty, `gateway up` now **fails at plan time**
+rather than silently creating no rule and leaving egress broken with nothing
+naming the cause.
 
 ## Cross-references
 

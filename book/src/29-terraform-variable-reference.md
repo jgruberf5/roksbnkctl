@@ -74,6 +74,7 @@ Source: `terraform/variables.tf`
 | `testing_create_cluster_jumphosts` | `bool` | `false` | Create one jumphost per availability zone directly inside the cluster VPC | no |
 | `testing_ssh_key_name` | `string` | `""` | Name of the IBM Cloud SSH key to inject into all jumphosts | no |
 | `testing_jumphost_profile` | `string` | `""` | Instance profile for all jumphosts (leave empty to auto-select based on min_vcpu_count and min_memory_gb) | no |
+| `testing_jumphost_total_volume_bandwidth` | `number` | `1000` | Volume bandwidth (Mbps) pinned on each jumphost. IBM computes this from the profile at creation and terraform carries the stored value into a later profile change, so an unmanaged value taken from an oversized profile makes a downsize impossible (#316). 1000 is ample for jumphosts, which run curl/iperf3 and no disk-heavy work, and is below the ceiling of every profile the auto-select can pick. | no |
 | `testing_min_vcpu_count` | `number` | `4` | Minimum vCPU count when auto-selecting the jumphost instance profile | no |
 | `testing_min_memory_gb` | `number` | `8` | Minimum memory in GB when auto-selecting the jumphost instance profile | no |
 | `testing_create_client_vpc` | `bool` | `false` | Create a new client VPC for the TGW jumphost. When false, testing_client_vpc_name must reference an existing VPC. | no |
@@ -498,6 +499,7 @@ Source: `terraform/modules/testing/variables.tf`
 | `testing_create_cluster_jumphosts` | `bool` | `false` | Create one jumphost per availability zone directly inside the cluster VPC | no |
 | `testing_ssh_key_name` | `string` | `""` | Name of the SSH key to inject into all jumphosts. Must exist in client_vpc_region (for TGW jumphost) and in ibmcloud_cluster_region (for cluster jumphosts) | no |
 | `testing_jumphost_profile` | `string` | `""` | Instance profile for all jumphosts (leave empty to auto-select from min_vcpu_count and min_memory_gb) | no |
+| `testing_jumphost_total_volume_bandwidth` | `number` | `1000` | Volume bandwidth (Mbps) pinned on each jumphost. IBM computes this from the profile at creation and terraform carries the stored value into a later profile change, so an unmanaged value taken from an oversized profile makes a downsize impossible (#316). 1000 is ample for jumphosts, which run curl/iperf3 and no disk-heavy work, and is below the ceiling of every profile the auto-select can pick. | no |
 | `testing_min_vcpu_count` | `number` | `4` | Minimum vCPU count when auto-selecting the instance profile | no |
 | `testing_min_memory_gb` | `number` | `8` | Minimum memory in GB when auto-selecting the instance profile | no |
 | `testing_create_client_vpc` | `bool` | `false` | Create a new client VPC for the TGW jumphost. When false, client_vpc_name must reference an existing VPC | no |

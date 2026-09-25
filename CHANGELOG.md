@@ -6,6 +6,262 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **Every BNK 2.4 install linked its Trusted Profile to a service account that
+  does not exist, so the CNE controller programmed no VPC routes and no traffic
+  passed in either direction** (#313). Reported against a 2.4.0-EA install.
+
+  The link is a MATCHER: IBM IAM compares a pod's service-account token against
+  `crn` / `namespace` / `name` with `EQUALS`. The name was hard-coded to FLO's
+  2.3 helm construction,
+  `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount`, in both
+  the `flo` and `cne_instance` modules. On 2.4 the controller runs as plain
+  `f5-cne-controller`, confirmed on a 2.4.0 GA cluster: the pod's
+  `spec.serviceAccountName` is the short name and **no account carrying the long
+  suffix exists in any namespace**. The default is now gated on `bnk_line`.
+
+  The `cne_instance` module derives the same name independently, from the same
+  root variable, and both are fixed. That half is **inert on 2.4 today**: its
+  only consumer is the privileged-SCC assignment list, and 2.4 collapses that
+  list to a single entry (`flo-f5-lifecycle-operator`) that does not include the
+  controller's account. Evaluated rather than assumed — `local.scc_policy_assignments`
+  is 19 accounts on 2.3 and 1 on 2.4. It is fixed anyway so the two modules
+  cannot disagree if 2.4's SCC surface grows back, and a guard pins that.
+
+  What makes this worth reading rather than skimming: **the install reported
+  itself healthy throughout.** The controller logged `BXNIM0398E … no matching
+  rule or link found`, then fell back to `Cloud environment is not IBM or cloud
+  provider instance is nil` and skipped VPC address-prefix and route programming
+  — while `Infra`, `GatewaySettings`, `Gateway` and `EgressGateway` all reported
+  `Programmed=True`, because those conditions are computed without ever calling
+  the cloud. The book's 2.4 verification checks exactly those conditions, so it
+  passed. That gap is now stated in the 2.4 support-status table: **a
+  condition-based check cannot see this class of defect; only traffic can.**
+
+  Existing 2.4 installs do not need a rebuild. Add a second link for the real
+  account and restart the controller:
+
+  ```
+  ibmcloud iam trusted-profile-link-create <profile> --name f5-cne-controller-sa \
+    --cr-type ROKS_SA --link-crn <cluster-crn> \
+    --link-namespace f5-bnk --link-name f5-cne-controller
+  kubectl -n f5-bnk rollout restart deploy/f5-cne-controller
+  ```
+
+- **Jumphost auto-select picked the LARGEST eligible profile, not the smallest**
+  (#312, regression in v1.63.0 and earlier — introduced by `9f983fe`, v1.11.0).
+
+  `sort()` is lexicographic, and the selection sorted profile *names*, so among
+  the eligible `bx2` profiles `"bx2-128x512" < "bx2-16x64" < "bx2-2x8" <
+  "bx2-32x128" < "bx2-4x16"` and `[0]` was the biggest machine IBM offers in the
+  family. A workspace with `cluster_jumphosts.create: true` and no explicit
+  profile got three **128 vCPU / 512 GB** VMs — about **$6/hour each, $440/day**
+  — to run `curl`, `iperf3` and a small echo server.
+
+  The `sort()` was added in v1.11.0 to make the choice deterministic across
+  regions after the confidential-computing (`bx3dc`) fix. It did that, and made
+  the most expensive option the deterministic one. Both the TGW and cluster
+  jumphost paths had it.
+
+  Selection is now keyed on `format("%05d-%07d-%s", vcpu, memory, name)` —
+  zero-padded so it compares numerically, vCPU first, then memory, then name as
+  a stable tiebreak.
+
+  **If you already have oversized jumphosts, recreate them; do not resize in
+  place.** `roksbnkctl testing down && roksbnkctl testing up`.
+  `total_volume_bandwidth` is set by the API from the profile at creation and
+  carried in state, so shrinking the profile is rejected with
+  `total volume bandwidth 20000Mbps ... must not be greater than max volume
+  bandwidth 3500Mbps` — and the apply stops the VMs before it fails, leaving
+  them **stopped on the old profile**. Tracked separately as #316. The book's
+  three-phase-lifecycle chapter carries the check and the out-of-band recovery.
+
+- **`cleanup` could delete a COS instance — or a cluster, VPC, transit gateway
+  or SSH key — that the workspace ADOPTED rather than created** (#302).
+
+  The sweep finds orphans by name prefix, and an adopted resource matches
+  exactly like one the tool made: `matchesPrefix("sm-cli-registry-cos",
+  "sm-cli")` is true. Nothing in the confirmation list marked it, and `--auto`
+  skips the list entirely.
+
+  This bites hardest where adopting is the only option. `registry_cos.create:
+  false` exists for the `RC-InstanceCountExceeded` case — the account is at its
+  COS cap — so deleting the adopted instance is not "re-run and it comes back",
+  and it backs a live cluster's internal registry.
+
+  `cleanup` now reads the workspace's adopt decisions and protects what they
+  name, across **every** path where roksbnkctl reads a resource it never
+  creates: `cluster.name` (with `create: false`),
+  `resources.transit_gateway.existing`, `resources.registry_cos.existing`,
+  `resources.client_vpc.existing`, `resources.cluster_vpc.existing` (a VPC
+  **ID**, not a name) and `resources.testing_ssh_key_name`. #302 traced only the
+  COS path and said the others were unverified — they have the same defect, and
+  the SSH key has no `create` toggle at all because the testing module only ever
+  reads it through a `data` source.
+
+  Protected resources are still **listed**, separately, with the config key that
+  spared them — an operator who cannot see why something was skipped will delete
+  it by hand. And they are removed from the set *before* the confirmation step,
+  so the delete loop never sees one: `--auto` skips the prompt, not the
+  protection.
+
+  `terraform` was never the danger. Adopted resources are read through `data`
+  sources and data sources are never destroyed, so `down` was always safe. Only
+  `cleanup`'s independent sweep could reach them, precisely because it does not
+  consult terraform state — which is both the feature and was the defect.
+
+- **`bnk up` now refuses a `bnk.manifest_version` bump instead of starting an
+  apply that cannot finish** (#309, layer 2; layer 1 shipped in v1.63.0).
+
+  The manifest version names the CNEManifest object, so a bump **renames** it.
+  Terraform plans a rename as an in-place update and aborts with `Provider
+  produced inconsistent final plan`; re-running does not converge, because the
+  stale value is in terraform **state**, not on disk.
+
+  The reason this is worth a guard rather than a doc note: the apply does not
+  stop cleanly, it stops **partway**, having already rolled every pod. A retry
+  rolls them again — which is how a previous attempt exhausted the registry's
+  pull quota (`pull QPS exceeded`) and left `f5-cne-controller`, `f5-tmm` and
+  `f5-dssm-sentinel-2` in `ImagePullBackOff` with **no CNEManifest on the
+  cluster at all**. BNK was down, and nothing about the first failure suggested
+  a retry would make it worse.
+
+  The supported path is unchanged and now named in the refusal:
+
+  ```
+  roksbnkctl bnk down
+  roksbnkctl bnk up
+  ```
+
+  **Why not fix the rename instead.** Three mechanisms were evaluated and all
+  rejected — recorded so nobody re-treads them:
+
+  - `replace_triggered_by` on a `terraform_data` holding the version. Tried on a
+    live cluster: the trigger fires when the referenced resource *changes*, and
+    a first-time **create** is not a change, so it does nothing for the bump in
+    front of you. Error count went 7 → 15.
+  - A `moved` block. Requires static addresses; the target key depends on the
+    workspace's current version.
+  - Keying the resource on the manifest name with `for_each`, so a bump changes
+    the key and forces create/destroy. This *would* fix the first bump — but it
+    moves the address from `cnemanifest[0]` to `cnemanifest["bnk-2.4.0-ea"]`, so
+    **every existing workspace** would destroy and recreate its CNEManifest on
+    the next ordinary apply. Deleting the CNEManifest is exactly what left the
+    cluster broken above.
+
+  A **cross-line** change (2.3 → 2.4) is still refused by the separate line
+  guard, whose reasons are different and worse; this one deliberately hands that
+  case over rather than reporting twice for one edit.
+
+- **Jumphosts now pin `total_volume_bandwidth`, so a profile downsize stays
+  possible** (#316).
+
+  The attribute is optional+computed on `ibm_is_instance`. Left unset, IBM fills
+  it from the profile at **creation** — 20000 Mbps for a `bx2-128x512` — and
+  terraform records it in state. A later profile change carries that stored
+  value into the update, and the API rejects the whole thing:
+
+  ```
+  instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+  must not be greater than max volume bandwidth 3500Mbps
+  ```
+
+  It rejects it **after stopping the VM**, leaving it stopped on the old
+  profile. That is what made #312's remediation fail in practice.
+
+  New jumphosts pin `1000` (`testing_jumphost_total_volume_bandwidth`), which is
+  ample for machines running `curl`, `iperf3` and a small echo server, and is
+  below the ceiling of every profile the auto-select can reach. With a modest
+  stored value, resizing down no longer trips the limit.
+
+  **This prevents the trap; it does not clear it.** A jumphost created before
+  this release still carries the oversized value in its state, and this change
+  is not verified to rescue one — the API's validation order is unknown and this
+  session had no account to test it against. For existing oversized jumphosts
+  the verified paths remain:
+
+  ```
+  roksbnkctl testing down && roksbnkctl testing up      # recommended
+  ```
+
+  or, in place:
+
+  ```
+  ibmcloud is instance-update <vm> --profile bx2-2x8 --total-volume-bandwidth 1000
+  ibmcloud is instance-start <vm>
+  ```
+
+### Security
+
+- **The gateway phase opened UDP 6789 inbound on every worker node from
+  `0.0.0.0/0`** (#314).
+
+  The rule itself is required and stays: TMM answers a remote node's VXLAN from
+  its **external-VLAN self-IP**, which the cluster's worker security group does
+  not otherwise admit, so egress from any node not running a TMM fails without
+  it. The breadth was never required.
+
+  The senders are the TMM self-IPs, and those are by construction inside the
+  per-zone `ext_vlan_cidr`. On the verified 2.4 GA install the Infra CR's
+  external-vlan IPAM pools are `10.155.15.0/24`, `10.156.16.0/24`,
+  `10.157.17.0/24` and the controller reports self-IPs `10.155.15.2`,
+  `10.156.16.2`, `10.157.17.2`. The rule is now one per external-VLAN CIDR
+  instead of one open to the world.
+
+  This matters because the rule lands on the **cluster's own** worker security
+  group, shared by everything else on those nodes — a wider change to the
+  customer's cluster than the gateway phase needs to make, and it was made
+  silently.
+
+  **On upgrade the rule is replaced, not edited.** `count` became `for_each`, so
+  terraform destroys `vxlan_ingress[0]` and creates one rule per CIDR; ordering
+  is not guaranteed, so there may be a brief window during `gateway up` where
+  VXLAN ingress is partly permitted. Run it when a few seconds of egress
+  disruption is acceptable.
+
+  A plan-time precondition now fails if every zone has an empty `ext_vlan_cidr`,
+  which would otherwise create **no** rule at all and break egress with nothing
+  naming the cause. It sits on the security-group data source rather than the
+  rule, because `for_each` over an empty set creates no instances and a
+  precondition on the rule would be skipped in exactly the case that needs it.
+
+### Documentation
+
+- **`ENABLE_K8S_ROUTES` is read by the lifecycle operator, not by TMM — and it
+  must not be removed** (#307, closed as not-a-defect).
+
+  #307 reported it as emitted on 2.4 but "read by nothing", and proposed
+  deleting it. That was measured against the TMM image alone. Pulling and
+  grepping the other two images settles it:
+
+  | image | `ENABLE_K8S_ROUTES` |
+  | --- | --- |
+  | `tmm-img:v10.204.15-0.1.46` (2.4.0 GA) | 0 occurrences |
+  | `f5ingress:v14.91.12-0.4.7` (CNE controller) | 0 occurrences, across all 2766 files |
+  | `f5-lifecycle-operator:v2.30.0-0.5.2` | **present**, with `Found ENABLE_K8S_ROUTES` and `error parsing ENABLE_K8S_ROUTES env var: %w`, beside `Adding TMM TMM_K8S_ROUTES environment variables` |
+
+  So `ENABLE_K8S_ROUTES` and `TMM_K8S_ROUTES` are the two ends of one control
+  split across components: FLO parses the first, `/opt/bin/mapres` in the TMM
+  image reads the second to decide whether to install the ipv4/ipv6 gateway
+  rule. Removing either changes behaviour on every 2.4 install.
+
+  Nothing ships differently. What changes is the comment — which grouped it with
+  `TMM_IGNORE_GATEWAYS` and `DISABLE_HT` as "TMM settings" — and PRD 18, whose
+  `advanced.tmm.env` table said 2.4 drops `PAL_CPU_SET` and `TMM_K8S_ROUTES`.
+  That table is what produced #308 (closed unmerged; it would have stripped a
+  live gateway-rule control from every 2.4 cluster) and then #307. **Where F5's
+  reference document and the shipped binary disagree, we follow the binary.**
+
+  Guarded now, because twice is enough: tests assert `ENABLE_K8S_ROUTES` is
+  emitted on 2.4, absent on 2.3, and that `TMM_K8S_ROUTES` is present on both
+  lines. Deleting the variable fails the build.
+
+  Method note for whoever checks this next: the operator ships no shell, so
+  `kubectl exec` cannot grep it — pull the image. And use `strings -a`, not
+  `grep`: plain `grep` finds nothing in a 95 MB statically linked Go binary and
+  returns a confident zero even for variables the component demonstrably reads.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**

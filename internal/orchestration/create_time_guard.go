@@ -99,6 +99,15 @@ func guardCreateTimeSettings(cctx *config.Context, w io.Writer) error {
 		if err := config.CheckLineChange(cctx.Workspace, applied); err != nil {
 			return err
 		}
+		// ── enforced: the manifest version (#309) ────────────────────────────
+		// Same snapshot again. A WITHIN-line bump renames the CNEManifest, which
+		// terraform plans as an in-place update and then aborts on — and the
+		// apply stops PARTWAY, having rolled every pod. CheckLineChange runs
+		// first and owns the cross-line case; this one catches 2.4.0-EA ->
+		// 2.4.0, which a line comparison cannot see.
+		if err := config.CheckManifestVersionChange(cctx.Workspace, applied); err != nil {
+			return err
+		}
 	}
 
 	if out == nil || out.ClusterID == "" {
