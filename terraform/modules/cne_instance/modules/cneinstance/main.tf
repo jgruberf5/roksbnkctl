@@ -27,9 +27,15 @@ locals {
   # to — a profile the pod may assume and an SCC the pod may use have to name
   # one account, or one of them is inert. Empty derives FLO's own name, which
   # DIFFERS BY LINE (#313): the long helm-derived name on 2.3, and plain
-  # `f5-cne-controller` on 2.4. This expression is kept character-identical to
-  # the flo module's so the two cannot drift apart silently; a guard in
-  # internal/tf evaluates both and fails if they disagree.
+  # `f5-cne-controller` on 2.4.
+  #
+  # On 2.4 this local is currently EVALUATED BUT UNUSED: its only consumer is
+  # scc_policy_assignments_23, and 2.4 selects scc_policy_assignments_24, which
+  # is the single flo-f5-lifecycle-operator entry. It is still gated on the line
+  # so the two modules cannot disagree if 2.4's SCC surface grows back — this
+  # module and flo derive the name INDEPENDENTLY from the same root variable,
+  # so drift is possible. The expression is kept character-identical to flo's,
+  # and a guard in internal/tf evaluates both and fails if they disagree.
   trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : (
     local.line_pre_24 ? "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount" : "f5-cne-controller"
   )

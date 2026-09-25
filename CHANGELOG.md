@@ -21,8 +21,13 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   `spec.serviceAccountName` is the short name and **no account carrying the long
   suffix exists in any namespace**. The default is now gated on `bnk_line`.
 
-  The same local also feeds the privileged-SCC ClusterRoleBinding, so on 2.4 that
-  binding named a nonexistent account too — one wrong string, two broken things.
+  The `cne_instance` module derives the same name independently, from the same
+  root variable, and both are fixed. That half is **inert on 2.4 today**: its
+  only consumer is the privileged-SCC assignment list, and 2.4 collapses that
+  list to a single entry (`flo-f5-lifecycle-operator`) that does not include the
+  controller's account. Evaluated rather than assumed — `local.scc_policy_assignments`
+  is 19 accounts on 2.3 and 1 on 2.4. It is fixed anyway so the two modules
+  cannot disagree if 2.4's SCC surface grows back, and a guard pins that.
 
   What makes this worth reading rather than skimming: **the install reported
   itself healthy throughout.** The controller logged `BXNIM0398E … no matching
