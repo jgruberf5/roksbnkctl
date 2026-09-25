@@ -437,16 +437,32 @@ resource "ibm_is_security_group_rule" "tgw_jumphost_outbound" {
 }
 
 resource "ibm_is_instance" "tgw_jumphost" {
-  count          = var.testing_create_tgw_jumphost ? 1 : 0
-  provider       = ibm.vpc_region
-  name           = var.testing_tgw_jumphost_name
-  vpc            = local.tgw_vpc_id
-  zone           = local.tgw_jumphost_zone
-  profile        = local.tgw_jumphost_profile
-  image          = local.tgw_jumphost_image_id
-  keys           = var.testing_ssh_key_name != "" ? [data.ibm_is_ssh_key.tgw_ssh_key[0].id] : []
-  resource_group = data.ibm_resource_group.resource_group.id
-  tags           = ["terraform", "testing", "jumphost", "tgw"]
+  count    = var.testing_create_tgw_jumphost ? 1 : 0
+  provider = ibm.vpc_region
+  name     = var.testing_tgw_jumphost_name
+  vpc      = local.tgw_vpc_id
+  zone     = local.tgw_jumphost_zone
+  profile  = local.tgw_jumphost_profile
+
+  # PIN the volume bandwidth instead of letting IBM compute it (#316).
+  #
+  # total_volume_bandwidth is optional+computed: left unset, the API fills it
+  # from the profile at CREATION and terraform records it in state. A later
+  # profile change then carries that stored value into the update, and the API
+  # rejects the whole thing —
+  #
+  #   instance's total volume bandwidth 20000Mbps (specified by
+  #   total_volume_bandwidth) must not be greater than max volume bandwidth
+  #   3500Mbps
+  #
+  # — AFTER stopping the VM, leaving it stopped on the old profile. Pinning a
+  # modest value at creation means the stored value is never one only a large
+  # profile can carry, so resizing down stays possible.
+  total_volume_bandwidth = var.testing_jumphost_total_volume_bandwidth
+  image                  = local.tgw_jumphost_image_id
+  keys                   = var.testing_ssh_key_name != "" ? [data.ibm_is_ssh_key.tgw_ssh_key[0].id] : []
+  resource_group         = data.ibm_resource_group.resource_group.id
+  tags                   = ["terraform", "testing", "jumphost", "tgw"]
 
   primary_network_interface {
     subnet          = ibm_is_subnet.tgw_jumphost_subnet[0].id
@@ -551,15 +567,31 @@ resource "ibm_is_subnet_public_gateway_attachment" "cluster_jumphost_subnet_gate
 }
 
 resource "ibm_is_instance" "cluster_jumphost" {
-  for_each       = local.cluster_zones
-  name           = "${var.testing_cluster_jumphost_name_prefix}-${each.key}"
-  vpc            = var.cluster_vpc_id
-  zone           = each.key
-  profile        = local.cluster_jumphost_profile
-  image          = local.cluster_jumphost_image_id
-  keys           = var.testing_ssh_key_name != "" ? [data.ibm_is_ssh_key.cluster_ssh_key[0].id] : []
-  resource_group = data.ibm_resource_group.resource_group.id
-  tags           = ["terraform", "testing", "jumphost", "cluster"]
+  for_each = local.cluster_zones
+  name     = "${var.testing_cluster_jumphost_name_prefix}-${each.key}"
+  vpc      = var.cluster_vpc_id
+  zone     = each.key
+  profile  = local.cluster_jumphost_profile
+
+  # PIN the volume bandwidth instead of letting IBM compute it (#316).
+  #
+  # total_volume_bandwidth is optional+computed: left unset, the API fills it
+  # from the profile at CREATION and terraform records it in state. A later
+  # profile change then carries that stored value into the update, and the API
+  # rejects the whole thing —
+  #
+  #   instance's total volume bandwidth 20000Mbps (specified by
+  #   total_volume_bandwidth) must not be greater than max volume bandwidth
+  #   3500Mbps
+  #
+  # — AFTER stopping the VM, leaving it stopped on the old profile. Pinning a
+  # modest value at creation means the stored value is never one only a large
+  # profile can carry, so resizing down stays possible.
+  total_volume_bandwidth = var.testing_jumphost_total_volume_bandwidth
+  image                  = local.cluster_jumphost_image_id
+  keys                   = var.testing_ssh_key_name != "" ? [data.ibm_is_ssh_key.cluster_ssh_key[0].id] : []
+  resource_group         = data.ibm_resource_group.resource_group.id
+  tags                   = ["terraform", "testing", "jumphost", "cluster"]
 
   primary_network_interface {
     subnet          = ibm_is_subnet.cluster_jumphost_subnet[each.key].id
