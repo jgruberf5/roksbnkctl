@@ -41,16 +41,20 @@ output "openshift_cluster_state" {
 
 # Registry COS identity — emitted so `roksbnkctl cluster up` records it in
 # cluster-outputs.json directly, instead of reverse-guessing the instance name.
-# Empty when this phase didn't create the COS (count 0), so the CLI falls back
-# to its name-lookup for an existing/reused instance.
+# Populated for BOTH paths (#294): the instance this phase created, or the one it
+# adopted. Previously only the created case was reported, so an adopted COS left
+# these empty and the CLI fell back to guessing "<cluster>-cos-instance" /
+# "<cluster>-cos" -- names an adopted instance has no reason to match, so the
+# workspace recorded no registry COS at all. Still empty when the cluster is not
+# created by this phase, which is what that fallback is really for.
 output "registry_cos_name" {
-  description = "Name of the registry COS instance (empty when not created by this phase)"
-  value       = length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].name : ""
+  description = "Name of the registry COS instance backing the cluster registry (created or adopted; empty when this phase manages no cluster)"
+  value       = local.registry_cos_name
 }
 
 output "registry_cos_crn" {
-  description = "CRN of the registry COS instance (empty when not created by this phase)"
-  value       = length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].crn : ""
+  description = "CRN of the registry COS instance backing the cluster registry (created or adopted; empty when this phase manages no cluster)"
+  value       = local.registry_cos_crn
 }
 
 output "openshift_cluster_ingress_hostname" {
