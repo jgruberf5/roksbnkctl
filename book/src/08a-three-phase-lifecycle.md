@@ -220,6 +220,57 @@ roksbnkctl testing down   # destroys the jumphosts; cluster + BNK untouched
 Because each phase owns a separate state directory, `bnk down` physically
 cannot touch `state-testing/`, and `testing down` cannot touch `state/`.
 
+## Jumphost sizing, and why it is worth checking once
+
+`testing up` picks the jumphost instance profile itself unless
+`resources.testing_jumphost_profile` names one. The intent is the **smallest**
+profile meeting `testing_min_vcpu_count` (4) and `testing_min_memory_gb` (8) —
+these VMs run `curl`, `iperf3` and a small echo server, nothing more.
+
+Through **v1.63.0** it picked the largest instead. The selection sorted profile
+*names*, and `sort()` is lexicographic, so among the eligible `bx2` profiles
+
+```
+"bx2-128x512" < "bx2-16x64" < "bx2-2x8" < "bx2-32x128" < "bx2-4x16"
+```
+
+and the first element was a 128 vCPU / 512 GB machine — roughly **$6/hour each**,
+about **$440/day** for a three-zone cluster jumphost set. Fixed in v1.64.0.
+
+### If you already have oversized jumphosts
+
+Check before upgrading:
+
+```
+ibmcloud is instances --output json | jq -r '.[] | select(.name|test("jumphost")) | "\(.name) \(.profile.name)"'
+```
+
+If they are `bx2-128x512` (or anything larger than you expect), **recreate them
+rather than resizing in place**:
+
+```
+roksbnkctl testing down
+roksbnkctl testing up
+```
+
+Resizing in place is the tempting move and it does not work. `total_volume_bandwidth`
+is set by the API from the profile at creation and carried in state, so shrinking
+the profile is rejected —
+
+```
+instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+must not be greater than max volume bandwidth 3500Mbps
+```
+
+— and the apply stops the VMs *before* it fails, leaving them **stopped on the
+old profile**. If you are already in that state, recover out of band and then
+re-run `testing up`, which will plan no further change:
+
+```
+ibmcloud is instance-update <vm> --profile bx2-2x8 --total-volume-bandwidth 1000
+ibmcloud is instance-start <vm>
+```
+
 ## Reuse an existing cluster
 
 If you already have a ROKS cluster (yours or a teammate's), skip the Cluster

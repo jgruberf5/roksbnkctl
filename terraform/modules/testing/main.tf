@@ -254,8 +254,25 @@ locals {
     for profile in data.ibm_is_instance_profiles.tgw_profiles[0].profiles :
     profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb && length(regexall("dc-[0-9]", profile.name)) == 0
   ] : []
+  # Sort by SIZE, not by NAME. sort() is lexicographic, so sorting profile names
+  # ordered them "bx2-128x512" < "bx2-16x64" < "bx2-2x8" < "bx2-32x128" <
+  # "bx2-4x16" and [0] returned the LARGEST eligible profile, not the smallest
+  # (#312). The sort was added to make the choice deterministic across regions,
+  # which it did — deterministically the most expensive one: three
+  # bx2-128x512 jumphosts, 128 vCPU / 512 GB each, to run curl and iperf3.
+  #
+  # The key is zero-padded so it compares NUMERICALLY under a lexicographic
+  # sort, vCPU first, then memory, then name as a stable tiebreak. Map keys in
+  # terraform are always sorted, and values() returns values in key order, so
+  # values(...)[0] is the smallest. Kept as ONE self-contained expression over
+  # the eligible list so it can be evaluated against a synthetic list in a test.
+  tgw_smallest_eligible_profile = length(local.tgw_eligible_profiles) == 0 ? "" : values({
+    for p in local.tgw_eligible_profiles :
+    format("%05d-%07d-%s", p.vcpu_count[0].value, p.memory[0].value, p.name) => p.name
+  })[0]
+
   tgw_jumphost_profile = var.testing_jumphost_profile != "" ? var.testing_jumphost_profile : (
-    length(local.tgw_eligible_profiles) > 0 ? sort([for p in local.tgw_eligible_profiles : p.name])[0] : "bx2-4x16"
+    local.tgw_smallest_eligible_profile != "" ? local.tgw_smallest_eligible_profile : "bx2-4x16"
   )
 
   # ----------------------------------------------------------
@@ -278,8 +295,16 @@ locals {
     for profile in data.ibm_is_instance_profiles.cluster_profiles[0].profiles :
     profile if profile.vcpu_count[0].value >= var.testing_min_vcpu_count && profile.memory[0].value >= var.testing_min_memory_gb && length(regexall("dc-[0-9]", profile.name)) == 0
   ] : []
+  # Size-ordered, exactly as the TGW jumphost above and for the same reason
+  # (#312). Kept character-identical apart from the tgw_/cluster_ prefix; a
+  # guard in internal/tf evaluates both against a synthetic profile list.
+  cluster_smallest_eligible_profile = length(local.cluster_eligible_profiles) == 0 ? "" : values({
+    for p in local.cluster_eligible_profiles :
+    format("%05d-%07d-%s", p.vcpu_count[0].value, p.memory[0].value, p.name) => p.name
+  })[0]
+
   cluster_jumphost_profile = var.testing_jumphost_profile != "" ? var.testing_jumphost_profile : (
-    length(local.cluster_eligible_profiles) > 0 ? sort([for p in local.cluster_eligible_profiles : p.name])[0] : "bx2-4x16"
+    local.cluster_smallest_eligible_profile != "" ? local.cluster_smallest_eligible_profile : "bx2-4x16"
   )
 
   # Map of zone → existing PGW ID for the cluster VPC.

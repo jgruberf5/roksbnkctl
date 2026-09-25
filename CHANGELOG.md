@@ -49,6 +49,34 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   kubectl -n f5-bnk rollout restart deploy/f5-cne-controller
   ```
 
+- **Jumphost auto-select picked the LARGEST eligible profile, not the smallest**
+  (#312, regression in v1.63.0 and earlier — introduced by `9f983fe`, v1.11.0).
+
+  `sort()` is lexicographic, and the selection sorted profile *names*, so among
+  the eligible `bx2` profiles `"bx2-128x512" < "bx2-16x64" < "bx2-2x8" <
+  "bx2-32x128" < "bx2-4x16"` and `[0]` was the biggest machine IBM offers in the
+  family. A workspace with `cluster_jumphosts.create: true` and no explicit
+  profile got three **128 vCPU / 512 GB** VMs — about **$6/hour each, $440/day**
+  — to run `curl`, `iperf3` and a small echo server.
+
+  The `sort()` was added in v1.11.0 to make the choice deterministic across
+  regions after the confidential-computing (`bx3dc`) fix. It did that, and made
+  the most expensive option the deterministic one. Both the TGW and cluster
+  jumphost paths had it.
+
+  Selection is now keyed on `format("%05d-%07d-%s", vcpu, memory, name)` —
+  zero-padded so it compares numerically, vCPU first, then memory, then name as
+  a stable tiebreak.
+
+  **If you already have oversized jumphosts, recreate them; do not resize in
+  place.** `roksbnkctl testing down && roksbnkctl testing up`.
+  `total_volume_bandwidth` is set by the API from the profile at creation and
+  carried in state, so shrinking the profile is rejected with
+  `total volume bandwidth 20000Mbps ... must not be greater than max volume
+  bandwidth 3500Mbps` — and the apply stops the VMs before it fails, leaving
+  them **stopped on the old profile**. Tracked separately as #316. The book's
+  three-phase-lifecycle chapter carries the check and the out-of-band recovery.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**
