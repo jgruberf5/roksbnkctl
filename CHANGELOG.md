@@ -6,6 +6,25 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Security
+
+- **The `go.mod` floor no longer permits a build against six reachable stdlib
+  advisories** (#299). `go.mod` declared `go 1.26.0`, while `net/url`, `crypto/tls`,
+  `net/http` (×2), `encoding/xml` and `encoding/asn1` all had advisories fixed in
+  **go1.26.6** — reachable ones, in `govulncheck`'s *Symbol Results* section. The
+  directive is now `go 1.26.6`, and `govulncheck` at that exact version reports
+  `Your code is affected by 0 vulnerabilities`.
+
+  **CI could not have caught this.** The `govulncheck` job uses `go-version: stable`
+  by design, so it always tested something newer than the floor and was green
+  throughout. A second job now installs the floor *exactly*, with
+  `GOTOOLCHAIN=local` so Go cannot quietly upgrade past it. Raising the directive
+  fixes today; testing the floor is what stops it drifting open again.
+
+  No language-version change is implied — 1.26.0 → 1.26.6 is a patch bump — and
+  `GOTOOLCHAIN=auto` fetches the toolchain automatically for anyone on an older
+  patch release.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**
