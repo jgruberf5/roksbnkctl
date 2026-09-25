@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8694295b.js";
+            window.path_to_searchindex_js = "searchindex-5e5c3742.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -300,6 +300,52 @@ roksbnkctl cleanup --auto     # skip the confirmation prompt
 <li>The <strong>BNK trusted profile</strong> (named after the cluster ID — found via <code>cluster-outputs.json</code>, so it’s still identifiable after the cluster is gone).</li>
 </ul>
 <p>Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is <strong>best-effort</strong>: a failure on one resource is reported and the sweep continues. Re-run <code>cleanup</code> for anything blocked on an async delete (e.g. a VPC that can’t go until its cluster finishes terminating).</p>
+<h3 id="what-it-will-not-delete-resources-this-workspace-adopted"><a class="header" href="#what-it-will-not-delete-resources-this-workspace-adopted">What it will NOT delete: resources this workspace adopted</a></h3>
+<p>A name match cannot tell a resource <code>roksbnkctl</code> <strong>created</strong> from one the
+workspace <strong>adopted</strong>. They look identical, and the adopted name usually matches
+the prefix exactly — a workspace with prefix <code>sm-cli</code> adopting
+<code>sm-cli-registry-cos</code> is the motivating case.</p>
+<p>So <code>cleanup</code> reads the workspace’s adopt decisions and refuses to delete what
+they name. Adopted resources are still listed, separately, with the config key
+that spared them:</p>
+<pre><code>2 resource(s) match the prefix but are ADOPTED by this workspace and will NOT be deleted:
+
+KIND          NAME                 REGION    ADOPTED VIA
+cos_instance  sm-cli-registry-cos            resources.registry_cos.existing
+cluster       sm-cli               us-east   cluster.name (create: false)
+  (roksbnkctl never created these; remove the config key if you want cleanup to own them)
+</code></pre>
+<p>The protected set is every path where <code>roksbnkctl</code> reads a resource it never
+creates:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Config key</th><th>Kind</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cluster.name</code> with <code>create: false</code></td><td>the ROKS cluster</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>transit gateway</td></tr>
+<tr><td><code>resources.registry_cos.existing</code></td><td>COS instance</td></tr>
+<tr><td><code>resources.client_vpc.existing</code></td><td>VPC (by name)</td></tr>
+<tr><td><code>resources.cluster_vpc.existing</code></td><td>VPC (by <strong>ID</strong>)</td></tr>
+<tr><td><code>resources.testing_ssh_key_name</code></td><td>SSH key</td></tr>
+</tbody>
+</table>
+</div>
+<p>The SSH key has no <code>create</code> toggle because it is never created: the testing
+module reaches it only through a <code>data</code> source, so whenever it is named, it is
+adopted.</p>
+<blockquote>
+<p><strong>This is why <code>--auto</code> is safe to schedule.</strong> Protected resources are removed
+from the set <em>before</em> the confirmation step, so the delete loop never sees
+one. <code>--auto</code> skips the prompt, not the protection.</p>
+</blockquote>
+<p>Note that <code>terraform</code> was never the danger here. Adopted resources are read
+through <code>data</code> sources, and data sources are never destroyed — so <code>down</code> was
+always safe. It is <code>cleanup</code>’s independent sweep that can reach them, precisely
+because it does not consult Terraform state at all. That independence is the
+feature (it catches what state lost) and was the defect (it caught what state
+never owned).</p>
 <h3 id="how-the-transit-gateway-is-handled"><a class="header" href="#how-the-transit-gateway-is-handled">How the Transit Gateway is handled</a></h3>
 <p>A gateway cannot be deleted while anything is attached to it, so <code>cleanup</code> detaches its connections first, <strong>waits for them to actually clear</strong>, and only then deletes the gateway. The detach is asynchronous — IBM leaves the connection in <code>deleting</code> for a few seconds — and deleting the gateway during that window fails with:</p>
 <pre><code>412 Precondition Failed: Before you can delete this gateway,

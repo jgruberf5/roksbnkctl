@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8694295b.js";
+            window.path_to_searchindex_js = "searchindex-5e5c3742.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -373,6 +373,41 @@ roksbnkctl bnk up        # redeploy BNK against the same cluster + same jumphost
 </code></pre>
 <p>Because each phase owns a separate state directory, <code>bnk down</code> physically
 cannot touch <code>state-testing/</code>, and <code>testing down</code> cannot touch <code>state/</code>.</p>
+<h2 id="jumphost-sizing-and-why-it-is-worth-checking-once"><a class="header" href="#jumphost-sizing-and-why-it-is-worth-checking-once">Jumphost sizing, and why it is worth checking once</a></h2>
+<p><code>testing up</code> picks the jumphost instance profile itself unless
+<code>resources.testing_jumphost_profile</code> names one. The intent is the <strong>smallest</strong>
+profile meeting <code>testing_min_vcpu_count</code> (4) and <code>testing_min_memory_gb</code> (8) —
+these VMs run <code>curl</code>, <code>iperf3</code> and a small echo server, nothing more.</p>
+<p>Through <strong>v1.63.0</strong> it picked the largest instead. The selection sorted profile
+<em>names</em>, and <code>sort()</code> is lexicographic, so among the eligible <code>bx2</code> profiles</p>
+<pre><code>"bx2-128x512" &lt; "bx2-16x64" &lt; "bx2-2x8" &lt; "bx2-32x128" &lt; "bx2-4x16"
+</code></pre>
+<p>and the first element was a 128 vCPU / 512 GB machine — roughly <strong>$6/hour each</strong>,
+about <strong>$440/day</strong> for a three-zone cluster jumphost set. Fixed in v1.64.0.</p>
+<h3 id="if-you-already-have-oversized-jumphosts"><a class="header" href="#if-you-already-have-oversized-jumphosts">If you already have oversized jumphosts</a></h3>
+<p>Check before upgrading:</p>
+<pre><code>ibmcloud is instances --output json | jq -r '.[] | select(.name|test("jumphost")) | "\(.name) \(.profile.name)"'
+</code></pre>
+<p>If they are <code>bx2-128x512</code> (or anything larger than you expect), <strong>recreate them
+rather than resizing in place</strong>:</p>
+<pre><code>roksbnkctl testing down
+roksbnkctl testing up
+</code></pre>
+<p>From <strong>v1.64.0</strong> new jumphosts pin <code>total_volume_bandwidth</code> to 1000 Mbps
+(<code>testing_jumphost_total_volume_bandwidth</code>), which keeps a later downsize
+possible. Jumphosts created <em>before</em> that release do not carry the pin, and for
+them resizing in place is the tempting move and it does not work. <code>total_volume_bandwidth</code>
+is set by the API from the profile at creation and carried in state, so shrinking
+the profile is rejected —</p>
+<pre><code>instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+must not be greater than max volume bandwidth 3500Mbps
+</code></pre>
+<p>— and the apply stops the VMs <em>before</em> it fails, leaving them <strong>stopped on the
+old profile</strong>. If you are already in that state, recover out of band and then
+re-run <code>testing up</code>, which will plan no further change:</p>
+<pre><code>ibmcloud is instance-update &lt;vm&gt; --profile bx2-2x8 --total-volume-bandwidth 1000
+ibmcloud is instance-start &lt;vm&gt;
+</code></pre>
 <h2 id="reuse-an-existing-cluster"><a class="header" href="#reuse-an-existing-cluster">Reuse an existing cluster</a></h2>
 <p>If you already have a ROKS cluster (yours or a teammate’s), skip the Cluster
 phase entirely — <a href="./09-registering-existing-cluster.html">register it</a>, then
@@ -463,6 +498,28 @@ come from the BNK 2.3 install guide; override the HTTPRoute backend, client
 subnets, egress mode (<code>snatpool</code>/<code>automap</code>/<code>both</code>) and VXLAN port via the
 <code>config.yaml</code> <code>gateway</code> block. <code>cluster down</code> refuses while the Gateway phase
 has resources, so tear it down first (<code>gateway down</code>).</p>
+<h3 id="the-vxlan-security-group-rule-and-what-it-opens"><a class="header" href="#the-vxlan-security-group-rule-and-what-it-opens">The VXLAN security-group rule, and what it opens</a></h3>
+<p>The gateway phase adds one inbound rule to the <strong>cluster’s own worker security
+group</strong> (<code>kube-&lt;cluster-id&gt;</code>), permitting the egress VXLAN port (UDP 6789 by
+default, <code>gateway.vxlan_port</code>).</p>
+<p>This rule is <strong>required, not hardening</strong>. TMM answers a remote node’s VXLAN from
+its <em>external-VLAN self-IP</em>, and the workers’ security group does not otherwise
+admit that source — so without the rule, egress from any node that is not itself
+running a TMM fails.</p>
+<p>Through <strong>v1.63.0</strong> the rule permitted <code>0.0.0.0/0</code>. From v1.64.0 it is scoped to
+the per-zone external-VLAN CIDRs (<code>resources</code>/<code>bnk</code> zone config
+<code>ext_vlan_cidr</code>), one rule per CIDR, because those are the only addresses a TMM
+self-IP can have. That matters because this rule sits on a security group shared
+by everything else running on those workers.</p>
+<blockquote>
+<p><strong>Upgrading replaces the rule rather than editing it.</strong> The resource moved from
+<code>count</code> to <code>for_each</code>, so terraform removes the single open rule and creates
+the scoped ones; ordering is not guaranteed, so run <code>gateway up</code> when a few
+seconds of egress disruption is acceptable.</p>
+</blockquote>
+<p>If every zone’s <code>ext_vlan_cidr</code> is empty, <code>gateway up</code> now <strong>fails at plan time</strong>
+rather than silently creating no rule and leaving egress broken with nothing
+naming the cause.</p>
 <h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
 <ul>
 <li><a href="./08-cluster-phase.html">Chapter 8 — The cluster phase</a> — the Cluster phase

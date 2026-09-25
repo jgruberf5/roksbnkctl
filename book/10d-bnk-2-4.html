@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8694295b.js";
+            window.path_to_searchindex_js = "searchindex-5e5c3742.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -558,6 +558,7 @@ cluster with connected licensing.</p>
 <tr><td>exercised</td><td>the <strong>gateway phase</strong> — <code>gateway up</code> applies <code>Infra</code> and <code>GatewaySettings</code>, and both reach <code>Accepted</code>, <code>ResolvedRefs</code> and <code>Programmed</code> = <code>True</code>, with the CNEInstance still 18/18 and the licence still Active afterwards</td></tr>
 <tr><td>exercised</td><td><strong>five consecutive clean cluster-lifecycle CLI demo runs</strong> on a cluster reproducing F5’s approved reference (6 × <code>cx3d.8x20</code>, OCP 4.21), each a cold start through all six phases</td></tr>
 <tr><td><strong>not</strong> exercised</td><td>the <strong>CI demo</strong> — it is docker-driven and needs its own five runs</td></tr>
+<tr><td><strong>not</strong> exercised</td><td><strong>traffic</strong> — every check above reads CR conditions, and <code>Accepted</code> / <code>ResolvedRefs</code> / <code>Programmed</code> are all computed without calling IBM Cloud. #313 was a 2.4 install where the CNE controller could not assume its Trusted Profile, so no VPC address prefixes and no routes were created: all four CRs reported <code>Programmed=True</code> and nothing passed traffic in either direction. A condition-based verification cannot see that class of defect</td></tr>
 <tr><td><strong>not</strong> exercised</td><td>mTLS, multi-NIC, disconnected licensing, <code>EgressGateway</code> CRs, and the contract boundary</td></tr>
 </tbody>
 </table>

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8694295b.js";
+            window.path_to_searchindex_js = "searchindex-5e5c3742.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -2332,6 +2332,41 @@ roksbnkctl bnk up        # redeploy BNK against the same cluster + same jumphost
 </code></pre>
 <p>Because each phase owns a separate state directory, <code>bnk down</code> physically
 cannot touch <code>state-testing/</code>, and <code>testing down</code> cannot touch <code>state/</code>.</p>
+<h2 id="jumphost-sizing-and-why-it-is-worth-checking-once"><a class="header" href="#jumphost-sizing-and-why-it-is-worth-checking-once">Jumphost sizing, and why it is worth checking once</a></h2>
+<p><code>testing up</code> picks the jumphost instance profile itself unless
+<code>resources.testing_jumphost_profile</code> names one. The intent is the <strong>smallest</strong>
+profile meeting <code>testing_min_vcpu_count</code> (4) and <code>testing_min_memory_gb</code> (8) —
+these VMs run <code>curl</code>, <code>iperf3</code> and a small echo server, nothing more.</p>
+<p>Through <strong>v1.63.0</strong> it picked the largest instead. The selection sorted profile
+<em>names</em>, and <code>sort()</code> is lexicographic, so among the eligible <code>bx2</code> profiles</p>
+<pre><code>"bx2-128x512" &lt; "bx2-16x64" &lt; "bx2-2x8" &lt; "bx2-32x128" &lt; "bx2-4x16"
+</code></pre>
+<p>and the first element was a 128 vCPU / 512 GB machine — roughly <strong>$6/hour each</strong>,
+about <strong>$440/day</strong> for a three-zone cluster jumphost set. Fixed in v1.64.0.</p>
+<h3 id="if-you-already-have-oversized-jumphosts"><a class="header" href="#if-you-already-have-oversized-jumphosts">If you already have oversized jumphosts</a></h3>
+<p>Check before upgrading:</p>
+<pre><code>ibmcloud is instances --output json | jq -r '.[] | select(.name|test("jumphost")) | "\(.name) \(.profile.name)"'
+</code></pre>
+<p>If they are <code>bx2-128x512</code> (or anything larger than you expect), <strong>recreate them
+rather than resizing in place</strong>:</p>
+<pre><code>roksbnkctl testing down
+roksbnkctl testing up
+</code></pre>
+<p>From <strong>v1.64.0</strong> new jumphosts pin <code>total_volume_bandwidth</code> to 1000 Mbps
+(<code>testing_jumphost_total_volume_bandwidth</code>), which keeps a later downsize
+possible. Jumphosts created <em>before</em> that release do not carry the pin, and for
+them resizing in place is the tempting move and it does not work. <code>total_volume_bandwidth</code>
+is set by the API from the profile at creation and carried in state, so shrinking
+the profile is rejected —</p>
+<pre><code>instance's total volume bandwidth 20000Mbps (specified by total_volume_bandwidth)
+must not be greater than max volume bandwidth 3500Mbps
+</code></pre>
+<p>— and the apply stops the VMs <em>before</em> it fails, leaving them <strong>stopped on the
+old profile</strong>. If you are already in that state, recover out of band and then
+re-run <code>testing up</code>, which will plan no further change:</p>
+<pre><code>ibmcloud is instance-update &lt;vm&gt; --profile bx2-2x8 --total-volume-bandwidth 1000
+ibmcloud is instance-start &lt;vm&gt;
+</code></pre>
 <h2 id="reuse-an-existing-cluster"><a class="header" href="#reuse-an-existing-cluster">Reuse an existing cluster</a></h2>
 <p>If you already have a ROKS cluster (yours or a teammate’s), skip the Cluster
 phase entirely — <a href="#registering-an-existing-cluster">register it</a>, then
@@ -2422,6 +2457,28 @@ come from the BNK 2.3 install guide; override the HTTPRoute backend, client
 subnets, egress mode (<code>snatpool</code>/<code>automap</code>/<code>both</code>) and VXLAN port via the
 <code>config.yaml</code> <code>gateway</code> block. <code>cluster down</code> refuses while the Gateway phase
 has resources, so tear it down first (<code>gateway down</code>).</p>
+<h3 id="the-vxlan-security-group-rule-and-what-it-opens"><a class="header" href="#the-vxlan-security-group-rule-and-what-it-opens">The VXLAN security-group rule, and what it opens</a></h3>
+<p>The gateway phase adds one inbound rule to the <strong>cluster’s own worker security
+group</strong> (<code>kube-&lt;cluster-id&gt;</code>), permitting the egress VXLAN port (UDP 6789 by
+default, <code>gateway.vxlan_port</code>).</p>
+<p>This rule is <strong>required, not hardening</strong>. TMM answers a remote node’s VXLAN from
+its <em>external-VLAN self-IP</em>, and the workers’ security group does not otherwise
+admit that source — so without the rule, egress from any node that is not itself
+running a TMM fails.</p>
+<p>Through <strong>v1.63.0</strong> the rule permitted <code>0.0.0.0/0</code>. From v1.64.0 it is scoped to
+the per-zone external-VLAN CIDRs (<code>resources</code>/<code>bnk</code> zone config
+<code>ext_vlan_cidr</code>), one rule per CIDR, because those are the only addresses a TMM
+self-IP can have. That matters because this rule sits on a security group shared
+by everything else running on those workers.</p>
+<blockquote>
+<p><strong>Upgrading replaces the rule rather than editing it.</strong> The resource moved from
+<code>count</code> to <code>for_each</code>, so terraform removes the single open rule and creates
+the scoped ones; ordering is not guaranteed, so run <code>gateway up</code> when a few
+seconds of egress disruption is acceptable.</p>
+</blockquote>
+<p>If every zone’s <code>ext_vlan_cidr</code> is empty, <code>gateway up</code> now <strong>fails at plan time</strong>
+rather than silently creating no rule and leaving egress broken with nothing
+naming the cause.</p>
 <h2 id="cross-references-2"><a class="header" href="#cross-references-2">Cross-references</a></h2>
 <ul>
 <li><a href="#the-cluster-phase-cluster-updown">Chapter 8 — The cluster phase</a> — the Cluster phase
@@ -4368,6 +4425,7 @@ cluster with connected licensing.</p>
 <tr><td>exercised</td><td>the <strong>gateway phase</strong> — <code>gateway up</code> applies <code>Infra</code> and <code>GatewaySettings</code>, and both reach <code>Accepted</code>, <code>ResolvedRefs</code> and <code>Programmed</code> = <code>True</code>, with the CNEInstance still 18/18 and the licence still Active afterwards</td></tr>
 <tr><td>exercised</td><td><strong>five consecutive clean cluster-lifecycle CLI demo runs</strong> on a cluster reproducing F5’s approved reference (6 × <code>cx3d.8x20</code>, OCP 4.21), each a cold start through all six phases</td></tr>
 <tr><td><strong>not</strong> exercised</td><td>the <strong>CI demo</strong> — it is docker-driven and needs its own five runs</td></tr>
+<tr><td><strong>not</strong> exercised</td><td><strong>traffic</strong> — every check above reads CR conditions, and <code>Accepted</code> / <code>ResolvedRefs</code> / <code>Programmed</code> are all computed without calling IBM Cloud. #313 was a 2.4 install where the CNE controller could not assume its Trusted Profile, so no VPC address prefixes and no routes were created: all four CRs reported <code>Programmed=True</code> and nothing passed traffic in either direction. A condition-based verification cannot see that class of defect</td></tr>
 <tr><td><strong>not</strong> exercised</td><td>mTLS, multi-NIC, disconnected licensing, <code>EgressGateway</code> CRs, and the contract boundary</td></tr>
 </tbody>
 </table>
@@ -4518,6 +4576,52 @@ roksbnkctl cleanup --auto     # skip the confirmation prompt
 <li>The <strong>BNK trusted profile</strong> (named after the cluster ID — found via <code>cluster-outputs.json</code>, so it’s still identifiable after the cluster is gone).</li>
 </ul>
 <p>Deletion runs in reverse-dependency order (instances → floating IPs → public gateways → subnets → security groups → VPCs → Transit Gateway → registry COS → cluster → trusted profile) so children go before their parents. It is <strong>best-effort</strong>: a failure on one resource is reported and the sweep continues. Re-run <code>cleanup</code> for anything blocked on an async delete (e.g. a VPC that can’t go until its cluster finishes terminating).</p>
+<h3 id="what-it-will-not-delete-resources-this-workspace-adopted"><a class="header" href="#what-it-will-not-delete-resources-this-workspace-adopted">What it will NOT delete: resources this workspace adopted</a></h3>
+<p>A name match cannot tell a resource <code>roksbnkctl</code> <strong>created</strong> from one the
+workspace <strong>adopted</strong>. They look identical, and the adopted name usually matches
+the prefix exactly — a workspace with prefix <code>sm-cli</code> adopting
+<code>sm-cli-registry-cos</code> is the motivating case.</p>
+<p>So <code>cleanup</code> reads the workspace’s adopt decisions and refuses to delete what
+they name. Adopted resources are still listed, separately, with the config key
+that spared them:</p>
+<pre><code>2 resource(s) match the prefix but are ADOPTED by this workspace and will NOT be deleted:
+
+KIND          NAME                 REGION    ADOPTED VIA
+cos_instance  sm-cli-registry-cos            resources.registry_cos.existing
+cluster       sm-cli               us-east   cluster.name (create: false)
+  (roksbnkctl never created these; remove the config key if you want cleanup to own them)
+</code></pre>
+<p>The protected set is every path where <code>roksbnkctl</code> reads a resource it never
+creates:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Config key</th><th>Kind</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cluster.name</code> with <code>create: false</code></td><td>the ROKS cluster</td></tr>
+<tr><td><code>resources.transit_gateway.existing</code></td><td>transit gateway</td></tr>
+<tr><td><code>resources.registry_cos.existing</code></td><td>COS instance</td></tr>
+<tr><td><code>resources.client_vpc.existing</code></td><td>VPC (by name)</td></tr>
+<tr><td><code>resources.cluster_vpc.existing</code></td><td>VPC (by <strong>ID</strong>)</td></tr>
+<tr><td><code>resources.testing_ssh_key_name</code></td><td>SSH key</td></tr>
+</tbody>
+</table>
+</div>
+<p>The SSH key has no <code>create</code> toggle because it is never created: the testing
+module reaches it only through a <code>data</code> source, so whenever it is named, it is
+adopted.</p>
+<blockquote>
+<p><strong>This is why <code>--auto</code> is safe to schedule.</strong> Protected resources are removed
+from the set <em>before</em> the confirmation step, so the delete loop never sees
+one. <code>--auto</code> skips the prompt, not the protection.</p>
+</blockquote>
+<p>Note that <code>terraform</code> was never the danger here. Adopted resources are read
+through <code>data</code> sources, and data sources are never destroyed — so <code>down</code> was
+always safe. It is <code>cleanup</code>’s independent sweep that can reach them, precisely
+because it does not consult Terraform state at all. That independence is the
+feature (it catches what state lost) and was the defect (it caught what state
+never owned).</p>
 <h3 id="how-the-transit-gateway-is-handled"><a class="header" href="#how-the-transit-gateway-is-handled">How the Transit Gateway is handled</a></h3>
 <p>A gateway cannot be deleted while anything is attached to it, so <code>cleanup</code> detaches its connections first, <strong>waits for them to actually clear</strong>, and only then deletes the gateway. The detach is asynchronous — IBM leaves the connection in <code>deleting</code> for a few seconds — and deleting the gateway during that window fails with:</p>
 <pre><code>412 Precondition Failed: Before you can delete this gateway,
@@ -4918,9 +5022,29 @@ cos:             # optional COS supply-chain config
     storage_class: ""                 # optional; FLP PVC StorageClass
 </code></pre>
 <p>Every field here is optional — leave the block out entirely and you get the upstream HCL’s defaults. For a one-page view of every field with its dotted path and the <code>ROKSBNKCTL_*</code> variable that sets it, see the <a href="https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html">config.yaml cheatsheet</a> — generated from the same struct this chapter teaches, so the two cannot disagree. The field spec is <a href="#bnkcfg">Chapter 28 §<code>BNKCfg</code></a>, with the sub-blocks broken out as <a href="#bnktrustedprofilecfg">§<code>BNKTrustedProfileCfg</code></a>, <a href="#bnkcertmanagercfg">§<code>BNKCertManagerCfg</code></a>, <a href="#bnkflpcfg">§<code>BNKFLPCfg</code></a> and <a href="#bnkpreflightcfg">§<code>BNKPreflightCfg</code></a>. Chapter 28’s <code>line</code> column matters here more than anywhere else in the config: a good part of <code>bnk:</code> is 2.4-only, and <code>manifest_version</code> is the only thing that selects the line.</p>
+<p><strong><code>manifest_version</code> cannot be bumped on a live workspace — <code>bnk up</code> refuses it.</strong> The manifest version <em>names</em> the CNEManifest object (<code>bnk-&lt;version&gt;</code>, lowercased), so changing it <strong>renames</strong> that object. Terraform plans a rename as an in-place update and then aborts with <code>Provider produced inconsistent final plan</code>, and re-running does not converge — the stale value is in terraform <strong>state</strong>, not on disk.</p>
+<p>The failure is not a clean stop. The apply gets partway, having already rolled every pod, and a retry rolls them again: a previous attempt did this three times, exhausted the registry’s pull quota (<code>pull QPS exceeded</code>), and left the cluster with <code>f5-cne-controller</code>, <code>f5-tmm</code> and <code>f5-dssm-sentinel-2</code> in <code>ImagePullBackOff</code> and <strong>no CNEManifest at all</strong> (#309). So <code>bnk up</code> now compares the configured version against the one the workspace last applied and refuses <strong>before planning</strong>, rather than starting an apply that cannot finish.</p>
+<p>To move to a new manifest:</p>
+<pre><code class="language-bash">roksbnkctl bnk down
+roksbnkctl bnk up
+</code></pre>
+<p>That is the supported path, and the one the 2.4.0 GA upgrade was verified with (37 added, 0 changed, 0 destroyed). A <strong>cross-line</strong> change (2.3 → 2.4) is refused separately and for different reasons — see <code>bnk_line</code> above; that one needs a new workspace, not a reinstall.</p>
 <p><strong><code>cneinstance_size</code> is passed through unvalidated, on purpose.</strong> The legal set of sizes is a property of the BNK manifest, not of this tool. Hardcoding a list would go stale the first time F5 adds one and would then refuse a size the product supports, so a size a given manifest does not define is rejected by the operator on the cluster, not here. <code>Tiny</code> is what the BNK 2.4 install guide uses, and on ROKS it is the only size that runs: everything above it requests hugepages (<code>Small</code> 4 GiB, <code>Medium</code> 8 GiB) that the platform has no supported way to allocate. Do not reach for <code>bnk.hugepages</code> — it is a no-op on ROKS and issue #203 explains why. Capacity comes from <code>bnk.tmm_replicas</code> and node size instead; see Appendix C.</p>
 <p><strong><code>gslb_datacenter_name</code> is the whole feature.</strong> It is what the CNEInstance calls itself in GSLB, and it is emitted whenever set. There was also a <code>gtm:</code> block carrying the BIG-IP DNS url, username and password; it was <strong>removed in #227</strong> because nothing read it — the f5ingress controller binary contains no occurrence of the environment variables it produced, on either BNK line. A <code>config.yaml</code> still carrying <code>bnk.gtm</code> needs no edit: an unrecognised key is ignored.</p>
-<p><strong><code>trusted_profile.service_account</code> is a matcher, not a pointer — and getting it wrong fails silently.</strong> The IBM Cloud Trusted Profile is the identity the CNE controller assumes to manage the VPC network attachments it creates for TMM, so it works without a stored API key. IBM’s trust relationship compares a pod’s service-account token against <code>crn</code> / <code>namespace</code> / <code>name</code> with <code>EQUALS</code>. Left empty, <code>roksbnkctl</code> derives the name FLO actually creates — <code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code> — and the match holds. Write a different name and nothing can assume the profile, <strong>and nothing reports an error</strong>: the pod simply loses its IBM Cloud permissions, and it surfaces much later as an authorization failure at VPC-attachment time that names neither this setting nor the profile. The profile looks correct in the IBM Cloud console the whole time.</p>
+<p><strong><code>trusted_profile.service_account</code> is a matcher, not a pointer — and the name differs by BNK line.</strong> The IBM Cloud Trusted Profile is the identity the CNE controller assumes to manage the VPC network attachments it creates for TMM, so it works without a stored API key. IBM’s trust relationship compares a pod’s service-account token against <code>crn</code> / <code>namespace</code> / <code>name</code> with <code>EQUALS</code>. Left empty, <code>roksbnkctl</code> derives the name the controller actually runs as, and that is <strong>not the same name on both lines</strong>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Line</th><th>Derived service account</th></tr>
+</thead>
+<tbody>
+<tr><td>2.3</td><td><code>f5-cne-controller-&lt;flo_namespace&gt;-f5-cne-controller-serviceaccount</code></td></tr>
+<tr><td>2.4</td><td><code>f5-cne-controller</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>On 2.3 it is FLO’s helm construction, <code>&lt;release&gt;-&lt;chart&gt;-serviceaccount</code> with the namespace baked into the release name. On 2.4 the CNE controller chart names the account outright. Both names were read off live installs rather than inferred.</p>
+<p>Write a name that matches neither and nothing can assume the profile. <strong>The install still reports itself healthy.</strong> The controller logs the token exchange failing (<code>BXNIM0398E … no matching rule or link found</code>), then falls back to <code>Cloud environment is not IBM or cloud provider instance is nil, skipping cloud address prefix handling</code> and skips VPC address-prefix and route programming altogether — so nothing reaches the listener addresses and egress SNAT replies have no route back. Meanwhile <code>Infra</code>, <code>GatewaySettings</code>, <code>Gateway</code> and <code>EgressGateway</code> all report <code>Programmed=True</code>, because those conditions are computed without ever calling the cloud, and the profile looks correct in the IBM Cloud console the whole time. <strong>A status check cannot detect this; only traffic can</strong> (<code>roksbnkctl testing</code> exercises exactly that path).</p>
 <p>So set it only if you can <em>also</em> make FLO name the account differently — and <code>roksbnkctl</code> cannot, because FLO creates that account when it reconciles the CNEInstance and the CNEInstance spec has no service-account field. In practice this field exists for estates driving FLO by some other means. The derived name is safe to share across clusters: uniqueness comes from the profile name (which carries the cluster name) and from the link’s cluster CRN, not from the account name.</p>
 <p><strong><code>cert_manager:</code> overrides coordinates, not the decision.</strong> <code>bnk.cert_manager.namespace</code> / <code>.version</code> say <em>where</em> and <em>which chart</em>; whether cert-manager is installed at all stays on <code>resources.cert_manager.create</code>. The two are easy to confuse because they share a name.</p>
 <p><code>license_mode: f5licenseproxy</code> additionally requires the FLP phase to be up (<code>roksbnkctl flp up</code>) before <code>bnk up</code> runs, so the install has a proxy to point at. The proxy’s endpoint and root CA are <strong>not</strong> config — they are produced by <code>flp up</code> and read back from <code>flp-outputs.json</code>.</p>
@@ -13375,6 +13499,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>testing_create_cluster_jumphosts</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create one jumphost per availability zone directly inside the cluster VPC</td><td>no</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name of the IBM Cloud SSH key to inject into all jumphosts</td><td>no</td></tr>
 <tr><td><code>testing_jumphost_profile</code></td><td><code>string</code></td><td><code>""</code></td><td>Instance profile for all jumphosts (leave empty to auto-select based on min_vcpu_count and min_memory_gb)</td><td>no</td></tr>
+<tr><td><code>testing_jumphost_total_volume_bandwidth</code></td><td><code>number</code></td><td><code>1000</code></td><td>Volume bandwidth (Mbps) pinned on each jumphost. IBM computes this from the profile at creation and terraform carries the stored value into a later profile change, so an unmanaged value taken from an oversized profile makes a downsize impossible (#316). 1000 is ample for jumphosts, which run curl/iperf3 and no disk-heavy work, and is below the ceiling of every profile the auto-select can pick.</td><td>no</td></tr>
 <tr><td><code>testing_min_vcpu_count</code></td><td><code>number</code></td><td><code>4</code></td><td>Minimum vCPU count when auto-selecting the jumphost instance profile</td><td>no</td></tr>
 <tr><td><code>testing_min_memory_gb</code></td><td><code>number</code></td><td><code>8</code></td><td>Minimum memory in GB when auto-selecting the jumphost instance profile</td><td>no</td></tr>
 <tr><td><code>testing_create_client_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost. When false, testing_client_vpc_name must reference an existing VPC.</td><td>no</td></tr>
@@ -13835,6 +13960,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>testing_create_cluster_jumphosts</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create one jumphost per availability zone directly inside the cluster VPC</td><td>no</td></tr>
 <tr><td><code>testing_ssh_key_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name of the SSH key to inject into all jumphosts. Must exist in client_vpc_region (for TGW jumphost) and in ibmcloud_cluster_region (for cluster jumphosts)</td><td>no</td></tr>
 <tr><td><code>testing_jumphost_profile</code></td><td><code>string</code></td><td><code>""</code></td><td>Instance profile for all jumphosts (leave empty to auto-select from min_vcpu_count and min_memory_gb)</td><td>no</td></tr>
+<tr><td><code>testing_jumphost_total_volume_bandwidth</code></td><td><code>number</code></td><td><code>1000</code></td><td>Volume bandwidth (Mbps) pinned on each jumphost. IBM computes this from the profile at creation and terraform carries the stored value into a later profile change, so an unmanaged value taken from an oversized profile makes a downsize impossible (#316). 1000 is ample for jumphosts, which run curl/iperf3 and no disk-heavy work, and is below the ceiling of every profile the auto-select can pick.</td><td>no</td></tr>
 <tr><td><code>testing_min_vcpu_count</code></td><td><code>number</code></td><td><code>4</code></td><td>Minimum vCPU count when auto-selecting the instance profile</td><td>no</td></tr>
 <tr><td><code>testing_min_memory_gb</code></td><td><code>number</code></td><td><code>8</code></td><td>Minimum memory in GB when auto-selecting the instance profile</td><td>no</td></tr>
 <tr><td><code>testing_create_client_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Create a new client VPC for the TGW jumphost. When false, client_vpc_name must reference an existing VPC</td><td>no</td></tr>
