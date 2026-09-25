@@ -6,6 +6,106 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`registry_cos.create: false` could never produce a working cluster** (#294).
+  A ROKS-on-VPC cluster requires a Standard COS CRN to back its internal registry
+  *unconditionally* — there is no "no registry backing" mode. So `create: false`
+  does not mean "skip the COS", it means "use that one". The cluster module read
+
+  ```hcl
+  cos_instance_crn = var.create_cos_instance ? ibm_resource_instance.cos_instance[0].crn : null
+  ```
+
+  so the adopt path passed `null` and IBM rejected the create with
+
+  ```
+  E7278  Provide a standard cloud object storage instance CRN to back up the
+         internal registry in your OpenShift on VPC Gen 2 cluster.
+  ```
+
+  The adopted name *was* rendered into tfvars and then dropped on the floor. The
+  module now looks the instance up and passes its CRN, and a plan-time
+  precondition catches `create: false` with nothing named — E7278 names neither a
+  variable nor an instance, so the error arrived with nothing to act on.
+
+  This is the one path available when an account has hit its COS instance cap,
+  which is exactly the situation that motivates adopting.
+
+  The `registry_cos_name` / `registry_cos_crn` outputs now report the adopted
+  instance too. They previously covered only the created one, so the CLI fell
+  back to guessing `<cluster>-cos-instance` / `<cluster>-cos` — names an adopted
+  instance has no reason to match — and the workspace recorded no registry COS at
+  all.
+
+- **`cos.resource_group` — a workspace outside the supply chain's group can now
+  read it** (#295). A supply chain is naturally *central*: one `bnk-supply-chain`
+  in `default`, read by every workspace. A workspace may sit in another group for
+  reasons that have nothing to do with it — typically because `default` hit its
+  service-instance quota. Every supply-chain COS lookup pinned the **workspace's**
+  group, so such a workspace failed its first BNK read with
+
+  ```
+  No resource instance found with name [bnk-supply-chain]
+  ```
+
+  about an instance that plainly exists.
+
+  `cos.resource_group` names the group holding the instance. **Empty keeps the old
+  behaviour exactly**, so no existing config changes meaning. All four lookups
+  move together — `flo`, `license`, `flp`, `flp_vsi` — because a BNK install that
+  found the FAR credential but not the licence JWT would half-work, which is worse
+  to diagnose than failing outright.
+
+  Each module gets its *own* resource-group lookup rather than repointing the one
+  it already had. In `flp_vsi` that existing lookup also places the VSI, its
+  floating IP and its security groups; moving those into the COS's group would
+  have been a worse bug than the one being fixed.
+
+- **A `bnk.manifest_version` bump could not apply** (#309, layer 1). `helm_release.flo`
+  installs from a locally-staged archive, so `chart` is a file path and `version` was
+  left unset — making it a *computed* attribute. Terraform carried the prior state
+  value into the plan, the provider then loaded the newly-staged archive and returned
+  a different version, and the apply died:
+
+  ```
+  Provider produced inconsistent final plan
+    module.flo.module.flo.helm_release.flo[0]
+    .version: was cty.StringVal("v2.30.0-0.1.27"), but now cty.StringVal("v2.30.0-0.5.2")
+  ```
+
+  blaming the helm provider for an unpredictable planned value. **Re-running did not
+  work around it** — the stale value lives in terraform state, not on disk, so every
+  retry reproduced it identically.
+
+  `version` is now pinned to `local.flo_chart_version`, the same value that builds
+  `flo_chart_archive`, so the planned version and the staged chart cannot disagree.
+  Verified in production upgrading `sm-cli` from `2.4.0-EA` to the `2.4.0` GA
+  manifest: the GA FLO operator deployed (`f5-lifecycle-operator:v2.30.0-0.5.2`).
+
+  This is **one of two** defects blocking an in-place manifest bump. The other — the
+  CNEManifest rename being planned as an in-place update — is still open on #309, so
+  a manifest bump still needs `bnk down` + `bnk up`.
+
+### Security
+
+- **The `go.mod` floor no longer permits a build against six reachable stdlib
+  advisories** (#299). `go.mod` declared `go 1.26.0`, while `net/url`, `crypto/tls`,
+  `net/http` (×2), `encoding/xml` and `encoding/asn1` all had advisories fixed in
+  **go1.26.6** — reachable ones, in `govulncheck`'s *Symbol Results* section. The
+  directive is now `go 1.26.6`, and `govulncheck` at that exact version reports
+  `Your code is affected by 0 vulnerabilities`.
+
+  **CI could not have caught this.** The `govulncheck` job uses `go-version: stable`
+  by design, so it always tested something newer than the floor and was green
+  throughout. A second job now installs the floor *exactly*, with
+  `GOTOOLCHAIN=local` so Go cannot quietly upgrade past it. Raising the directive
+  fixes today; testing the floor is what stops it drifting open again.
+
+  No language-version change is implied — 1.26.0 → 1.26.6 is a patch bump — and
+  `GOTOOLCHAIN=auto` fetches the toolchain automatically for anyone on an older
+  patch release.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**

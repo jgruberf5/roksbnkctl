@@ -238,10 +238,29 @@ data "ibm_resource_group" "resource_group" {
   ][0]
 }
 
+# The resource group holding the SUPPLY-CHAIN COS (#295).
+#
+# A supply chain is naturally central -- one bnk-supply-chain in `default`, read
+# by every workspace -- while a workspace may sit in another group for reasons
+# that have nothing to do with it, typically because `default` hit its
+# service-instance quota. Pinning the workspace's group made such a workspace fail
+# its first BNK read with "No resource instance found with name
+# [bnk-supply-chain]" about an instance that plainly exists.
+#
+# Deliberately SEPARATE from the module's own resource-group lookup rather than
+# repointing it: in flp_vsi that lookup also places the VSI, its floating IP and
+# its security groups, and moving those into the COS's group would be a far worse
+# bug than the one being fixed. Empty falls back to the workspace's group, so the
+# pre-#295 behaviour is byte-for-byte unchanged.
+data "ibm_resource_group" "cos_resource_group" {
+  count = local.global_enabled && var.use_cos_bucket ? 1 : 0
+  name  = var.ibmcloud_cos_resource_group != "" ? var.ibmcloud_cos_resource_group : data.ibm_resource_group.resource_group[0].name
+}
+
 data "ibm_resource_instance" "cos_instance" {
   count             = local.global_enabled && var.use_cos_bucket ? 1 : 0
   name              = var.ibmcloud_cos_instance_name
-  resource_group_id = data.ibm_resource_group.resource_group[0].id
+  resource_group_id = data.ibm_resource_group.cos_resource_group[0].id
   service           = "cloud-object-storage"
 }
 
@@ -880,7 +899,25 @@ resource "helm_release" "flo" {
   # Install from the locally-staged archive (see null_resource.flo_chart_pull):
   # the helm provider loads it from disk and does NO OCI login — the login's
   # credential-store step fails on Windows, and dropping the creds pulls anonymously.
-  chart            = local.flo_chart_archive
+  chart = local.flo_chart_archive
+  # Pin the version terraform PLANS, or a manifest bump can never apply.
+  #
+  # `chart` is a local archive path, so `version` is a COMPUTED attribute: with it
+  # unset, terraform carries the prior state value into the plan (v2.30.0-0.1.27 on
+  # an EA install), the provider then loads the newly-staged GA archive and returns
+  # v2.30.0-0.5.2, and terraform aborts the apply with
+  #
+  #   Provider produced inconsistent final plan ... .version: was
+  #   cty.StringVal("v2.30.0-0.1.27"), but now cty.StringVal("v2.30.0-0.5.2")
+  #
+  # blaming the helm provider for what is really an unpredictable planned value.
+  # Re-running does NOT converge: the archive path on disk moves forward while
+  # state keeps the old version, so every retry reproduces it. Hit upgrading a live
+  # 2.4.0-EA workspace to the 2.4.0 GA manifest.
+  #
+  # flo_chart_version is the same value that builds flo_chart_archive, so the
+  # planned version and the staged chart can never disagree.
+  version          = local.flo_chart_version
   namespace        = var.flo_namespace
   create_namespace = false
 

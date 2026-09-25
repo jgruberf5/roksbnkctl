@@ -430,6 +430,43 @@ resource "ibm_is_security_group_rule" "cluster_sg_inbound_all" {
   remote    = each.value
 }
 
+# The ADOPTED registry COS, when this workspace is reusing one instead of
+# creating it (#294).
+#
+# A ROKS-on-VPC cluster requires a Standard COS CRN to back its internal registry
+# UNCONDITIONALLY -- there is no "no registry backing" mode. So `create: false`
+# is not "skip the COS", it is "use that one", and the adopted instance has to be
+# looked up and its CRN passed exactly as a created one is.
+#
+# Before this, `create_cos_instance = false` sent cos_instance_crn = null and IBM
+# rejected the cluster create with E7278 "Provide a standard cloud object storage
+# instance CRN". The adopted name was rendered into tfvars and then dropped on the
+# floor, so the ResourceToggle's Create=false path could never produce a working
+# cluster -- which is the one path available when the account has hit its COS
+# instance cap, the very situation that motivates adopting.
+data "ibm_resource_instance" "existing_cos_instance" {
+  count             = var.create_cluster && !var.create_cos_instance && var.cos_instance_name != "" ? 1 : 0
+  name              = var.cos_instance_name
+  resource_group_id = data.ibm_resource_group.resource_group.id
+  service           = "cloud-object-storage"
+}
+
+locals {
+  # The CRN the cluster is told to use, from whichever of the two paths is live.
+  # Empty string rather than null so the preconditions below can test it.
+  registry_cos_crn = var.create_cos_instance ? (
+    length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].crn : ""
+    ) : (
+    length(data.ibm_resource_instance.existing_cos_instance) > 0 ? data.ibm_resource_instance.existing_cos_instance[0].crn : ""
+  )
+
+  registry_cos_name = var.create_cos_instance ? (
+    length(ibm_resource_instance.cos_instance) > 0 ? ibm_resource_instance.cos_instance[0].name : ""
+    ) : (
+    length(data.ibm_resource_instance.existing_cos_instance) > 0 ? data.ibm_resource_instance.existing_cos_instance[0].name : ""
+  )
+}
+
 # Create Cloud Object Storage instance for OpenShift registry (Optional)
 resource "ibm_resource_instance" "cos_instance" {
   count             = var.create_cluster && var.create_cos_instance ? 1 : 0
@@ -457,6 +494,14 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
       condition     = !var.use_existing_cluster_subnets || length(distinct(local.cluster_subnet_zones)) == 3
       error_message = "the three subnets in existing_cluster_subnet_ids must be in three DIFFERENT zones — a ROKS cluster spans three availability zones and IBM rejects a worker pool with duplicate zones."
     }
+
+    # IBM rejects a registry-less cluster create with E7278, which names no
+    # variable and no instance. Fail at plan time instead, saying which knob is
+    # wrong (#294).
+    precondition {
+      condition     = var.create_cos_instance || var.cos_instance_name != ""
+      error_message = "registry_cos.create is false but no instance was named — a ROKS-on-VPC cluster always needs a Standard COS CRN for its internal registry. Set resources.registry_cos.existing to an existing Standard COS instance, or set create to true."
+    }
   }
 
   count             = var.create_cluster ? 1 : 0
@@ -466,7 +511,7 @@ resource "ibm_container_vpc_cluster" "openshift_cluster" {
   worker_count      = var.workers_per_zone
   kube_version      = local.openshift_version
   resource_group_id = data.ibm_resource_group.resource_group.id
-  cos_instance_crn  = var.create_cos_instance ? ibm_resource_instance.cos_instance[0].crn : null
+  cos_instance_crn  = local.registry_cos_crn != "" ? local.registry_cos_crn : null
 
   zones {
     subnet_id = local.cluster_subnet_ids[0]

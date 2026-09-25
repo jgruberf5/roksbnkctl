@@ -153,10 +153,29 @@ data "ibm_resource_group" "resource_group" {
   ][0]
 }
 
+# The resource group holding the SUPPLY-CHAIN COS (#295).
+#
+# A supply chain is naturally central -- one bnk-supply-chain in `default`, read
+# by every workspace -- while a workspace may sit in another group for reasons
+# that have nothing to do with it, typically because `default` hit its
+# service-instance quota. Pinning the workspace's group made such a workspace fail
+# its first BNK read with "No resource instance found with name
+# [bnk-supply-chain]" about an instance that plainly exists.
+#
+# Deliberately SEPARATE from the module's own resource-group lookup rather than
+# repointing it: in flp_vsi that lookup also places the VSI, its floating IP and
+# its security groups, and moving those into the COS's group would be a far worse
+# bug than the one being fixed. Empty falls back to the workspace's group, so the
+# pre-#295 behaviour is byte-for-byte unchanged.
+data "ibm_resource_group" "cos_resource_group" {
+  count = local.global_enabled && var.use_cos_bucket ? 1 : 0
+  name  = var.ibmcloud_cos_resource_group != "" ? var.ibmcloud_cos_resource_group : data.ibm_resource_group.resource_group[0].name
+}
+
 data "ibm_resource_instance" "cos_instance" {
   count             = local.global_enabled && var.use_cos_bucket ? 1 : 0
   name              = var.ibmcloud_cos_instance_name
-  resource_group_id = data.ibm_resource_group.resource_group[0].id
+  resource_group_id = data.ibm_resource_group.cos_resource_group[0].id
   service           = "cloud-object-storage"
 }
 

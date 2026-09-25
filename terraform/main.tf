@@ -138,6 +138,7 @@ module "flo" {
   use_cos_bucket                = var.use_cos_bucket
   far_service_account_b64       = var.far_service_account_b64
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  ibmcloud_cos_resource_group   = var.ibmcloud_cos_resource_group
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
@@ -277,6 +278,7 @@ module "license" {
   ibmcloud_cluster_region       = var.ibmcloud_cluster_region
   ibmcloud_resource_group       = var.ibmcloud_resource_group
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  ibmcloud_cos_resource_group   = var.ibmcloud_cos_resource_group
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   roks_cluster_name_or_id       = module.roks_cluster.roks_cluster_name
@@ -390,6 +392,7 @@ module "flp" {
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  ibmcloud_cos_resource_group   = var.ibmcloud_cos_resource_group
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   scratch_dir                   = var.scratch_dir
@@ -452,6 +455,7 @@ module "flp_vsi" {
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  ibmcloud_cos_resource_group   = var.ibmcloud_cos_resource_group
   f5_cne_far_auth_file          = var.f5_cne_far_auth_file
   f5_cne_subscription_jwt_file  = var.f5_cne_subscription_jwt_file
   use_cos_bucket                = var.use_cos_bucket

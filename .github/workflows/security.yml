@@ -37,6 +37,37 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
+  # ── Gated: the same scan at the go.mod FLOOR ────────────────────────────────
+  #
+  # The job above deliberately uses the newest stable Go, which is right for
+  # "is a current build clean" and structurally blind to the question "is the
+  # OLDEST toolchain we permit clean". go.mod said `go 1.26.0` while six
+  # reachable stdlib advisories were fixed in 1.26.6, and every CI job was green
+  # throughout, because setup-go always resolved something newer (#299).
+  #
+  # This installs the declared floor EXACTLY and pins GOTOOLCHAIN=local so Go
+  # cannot quietly upgrade past it. If someone lowers the directive, or an
+  # advisory lands against the floor, this goes red and the other job does not.
+  govulncheck-floor:
+    name: Go vulnerabilities (at the go.mod floor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Read the declared floor from go.mod
+        id: floor
+        run: echo "version=$(awk '/^go [0-9]/ {print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.floor.outputs.version }}
+      - name: govulncheck at ${{ steps.floor.outputs.version }}
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          echo "declared floor: ${{ steps.floor.outputs.version }}"
+          go version
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   # ── Gated: committed secrets (IBM API keys, COS HMAC keys, kubeconfigs, …) ──
   gitleaks:
     name: Secret scan (gitleaks)
@@ -62,11 +93,11 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4.38.0
+      - uses: github/codeql-action/init@v4.38.1
         with:
           languages: go
-      - uses: github/codeql-action/autobuild@v4.38.0
-      - uses: github/codeql-action/analyze@v4.38.0
+      - uses: github/codeql-action/autobuild@v4.38.1
+      - uses: github/codeql-action/analyze@v4.38.1
         with:
           category: "/language:go"
 
@@ -86,12 +117,12 @@ jobs:
       - name: Trivy fs (deps + secrets)
         run: trivy fs . --scanners vuln,secret --format sarif --output trivy-fs.sarif --exit-code 0 --skip-dirs book/book
       - name: Upload IaC SARIF
-        uses: github/codeql-action/upload-sarif@v4.38.0
+        uses: github/codeql-action/upload-sarif@v4.38.1
         with:
           sarif_file: trivy-iac.sarif
           category: trivy-iac
       - name: Upload fs SARIF
-        uses: github/codeql-action/upload-sarif@v4.38.0
+        uses: github/codeql-action/upload-sarif@v4.38.1
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
