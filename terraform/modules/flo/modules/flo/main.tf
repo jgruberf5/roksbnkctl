@@ -899,7 +899,7 @@ resource "helm_release" "flo" {
   # Install from the locally-staged archive (see null_resource.flo_chart_pull):
   # the helm provider loads it from disk and does NO OCI login — the login's
   # credential-store step fails on Windows, and dropping the creds pulls anonymously.
-  chart            = local.flo_chart_archive
+  chart = local.flo_chart_archive
   # Pin the version terraform PLANS, or a manifest bump can never apply.
   #
   # `chart` is a local archive path, so `version` is a COMPUTED attribute: with it
