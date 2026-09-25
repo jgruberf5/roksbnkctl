@@ -334,6 +334,32 @@ subnets, egress mode (`snatpool`/`automap`/`both`) and VXLAN port via the
 `config.yaml` `gateway` block. `cluster down` refuses while the Gateway phase
 has resources, so tear it down first (`gateway down`).
 
+### The VXLAN security-group rule, and what it opens
+
+The gateway phase adds one inbound rule to the **cluster's own worker security
+group** (`kube-<cluster-id>`), permitting the egress VXLAN port (UDP 6789 by
+default, `gateway.vxlan_port`).
+
+This rule is **required, not hardening**. TMM answers a remote node's VXLAN from
+its *external-VLAN self-IP*, and the workers' security group does not otherwise
+admit that source — so without the rule, egress from any node that is not itself
+running a TMM fails.
+
+Through **v1.63.0** the rule permitted `0.0.0.0/0`. From v1.64.0 it is scoped to
+the per-zone external-VLAN CIDRs (`resources`/`bnk` zone config
+`ext_vlan_cidr`), one rule per CIDR, because those are the only addresses a TMM
+self-IP can have. That matters because this rule sits on a security group shared
+by everything else running on those workers.
+
+> **Upgrading replaces the rule rather than editing it.** The resource moved from
+> `count` to `for_each`, so terraform removes the single open rule and creates
+> the scoped ones; ordering is not guaranteed, so run `gateway up` when a few
+> seconds of egress disruption is acceptable.
+
+If every zone's `ext_vlan_cidr` is empty, `gateway up` now **fails at plan time**
+rather than silently creating no rule and leaving egress broken with nothing
+naming the cause.
+
 ## Cross-references
 
 - [Chapter 8 — The cluster phase](./08-cluster-phase.md) — the Cluster phase

@@ -6,6 +6,40 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Security
+
+- **The gateway phase opened UDP 6789 inbound on every worker node from
+  `0.0.0.0/0`** (#314).
+
+  The rule itself is required and stays: TMM answers a remote node's VXLAN from
+  its **external-VLAN self-IP**, which the cluster's worker security group does
+  not otherwise admit, so egress from any node not running a TMM fails without
+  it. The breadth was never required.
+
+  The senders are the TMM self-IPs, and those are by construction inside the
+  per-zone `ext_vlan_cidr`. On the verified 2.4 GA install the Infra CR's
+  external-vlan IPAM pools are `10.155.15.0/24`, `10.156.16.0/24`,
+  `10.157.17.0/24` and the controller reports self-IPs `10.155.15.2`,
+  `10.156.16.2`, `10.157.17.2`. The rule is now one per external-VLAN CIDR
+  instead of one open to the world.
+
+  This matters because the rule lands on the **cluster's own** worker security
+  group, shared by everything else on those nodes — a wider change to the
+  customer's cluster than the gateway phase needs to make, and it was made
+  silently.
+
+  **On upgrade the rule is replaced, not edited.** `count` became `for_each`, so
+  terraform destroys `vxlan_ingress[0]` and creates one rule per CIDR; ordering
+  is not guaranteed, so there may be a brief window during `gateway up` where
+  VXLAN ingress is partly permitted. Run it when a few seconds of egress
+  disruption is acceptable.
+
+  A plan-time precondition now fails if every zone has an empty `ext_vlan_cidr`,
+  which would otherwise create **no** rule at all and break egress with nothing
+  naming the cause. It sits on the security-group data source rather than the
+  rule, because `for_each` over an empty set creates no instances and a
+  precondition on the rule would be skipped in exactly the case that needs it.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**
