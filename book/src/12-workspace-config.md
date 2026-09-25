@@ -236,6 +236,19 @@ bnk:
 
 Every field here is optional — leave the block out entirely and you get the upstream HCL's defaults. For a one-page view of every field with its dotted path and the `ROKSBNKCTL_*` variable that sets it, see the [config.yaml cheatsheet](https://jgruberf5.github.io/roksbnkctl/config-cheatsheet.html) — generated from the same struct this chapter teaches, so the two cannot disagree. The field spec is [Chapter 28 §`BNKCfg`](./28-configuration-reference.md#bnkcfg), with the sub-blocks broken out as [§`BNKTrustedProfileCfg`](./28-configuration-reference.md#bnktrustedprofilecfg), [§`BNKCertManagerCfg`](./28-configuration-reference.md#bnkcertmanagercfg), [§`BNKFLPCfg`](./28-configuration-reference.md#bnkflpcfg) and [§`BNKPreflightCfg`](./28-configuration-reference.md#bnkpreflightcfg). Chapter 28's `line` column matters here more than anywhere else in the config: a good part of `bnk:` is 2.4-only, and `manifest_version` is the only thing that selects the line.
 
+**`manifest_version` cannot be bumped on a live workspace — `bnk up` refuses it.** The manifest version *names* the CNEManifest object (`bnk-<version>`, lowercased), so changing it **renames** that object. Terraform plans a rename as an in-place update and then aborts with `Provider produced inconsistent final plan`, and re-running does not converge — the stale value is in terraform **state**, not on disk.
+
+The failure is not a clean stop. The apply gets partway, having already rolled every pod, and a retry rolls them again: a previous attempt did this three times, exhausted the registry's pull quota (`pull QPS exceeded`), and left the cluster with `f5-cne-controller`, `f5-tmm` and `f5-dssm-sentinel-2` in `ImagePullBackOff` and **no CNEManifest at all** (#309). So `bnk up` now compares the configured version against the one the workspace last applied and refuses **before planning**, rather than starting an apply that cannot finish.
+
+To move to a new manifest:
+
+```bash
+roksbnkctl bnk down
+roksbnkctl bnk up
+```
+
+That is the supported path, and the one the 2.4.0 GA upgrade was verified with (37 added, 0 changed, 0 destroyed). A **cross-line** change (2.3 → 2.4) is refused separately and for different reasons — see `bnk_line` above; that one needs a new workspace, not a reinstall.
+
 **`cneinstance_size` is passed through unvalidated, on purpose.** The legal set of sizes is a property of the BNK manifest, not of this tool. Hardcoding a list would go stale the first time F5 adds one and would then refuse a size the product supports, so a size a given manifest does not define is rejected by the operator on the cluster, not here. `Tiny` is what the BNK 2.4 install guide uses, and on ROKS it is the only size that runs: everything above it requests hugepages (`Small` 4 GiB, `Medium` 8 GiB) that the platform has no supported way to allocate. Do not reach for `bnk.hugepages` — it is a no-op on ROKS and issue #203 explains why. Capacity comes from `bnk.tmm_replicas` and node size instead; see Appendix C.
 
 **`gslb_datacenter_name` is the whole feature.** It is what the CNEInstance calls itself in GSLB, and it is emitted whenever set. There was also a `gtm:` block carrying the BIG-IP DNS url, username and password; it was **removed in #227** because nothing read it — the f5ingress controller binary contains no occurrence of the environment variables it produced, on either BNK line. A `config.yaml` still carrying `bnk.gtm` needs no edit: an unrecognised key is ignored.

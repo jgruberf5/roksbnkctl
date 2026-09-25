@@ -111,6 +111,49 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   `cleanup`'s independent sweep could reach them, precisely because it does not
   consult terraform state — which is both the feature and was the defect.
 
+- **`bnk up` now refuses a `bnk.manifest_version` bump instead of starting an
+  apply that cannot finish** (#309, layer 2; layer 1 shipped in v1.63.0).
+
+  The manifest version names the CNEManifest object, so a bump **renames** it.
+  Terraform plans a rename as an in-place update and aborts with `Provider
+  produced inconsistent final plan`; re-running does not converge, because the
+  stale value is in terraform **state**, not on disk.
+
+  The reason this is worth a guard rather than a doc note: the apply does not
+  stop cleanly, it stops **partway**, having already rolled every pod. A retry
+  rolls them again — which is how a previous attempt exhausted the registry's
+  pull quota (`pull QPS exceeded`) and left `f5-cne-controller`, `f5-tmm` and
+  `f5-dssm-sentinel-2` in `ImagePullBackOff` with **no CNEManifest on the
+  cluster at all**. BNK was down, and nothing about the first failure suggested
+  a retry would make it worse.
+
+  The supported path is unchanged and now named in the refusal:
+
+  ```
+  roksbnkctl bnk down
+  roksbnkctl bnk up
+  ```
+
+  **Why not fix the rename instead.** Three mechanisms were evaluated and all
+  rejected — recorded so nobody re-treads them:
+
+  - `replace_triggered_by` on a `terraform_data` holding the version. Tried on a
+    live cluster: the trigger fires when the referenced resource *changes*, and
+    a first-time **create** is not a change, so it does nothing for the bump in
+    front of you. Error count went 7 → 15.
+  - A `moved` block. Requires static addresses; the target key depends on the
+    workspace's current version.
+  - Keying the resource on the manifest name with `for_each`, so a bump changes
+    the key and forces create/destroy. This *would* fix the first bump — but it
+    moves the address from `cnemanifest[0]` to `cnemanifest["bnk-2.4.0-ea"]`, so
+    **every existing workspace** would destroy and recreate its CNEManifest on
+    the next ordinary apply. Deleting the CNEManifest is exactly what left the
+    cluster broken above.
+
+  A **cross-line** change (2.3 → 2.4) is still refused by the separate line
+  guard, whose reasons are different and worse; this one deliberately hands that
+  case over rather than reporting twice for one edit.
+
 ### Security
 
 - **The gateway phase opened UDP 6789 inbound on every worker node from
@@ -1873,6 +1916,7 @@ also **faster** than before despite matching ~6x more patterns, because secrets
 are now indexed by first byte.
 
 ### Added
+
 - `exitcode.SelfUpdateStranded` (**125**) — an upgrade that left no binary at
   the install path. Documented in chapters 7a and 17. (#154)
 - `RegistryMirror.MissingCount` — a mirror record can now say its replicate did
@@ -1884,6 +1928,7 @@ are now indexed by first byte.
   two full passes. (#143)
 
 ### Fixed
+
 - The provider lockfile is embedded and seeded rather than absent. (#147)
 - The credential redactor covers base64 forms, standard and URL alphabets,
   standalone and embedded. (#145)
@@ -1898,6 +1943,7 @@ are now indexed by first byte.
 - `bnk up` refuses an incomplete mirror record. (#150)
 
 ### Changed
+
 - Provider constraints bounded with `~>`; `tls`, `time`, `local` and `external`
   are now declared at the root, where a bound governs the whole tree. They were
   declared only in submodules with bare `>=`, so nothing bounded them. (#147)
@@ -1905,6 +1951,7 @@ are now indexed by first byte.
   `platform-services-go-sdk` 0.103.0. (#138)
 
 ### Testing
+
 - The argv subprocess test built a 112MB binary into a fresh tempdir on every
   run and never removed it; 94 runs filled a 16GB `/tmp` and surfaced as a
   linker error in an unrelated package. Now built to a fixed, self-truncating
