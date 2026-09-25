@@ -457,13 +457,46 @@ data "ibm_container_vpc_cluster" "cluster" {
 data "ibm_is_security_group" "cluster_sg" {
   count = local.enabled ? 1 : 0
   name  = "kube-${data.ibm_container_vpc_cluster.cluster[0].id}"
+
+  # An empty CIDR list would silently create NO vxlan rule, and egress from any
+  # node without a TMM would fail with nothing naming the cause. for_each over
+  # an empty set produces no resource instances, so a precondition on the rule
+  # itself would be skipped in exactly the case that needs it — it goes here,
+  # on something that always exists when the phase is enabled.
+  lifecycle {
+    precondition {
+      condition     = length(local.vxlan_remote_cidrs) > 0
+      error_message = "gateway: no external-VLAN CIDRs to permit VXLAN from. Every cneinstance_network_zones entry has an empty ext_vlan_cidr, so the UDP ${var.gateway_vxlan_port} ingress rule on the cluster security group would not be created and egress from nodes without a TMM would fail."
+    }
+  }
+}
+
+# The rule is REQUIRED — see the note above — but `0.0.0.0/0` never was (#314).
+#
+# The only senders that need to reach UDP 6789 are the TMM self-IPs on the
+# external VLAN, and those are by construction inside the per-zone
+# ext_vlan_cidr: on the verified 2.4 GA install the Infra CR's external-vlan
+# IPAM pools are 10.155.15.0/24, 10.156.16.0/24 and 10.157.17.0/24, and the
+# controller reports TMM self-IPs 10.155.15.2, 10.156.16.2 and 10.157.17.2.
+#
+# This rule lands on the CLUSTER'S OWN worker security group, shared by
+# everything else running on those nodes, so an open-to-the-world inbound port
+# there is a wider change to the customer's cluster than the gateway phase needs
+# to make — and it was made silently.
+#
+# ibm_is_security_group_rule takes ONE remote, so this is one rule per CIDR.
+locals {
+  vxlan_remote_cidrs = distinct([
+    for z in var.cneinstance_network_zones : z.ext_vlan_cidr if z.ext_vlan_cidr != ""
+  ])
 }
 
 resource "ibm_is_security_group_rule" "vxlan_ingress" {
-  count     = local.enabled ? 1 : 0
+  for_each = local.enabled ? toset(local.vxlan_remote_cidrs) : toset([])
+
   group     = data.ibm_is_security_group.cluster_sg[0].id
   direction = "inbound"
-  remote    = "0.0.0.0/0"
+  remote    = each.value
 
   # Top-level protocol/port_min/port_max — the nested `udp {}` block form is
   # deprecated in the IBM provider.
