@@ -6,6 +6,51 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **`bnk up` now refuses a `bnk.manifest_version` bump instead of starting an
+  apply that cannot finish** (#309, layer 2; layer 1 shipped in v1.63.0).
+
+  The manifest version names the CNEManifest object, so a bump **renames** it.
+  Terraform plans a rename as an in-place update and aborts with `Provider
+  produced inconsistent final plan`; re-running does not converge, because the
+  stale value is in terraform **state**, not on disk.
+
+  The reason this is worth a guard rather than a doc note: the apply does not
+  stop cleanly, it stops **partway**, having already rolled every pod. A retry
+  rolls them again — which is how a previous attempt exhausted the registry's
+  pull quota (`pull QPS exceeded`) and left `f5-cne-controller`, `f5-tmm` and
+  `f5-dssm-sentinel-2` in `ImagePullBackOff` with **no CNEManifest on the
+  cluster at all**. BNK was down, and nothing about the first failure suggested
+  a retry would make it worse.
+
+  The supported path is unchanged and now named in the refusal:
+
+  ```
+  roksbnkctl bnk down
+  roksbnkctl bnk up
+  ```
+
+  **Why not fix the rename instead.** Three mechanisms were evaluated and all
+  rejected — recorded so nobody re-treads them:
+
+  - `replace_triggered_by` on a `terraform_data` holding the version. Tried on a
+    live cluster: the trigger fires when the referenced resource *changes*, and
+    a first-time **create** is not a change, so it does nothing for the bump in
+    front of you. Error count went 7 → 15.
+  - A `moved` block. Requires static addresses; the target key depends on the
+    workspace's current version.
+  - Keying the resource on the manifest name with `for_each`, so a bump changes
+    the key and forces create/destroy. This *would* fix the first bump — but it
+    moves the address from `cnemanifest[0]` to `cnemanifest["bnk-2.4.0-ea"]`, so
+    **every existing workspace** would destroy and recreate its CNEManifest on
+    the next ordinary apply. Deleting the CNEManifest is exactly what left the
+    cluster broken above.
+
+  A **cross-line** change (2.3 → 2.4) is still refused by the separate line
+  guard, whose reasons are different and worse; this one deliberately hands that
+  case over rather than reporting twice for one edit.
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**
