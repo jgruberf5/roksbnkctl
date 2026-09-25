@@ -60,6 +60,7 @@ module "license" {
 
   ibmcloud_api_key              = var.ibmcloud_api_key
   ibmcloud_cos_bucket_region    = var.ibmcloud_cos_bucket_region
+  ibmcloud_cos_resource_group   = var.ibmcloud_cos_resource_group
   ibmcloud_resource_group       = var.ibmcloud_resource_group
   ibmcloud_cos_instance_name    = var.ibmcloud_cos_instance_name
   ibmcloud_resources_cos_bucket = var.ibmcloud_resources_cos_bucket

@@ -1530,6 +1530,18 @@ type COSCfg struct {
 	// Region is the bucket's region, which need not match ibmcloud.region.
 	Region string `yaml:"region,omitempty" default:"us-south"`
 
+	// ResourceGroup is the IBM Cloud resource group holding Instance. Empty
+	// means the workspace's ibmcloud.resource_group.
+	//
+	// It exists because a supply chain is naturally CENTRAL — one
+	// bnk-supply-chain in the `default` group, read by every workspace — while a
+	// workspace may have been moved to another group for reasons that have
+	// nothing to do with it, typically because `default` hit its service-instance
+	// quota. Before this, every lookup pinned the workspace's group, so such a
+	// workspace failed its first BNK read with "No resource instance found with
+	// name [bnk-supply-chain]" about an instance that plainly exists (#295).
+	ResourceGroup string `yaml:"resource_group,omitempty"`
+
 	// Upload lists local files to place into that bucket before the phases that
 	// read them run.
 	Upload []COSUpload `yaml:"upload,omitempty"`

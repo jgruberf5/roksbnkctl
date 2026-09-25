@@ -53,7 +53,7 @@
 <h1>roksbnkctl <code>config.yaml</code> cheatsheet <span class="ver">v1.62.0</span></h1>
 <p class="sub">Every field the workspace schema accepts, with the dotted path you actually type
 and the <code>ROKSBNKCTL_*</code> override that sets it. Generated from
-<code>internal/config/workspace.go</code> — 187 fields, 162 reachable by an environment override.</p>
+<code>internal/config/workspace.go</code> — 188 fields, 162 reachable by an environment override.</p>
 <div class="bar">
   <input id="q" type="search" placeholder="Filter by path, env var, type or description…" autocomplete="off">
   <button class="chip" id="f-req" aria-pressed="false">Required only</button>
@@ -195,6 +195,7 @@ environment wins. <code>roksbnkctl config yaml</code> and
 <tr data-req="false" data-env="true" data-line="both"><td class="path"><code>cos.bucket</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><code>bnk-artifacts</code></td><td class="env"><code>ROKSBNKCTL_COS_BUCKET</code></td><td>Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file.</td></tr>
 <tr data-req="false" data-env="true" data-line="both"><td class="path"><code>cos.instance</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><code>bnk-supply-chain</code></td><td class="env"><code>ROKSBNKCTL_COS_INSTANCE</code></td><td>Instance is the IBM Cloud Object Storage service instance holding the bucket.</td></tr>
 <tr data-req="false" data-env="true" data-line="both"><td class="path"><code>cos.region</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><code>us-south</code></td><td class="env"><code>ROKSBNKCTL_COS_REGION</code></td><td>Region is the bucket&#39;s region, which need not match ibmcloud.region.</td></tr>
+<tr data-req="false" data-env="false" data-line="both"><td class="path"><code>cos.resource_group</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><span class="muted">—</span></td><td class="env"><span class="muted">—</span></td><td>ResourceGroup is the IBM Cloud resource group holding Instance.</td></tr>
 <tr data-req="false" data-env="false" data-line="both"><td class="path"><code>cos.upload</code></td><td class="type"><code>[]COSUpload</code></td><td><span class="opt">—</span></td><td>both</td><td><span class="muted">—</span></td><td class="env"><span class="muted">—</span></td><td>Upload lists local files to place into that bucket before the phases that read them run.</td></tr>
 <tr data-req="false" data-env="false" data-line="both"><td class="path"><code>cos.upload[].key</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><span class="muted">—</span></td><td class="env"><span class="muted">—</span></td><td>Key is the object name it is stored under in the bucket.</td></tr>
 <tr data-req="false" data-env="false" data-line="both"><td class="path"><code>cos.upload[].source</code></td><td class="type"><code>string</code></td><td><span class="opt">—</span></td><td>both</td><td><span class="muted">—</span></td><td class="env"><span class="muted">—</span></td><td>Source is the local file to upload.</td></tr>

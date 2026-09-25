@@ -57,6 +57,30 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
   `GOTOOLCHAIN=auto` fetches the toolchain automatically for anyone on an older
   patch release.
 
+- **`cos.resource_group` — a workspace outside the supply chain's group can now
+  read it** (#295). A supply chain is naturally *central*: one `bnk-supply-chain`
+  in `default`, read by every workspace. A workspace may sit in another group for
+  reasons that have nothing to do with it — typically because `default` hit its
+  service-instance quota. Every supply-chain COS lookup pinned the **workspace's**
+  group, so such a workspace failed its first BNK read with
+
+  ```
+  No resource instance found with name [bnk-supply-chain]
+  ```
+
+  about an instance that plainly exists.
+
+  `cos.resource_group` names the group holding the instance. **Empty keeps the old
+  behaviour exactly**, so no existing config changes meaning. All four lookups
+  move together — `flo`, `license`, `flp`, `flp_vsi` — because a BNK install that
+  found the FAR credential but not the licence JWT would half-work, which is worse
+  to diagnose than failing outright.
+
+  Each module gets its *own* resource-group lookup rather than repointing the one
+  it already had. In `flp_vsi` that existing lookup also places the VSI, its
+  floating IP and its security groups; moving those into the COS's group would
+  have been a worse bug than the one being fixed.
+
 ## v1.62.0 — 2026-09-22
 
 **`roksbnkctl agent <cli>` launches the agent instead of printing a recipe you have to paste.**
