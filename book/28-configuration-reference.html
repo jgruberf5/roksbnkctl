@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6bcc898b.js";
+            window.path_to_searchindex_js = "searchindex-8694295b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -493,6 +493,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>instance</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-supply-chain</code></td><td>no</td><td>Instance is the IBM Cloud Object Storage service instance holding the bucket.</td></tr>
 <tr><td><code>bucket</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-artifacts</code></td><td>no</td><td>Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file.</td></tr>
 <tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>us-south</code></td><td>no</td><td>Region is the bucket’s region, which need not match ibmcloud.region.</td></tr>
+<tr><td><code>resource_group</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ResourceGroup is the IBM Cloud resource group holding Instance.</td></tr>
 <tr><td><code>upload</code></td><td><code>[]COSUpload</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Upload lists local files to place into that bucket before the phases that read them run.</td></tr>
 </tbody>
 </table>

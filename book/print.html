@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6bcc898b.js";
+            window.path_to_searchindex_js = "searchindex-8694295b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-4242b368.js"></script>
@@ -13020,6 +13020,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>instance</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-supply-chain</code></td><td>no</td><td>Instance is the IBM Cloud Object Storage service instance holding the bucket.</td></tr>
 <tr><td><code>bucket</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>bnk-artifacts</code></td><td>no</td><td>Bucket is the bucket the FAR service-account credential is read from, for estates that stage it centrally rather than passing a local file.</td></tr>
 <tr><td><code>region</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td><code>us-south</code></td><td>no</td><td>Region is the bucket’s region, which need not match ibmcloud.region.</td></tr>
+<tr><td><code>resource_group</code></td><td><code>string</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>ResourceGroup is the IBM Cloud resource group holding Instance.</td></tr>
 <tr><td><code>upload</code></td><td><code>[]COSUpload</code></td><td>2.3 + 2.4</td><td>—</td><td>no</td><td>Upload lists local files to place into that bucket before the phases that read them run.</td></tr>
 </tbody>
 </table>
@@ -13332,6 +13333,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>install_cert_manager</code></td><td><code>bool</code></td><td><code>true</code></td><td>Install cert-manager. When false, cert_manager_namespace is passed directly to flo.</td><td>no</td></tr>
 <tr><td><code>cert_manager_namespace</code></td><td><code>string</code></td><td><code>"cert-manager"</code></td><td>Kubernetes namespace for cert-manager</td><td>no</td></tr>
 <tr><td><code>cert_manager_version</code></td><td><code>string</code></td><td><code>"v1.17.3"</code></td><td>cert-manager Helm chart version</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group holding the supply-chain COS instance. Empty resolves the workspace’s own resource group, which is the pre-#295 behaviour. Set it when the supply chain lives centrally (typically <code>default</code>) and the workspace was placed elsewhere.</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_bucket_region</code></td><td><code>string</code></td><td><code>"us-south"</code></td><td>IBM Cloud region where the COS bucket is located</td><td>no</td></tr>
 <tr><td><code>ibmcloud_cos_instance_name</code></td><td><code>string</code></td><td><code>"bnk-supply-chain"</code></td><td>IBM Cloud COS instance name</td><td>no</td></tr>
 <tr><td><code>ibmcloud_resources_cos_bucket</code></td><td><code>string</code></td><td><code>"bnk-artifacts"</code></td><td>IBM Cloud COS bucket containing FAR auth key and JWT files</td><td>no</td></tr>
@@ -13598,6 +13600,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>scratch_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch"</code></td><td>Persistent scratch directory for FAR/manifest cross-apply artifacts. Default is the bnk runner image’s /work mount.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the FLO phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl/tar (no interpreter, so cmd.exe execs it on Windows). Empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group holding the supply-chain COS instance. Empty resolves the workspace’s own resource group (#295).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -13636,6 +13639,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>flp_node_port_source_cidrs</code></td><td><code>list(string)</code></td><td><code>[]</code></td><td>With flp_node_port_access: open the proxy’s NodePort on the cluster’s worker security group to these CIDRs (the consuming cluster’s subnets). A LIST, because a multi-zone VPC carries one address prefix per zone — allowing only one means a consuming pod scheduled in another zone is silently dropped at the security group. Empty leaves the security group untouched.</td><td>no</td></tr>
 <tr><td><code>flp_storage_class</code></td><td><code>string</code></td><td><code>"ibmc-vpc-block-metro-10iops-tier"</code></td><td>Dynamic StorageClass for the FLP’s PVCs. The chart ships hostPath PVs (incompatible with ROKS multi-node/non-root); a post-renderer drops them and repoints the PVCs here, so the CSI driver provisions block volumes chowned to fsGroup. Default is the ROKS VPC block default.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary, which helm invokes as the f5-license-proxy chart’s POST-RENDERER (<code>roksbnkctl flp postrender</code>). roksbnkctl sets this to its own path automatically via TF_VAR_roksbnkctl_binary; empty falls back to <code>roksbnkctl</code> on PATH for a direct <code>terraform apply</code>. Replaces a generated python script, which made python3 an undeclared runtime dependency of the FLP phase — absent in the tools-runner container.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group holding the supply-chain COS instance. Empty resolves the workspace’s own resource group (#295).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -13687,6 +13691,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>flp_vsi_create_vpc</code></td><td><code>bool</code></td><td><code>false</code></td><td>Build the proxy its own VPC, address prefix and public gateway instead of placing it in one that already exists. Default false keeps existing workspaces byte-identical.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_vpc_name</code></td><td><code>string</code></td><td><code>""</code></td><td>Name for the VPC created when flp_vsi_create_vpc = true. Empty uses flp-vsi-vpc.</td><td>no</td></tr>
 <tr><td><code>flp_vsi_subnet_cidr</code></td><td><code>string</code></td><td><code>"10.250.0.0/24"</code></td><td>Address prefix for the VPC created when flp_vsi_create_vpc = true. Must not overlap anything the consuming clusters can already route to.</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group holding the supply-chain COS instance. Empty resolves the workspace’s own resource group (#295).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
@@ -13771,6 +13776,7 @@ run time and belongs in the prose rather than a table cell.</p>
 <tr><td><code>kubeconfig_dir</code></td><td><code>string</code></td><td><code>"/work/.bnk/scratch/kubeconfig/license"</code></td><td>Persistent, writable dir for ibm_container_cluster_config kubeconfig downloads. Defaults to a host-bind-mounted, module-scoped path under .bnk/scratch.</td><td>no</td></tr>
 <tr><td><code>roksbnkctl_binary</code></td><td><code>string</code></td><td><code>""</code></td><td>Absolute path to the roksbnkctl binary; the license phase invokes <code>roksbnkctl tfx &lt;verb&gt;</code> in place of host curl (no interpreter, so cmd.exe execs it on Windows). Empty falls back to <code>roksbnkctl</code> on PATH.</td><td>no</td></tr>
 <tr><td><code>cluster_absent</code></td><td><code>bool</code></td><td><code>false</code></td><td>True in the standalone FLP-VSI phase: no ROKS cluster exists, so all cluster data-source lookups + kube providers are skipped (count=0).</td><td>no</td></tr>
+<tr><td><code>ibmcloud_cos_resource_group</code></td><td><code>string</code></td><td><code>""</code></td><td>Resource group holding the supply-chain COS instance. Empty resolves the workspace’s own resource group (#295).</td><td>no</td></tr>
 </tbody>
 </table>
 </div>
