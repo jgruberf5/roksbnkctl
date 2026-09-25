@@ -1134,22 +1134,39 @@ resource "kubectl_manifest" "node_labeler_job" {
 # ==============================================================================
 
 locals {
-  # Empty means DERIVE the name FLO actually creates:
-  #   f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount
+  # Empty means DERIVE the name FLO actually creates — and that name DIFFERS BY
+  # LINE, which is what #313 got wrong:
   #
-  # That is FLO's construction — <release>-<chart>-serviceaccount, with the
-  # namespace baked in — so it is not a static default and cannot be one.
+  #   2.3: f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount
+  #   2.4: f5-cne-controller
+  #
+  # On 2.3 it is FLO's helm construction, <release>-<chart>-serviceaccount with
+  # the namespace baked into the release. On 2.4 the CNE controller chart names
+  # the account outright. Both were read off live installs, not inferred: the
+  # 2.4 name was confirmed on a 2.4.0 GA cluster, where the controller pod's
+  # spec.serviceAccountName is `f5-cne-controller` and NO account carrying the
+  # long suffix exists in any namespace.
   #
   # It is a MATCHER, not a pointer. The IBM IAM trust relationship evaluates a
   # pod's service-account token against crn/namespace/name, all EQUALS. A name
   # that does not match the account the CNE controller actually runs as makes the
-  # profile unassumable, with no error anywhere — the pod just loses its IBM
-  # Cloud permissions. A confirmed BNK 2.3 install runs as the long name.
+  # profile unassumable. The pod then loses its IBM Cloud permissions and takes a
+  # fallback path that logs "Cloud environment is not IBM or cloud provider
+  # instance is nil" and skips VPC address-prefix and route programming — so no
+  # traffic reaches the listener addresses and egress SNAT replies have no route
+  # back, while Infra/GatewaySettings/Gateway all still report Programmed=True
+  # because those conditions are computed without ever calling the cloud. A green
+  # status over a dead data path is the reason this was not caught earlier.
+  #
+  # `!= "2.4"` matches every other gate in this module: an unrecognised line
+  # keeps the 2.3 name.
   #
   # Set the variable only if you can also make FLO name the account differently;
   # roksbnkctl cannot, since FLO creates it in response to the CNEInstance and
   # the spec has no service-account field.
-  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : (
+    local.line_pre_24 ? "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount" : "f5-cne-controller"
+  )
 }
 
 # WHY MULTIPLE CLUSTERS CAN SHARE ONE SERVICE ACCOUNT NAME.

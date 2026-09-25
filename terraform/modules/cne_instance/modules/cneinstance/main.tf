@@ -25,8 +25,14 @@ locals {
   # These service accounts are created by CNEInstance and FLO deployment
   # Must resolve to the SAME account the flo module links the Trusted Profile
   # to — a profile the pod may assume and an SCC the pod may use have to name
-  # one account, or one of them is inert. Empty derives FLO's own name.
-  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount"
+  # one account, or one of them is inert. Empty derives FLO's own name, which
+  # DIFFERS BY LINE (#313): the long helm-derived name on 2.3, and plain
+  # `f5-cne-controller` on 2.4. This expression is kept character-identical to
+  # the flo module's so the two cannot drift apart silently; a guard in
+  # internal/tf evaluates both and fails if they disagree.
+  trusted_profile_sa = var.trusted_profile_sa_name != "" ? var.trusted_profile_sa_name : (
+    local.line_pre_24 ? "f5-cne-controller-${var.flo_namespace}-f5-cne-controller-serviceaccount" : "f5-cne-controller"
+  )
 
   # Every entry below is already parameterised on var.flo_namespace /
   # var.utils_namespace, so it follows whatever those are. There used to be a

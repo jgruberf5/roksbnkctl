@@ -6,6 +6,44 @@ Per-sprint design rationale lives in [`docs/PLAN.md`](docs/PLAN.md); per-PRD des
 
 ## Unreleased
 
+### Fixed
+
+- **Every BNK 2.4 install linked its Trusted Profile to a service account that
+  does not exist, so the CNE controller programmed no VPC routes and no traffic
+  passed in either direction** (#313). Reported against a 2.4.0-EA install.
+
+  The link is a MATCHER: IBM IAM compares a pod's service-account token against
+  `crn` / `namespace` / `name` with `EQUALS`. The name was hard-coded to FLO's
+  2.3 helm construction,
+  `f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount`, in both
+  the `flo` and `cne_instance` modules. On 2.4 the controller runs as plain
+  `f5-cne-controller`, confirmed on a 2.4.0 GA cluster: the pod's
+  `spec.serviceAccountName` is the short name and **no account carrying the long
+  suffix exists in any namespace**. The default is now gated on `bnk_line`.
+
+  The same local also feeds the privileged-SCC ClusterRoleBinding, so on 2.4 that
+  binding named a nonexistent account too — one wrong string, two broken things.
+
+  What makes this worth reading rather than skimming: **the install reported
+  itself healthy throughout.** The controller logged `BXNIM0398E … no matching
+  rule or link found`, then fell back to `Cloud environment is not IBM or cloud
+  provider instance is nil` and skipped VPC address-prefix and route programming
+  — while `Infra`, `GatewaySettings`, `Gateway` and `EgressGateway` all reported
+  `Programmed=True`, because those conditions are computed without ever calling
+  the cloud. The book's 2.4 verification checks exactly those conditions, so it
+  passed. That gap is now stated in the 2.4 support-status table: **a
+  condition-based check cannot see this class of defect; only traffic can.**
+
+  Existing 2.4 installs do not need a rebuild. Add a second link for the real
+  account and restart the controller:
+
+  ```
+  ibmcloud iam trusted-profile-link-create <profile> --name f5-cne-controller-sa \
+    --cr-type ROKS_SA --link-crn <cluster-crn> \
+    --link-namespace f5-bnk --link-name f5-cne-controller
+  kubectl -n f5-bnk rollout restart deploy/f5-cne-controller
+  ```
+
 ## v1.63.0 — 2026-09-25
 
 **`registry_cos.create: false` and a central supply chain both work now, and the `go.mod` floor no longer permits a build against six reachable stdlib advisories.**

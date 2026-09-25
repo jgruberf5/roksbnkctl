@@ -170,15 +170,23 @@ type BNKTrustedProfileCfg struct {
 	// ServiceAccount is the Kubernetes service account the profile is LINKED to:
 	// which account may assume it.
 	//
-	// EMPTY (the default) derives the account FLO actually creates:
-	// "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount".
+	// EMPTY (the default) derives the account the controller actually runs as,
+	// which DIFFERS BY LINE (#313):
+	//
+	//	2.3: "f5-cne-controller-<flo_namespace>-f5-cne-controller-serviceaccount"
+	//	2.4: "f5-cne-controller"
+	//
+	// The derivation lives in the HCL, gated on bnk_line, so nothing is rendered
+	// here for either line.
 	//
 	// This is a MATCHER, not a pointer. The IBM IAM trust relationship compares a
 	// pod's service-account token against crn/namespace/name with EQUALS, so a
 	// name that does not match the account the CNE controller runs as makes the
-	// profile unassumable — with no error anywhere. The pod simply loses its IBM
-	// Cloud permissions, and it surfaces as an authorization failure at
-	// VPC-attachment time naming neither this setting nor the profile.
+	// profile unassumable. The controller logs the token exchange failing
+	// (BXNIM0398E) and then takes a fallback path that skips VPC address-prefix
+	// and route programming entirely — while Infra/GatewaySettings/Gateway still
+	// report Programmed=True, because those conditions never call the cloud. The
+	// install reports healthy and passes no traffic.
 	//
 	// Set it only if you can ALSO make FLO name the account differently.
 	// roksbnkctl cannot: FLO creates the account when it reconciles the

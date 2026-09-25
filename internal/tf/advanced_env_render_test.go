@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jgruberf5/roksbnkctl/internal/config"
@@ -38,14 +39,32 @@ func consoleEnvNames(t *testing.T, tfvars, expr string) []string {
 	return consoleStrings(t, []string{"cne_instance", "modules", "cneinstance"}, tfvars, expr)
 }
 
-// consoleJSON evaluates expr against a copy of the named module and returns the
-// JSON terraform produced. Module path is relative to terraform/modules.
-func consoleJSON(t *testing.T, module []string, tfvars, expr string) string {
+// One prepared, initialised copy per module, reused across calls.
+//
+// `terraform init` dominates the cost of these tests: on the WSL checkout it is
+// 16s for cneinstance and 65s for flo, against roughly a second for the console
+// evaluation itself. Initialising per CALL put internal/tf over `go test`'s 10m
+// package timeout as soon as a test needed more than a handful of cases (#282),
+// which is a direct incentive to write fewer cases than the guard needs. So the
+// init is cached per module and only the tfvars file is rewritten per call.
+//
+// Only zz_test.auto.tfvars is written per call, and it is overwritten whole, so
+// no value can leak from one case into the next. The mutex is what makes that
+// true — these tests do not call t.Parallel() today, and this keeps the harness
+// correct if one ever does.
+var (
+	consoleDirMu    sync.Mutex
+	consoleDirCache = map[string]string{}
+)
+
+// consoleModuleDir returns a directory holding an initialised copy of the named
+// module, creating it on first use. Callers hold consoleDirMu.
+func consoleModuleDir(t *testing.T, tf string, module []string) string {
 	t.Helper()
 
-	tf, err := exec.LookPath("terraform")
-	if err != nil {
-		t.Skip("terraform not on PATH")
+	key := strings.Join(module, "/")
+	if dir, ok := consoleDirCache[key]; ok {
+		return dir
 	}
 
 	parts := append([]string{"..", "..", "terraform", "modules"}, module...)
@@ -54,7 +73,12 @@ func consoleJSON(t *testing.T, module []string, tfvars, expr string) string {
 		t.Fatalf("resolve module: %v", err)
 	}
 
-	dir := t.TempDir()
+	// Not t.TempDir(): that is removed when the FIRST test using it finishes,
+	// and this copy outlives it deliberately. TestMain removes it instead.
+	dir, err := os.MkdirTemp("", "tfconsole-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		t.Fatalf("read module: %v", err)
@@ -72,16 +96,48 @@ func consoleJSON(t *testing.T, module []string, tfvars, expr string) string {
 		}
 	}
 
+	init := exec.Command(tf, "init", "-backend=false", "-input=false")
+	init.Dir = dir
+	if out, err := init.CombinedOutput(); err != nil {
+		// Not cached, so a later test retries — but this copy is now dead and
+		// nothing else will remove it, since TestMain only walks the cache.
+		_ = os.RemoveAll(dir)
+		t.Skipf("terraform init unavailable offline: %v\n%s", err, out)
+	}
+
+	consoleDirCache[key] = dir
+	return dir
+}
+
+// consoleTempDirsRemove drops the cached module copies. Called from TestMain.
+func consoleTempDirsRemove() {
+	consoleDirMu.Lock()
+	defer consoleDirMu.Unlock()
+	for k, dir := range consoleDirCache {
+		_ = os.RemoveAll(dir)
+		delete(consoleDirCache, k)
+	}
+}
+
+// consoleJSON evaluates expr against a copy of the named module and returns the
+// JSON terraform produced. Module path is relative to terraform/modules.
+func consoleJSON(t *testing.T, module []string, tfvars, expr string) string {
+	t.Helper()
+
+	tf, err := exec.LookPath("terraform")
+	if err != nil {
+		t.Skip("terraform not on PATH")
+	}
+
+	consoleDirMu.Lock()
+	defer consoleDirMu.Unlock()
+
+	dir := consoleModuleDir(t, tf, module)
+
 	// far_repo_url is required only because an unrelated local coalesces it.
 	vars := "far_repo_url = \"https://repo.f5.com\"\n" + tfvars
 	if err := os.WriteFile(filepath.Join(dir, "zz_test.auto.tfvars"), []byte(vars), 0o644); err != nil {
 		t.Fatalf("write tfvars: %v", err)
-	}
-
-	init := exec.Command(tf, "init", "-backend=false", "-input=false")
-	init.Dir = dir
-	if out, err := init.CombinedOutput(); err != nil {
-		t.Skipf("terraform init unavailable offline: %v\n%s", err, out)
 	}
 
 	cmd := exec.Command(tf, "console")
